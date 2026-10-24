@@ -122,3 +122,35 @@ jobs:
 
           echo "--- remaining assets ---"
           gh api "repos/$GH_REPO/releases/tags/$TAG" --jq '.assets[] | "\(.name)  \(.size) bytes"'
+
+      - name: Rewrite release notes for single-device build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          TAG=$(gh api "repos/$GH_REPO/releases?per_page=30" \
+            --jq '[.[] | select(.tag_name | startswith("AP3000M-"))][0].tag_name')
+          [ -n "$TAG" ] && [ "$TAG" != "null" ] || exit 0
+
+          # 公用核心的通用文案（"平台固件包，内含多个设备"）对单机型构建是错的，去掉这几行
+          gh api "repos/$GH_REPO/releases/tags/$TAG" --jq '.body' |
+            grep -v -F -e '这是个平台固件包' \
+                      -e '请注意选择你需要的设备固件' \
+                      -e '不要问，刷就完事了' \
+                      -e '全系带开源硬件加速' > /tmp/body.txt || true
+
+          {
+            echo '**AirPi AP3000M 单机型固件**（`airpi,ap3000m` / MT7981B + MT7976 / eMMC）'
+            echo
+            echo '本 Release 只包含一款设备的固件，直接下载刷写，无需挑选：'
+            echo
+            echo '- `*sysupgrade*.bin` —— eMMC 机型 sysupgrade 包（kernel + squashfs）'
+            echo '- `Config-*.txt` —— 本次构建实际生效的配置，便于复现'
+            echo
+            cat /tmp/body.txt
+          } > /tmp/new-body.txt
+
+          gh api -X PATCH "repos/$GH_REPO/releases/tags/$TAG" -F body=@/tmp/new-body.txt >/dev/null
+          echo "release notes rewritten for $TAG"
