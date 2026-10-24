@@ -149,8 +149,13 @@ jobs:
             echo '- `*sysupgrade*.bin` —— eMMC 机型 sysupgrade 包（kernel + squashfs）'
             echo '- `Config-*.txt` —— 本次构建实际生效的配置，便于复现'
             echo
+            echo '> 本版已内置首次开机自动配置（`/etc/uci-defaults/99-ap3000m-fm350`）：自动纠正 FM350 的 AT 口、APN、数据承载 CID。'
+            echo
             cat /tmp/body.txt
           } > /tmp/new-body.txt
 
-          gh api -X PATCH "repos/$GH_REPO/releases/tags/$TAG" -F body=@/tmp/new-body.txt >/dev/null
+          # 注意：GitHub 没有 PATCH /releases/tags/{tag}，改正文必须先拿 release id，否则 404
+          RID=$(gh api "repos/$GH_REPO/releases/tags/$TAG" --jq '.id')
+          gh api -X PATCH "repos/$GH_REPO/releases/$RID" -F body=@/tmp/new-body.txt >/dev/null ||
+            echo "warning: release body patch failed (non-fatal)"
           echo "release notes rewritten for $TAG"
