@@ -63,5 +63,19 @@ for _dir in package/luci-app-fm350 package/luci-app-airpi3000m-fancontrol; do
 	fi
 done
 
+# 6) 投放 AP3000M 专属的首次开机配置（FM350 的 AT 口 / APN / CID 自动纠正）
+#    真机实测：插件默认 at_port=/dev/ttyUSB1 在本机是哑口（真 AT 口是 USB 接口 :1.6
+#    = /dev/ttyUSB3），且默认 cid=1 会拨到运营商的 ims 承载，表现为「能读到模组却上不了网」。
+_ap3000m_uci="$GITHUB_WORKSPACE/Scripts/AP3000M/fm350-ap3000m"
+if [ -f "$_ap3000m_uci" ]; then
+	_ap3000m_dst="package/base-files/files/etc/uci-defaults/99-ap3000m-fm350"
+	mkdir -p "$(dirname "$_ap3000m_dst")"
+	cp -f "$_ap3000m_uci" "$_ap3000m_dst"
+	chmod 0755 "$_ap3000m_dst"
+	_ap3000m_log "已投放开机自动配置: $_ap3000m_dst"
+else
+	_ap3000m_log "缺少 $_ap3000m_uci，FM350 将沿用插件默认值（AT 口可能不对）"
+fi
+
 _ap3000m_log "扩展准备完成"
 return 0 2>/dev/null || exit 0

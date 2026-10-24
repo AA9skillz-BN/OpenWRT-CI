@@ -1,0 +1,112 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# AirPi AP3000M × Fibocom FM350-GL 首次开机自动配置
+#
+# 由 Scripts/PRIVATE.sh 在构建期投放到 /etc/uci-defaults/99-ap3000m-fm350，
+# 首次开机执行一次（成功即自删）。失败时 exit 1，脚本保留，下次启动重试。
+#
+# 为什么需要它（2026-10-25 在真机 192.168.10.1 上实测确认）：
+#   1) at_port：FM350 在 AT+GTUSBMODE=41 下导出 7 个 ttyUSB
+#      （1.2/1.3/1.4/1.6/1.7/1.8/1.9），真正的 AT 口是 USB 接口 :1.6。
+#      插件默认写死 /dev/ttyUSB1（对应 1.3），是个「节点存在但永不说话」的哑口；
+#      守护自带的自动改选会误把 "usb-usb2-2-1:1.6" 这类标识当路径写回 UCI 而报错，
+#      结果永远停在哑口上 → 界面显示模组信息为空 = 用户说的「读不到模块」。
+#   2) apn：插件默认 ctnet（电信），移动/联通卡拨到错误 APN。
+#   3) cid：插件默认 1，而运营商的一号承载通常是 "ims"（VoLTE 专用），
+#      激活后只拿到 IPv6 链路本地地址 → 表现为「有地址、有 DNS，但一个包都出不去」。
+#
+# 实测结果：三处改对后 eth2 拿到 10.x 运营商地址 + 网关 ARP 可达，
+# 路由器与 LAN 侧均可正常上网。
+
+set -u
+
+LOG() { logger -t ap3000m-fm350 "$*"; echo "[ap3000m-fm350] $*"; }
+
+# ---- 1. 等待模组枚举（最多 40 秒）----
+i=0
+while [ "$i" -lt 40 ]; do
+	[ -e /dev/ttyUSB0 ] && break
+	sleep 1
+	i=$((i + 1))
+done
+
+# ---- 2. 按 USB 接口号定位 AT 口：mode 41 → :1.6，mode 40 → :1.2 ----
+AT_DEV=""
+for ifc in /sys/bus/usb/devices/*:1.6 /sys/bus/usb/devices/*:1.2; do
+	[ -d "$ifc" ] || continue
+	for node in "$ifc"/ttyUSB*; do
+		[ -e "$node" ] || continue
+		AT_DEV="/dev/${node##*/}"
+		break 2
+	done
+done
+
+if [ -z "$AT_DEV" ]; then
+	LOG "未发现 FM350 的 AT 口（模组尚未枚举），保留默认配置，下次启动重试"
+	exit 1
+fi
+
+CHANGED=0
+if [ "$(uci -q get fm350.main.at_port)" != "$AT_DEV" ]; then
+	uci set fm350.main.at_port="$AT_DEV"
+	CHANGED=1
+	LOG "AT 口修正为 $AT_DEV"
+fi
+# 端口先落盘：下面的 fm350d CLI 直连要靠它找串口
+uci -q commit fm350 2>/dev/null || true
+
+# ---- 3. 用 IMSI 判断运营商，选对 APN（仅覆盖出厂默认值）----
+IMSI=$(fm350d info 2>/dev/null |
+	sed -n 's/.*"imsi"[[:space:]]*:[[:space:]]*"\([0-9]\{6,\}\)".*/\1/p' | head -n 1)
+
+if [ -z "$IMSI" ]; then
+	LOG "模组 AT 无响应（读不到 IMSI），保留其余默认值，下次启动重试"
+	exit 1
+fi
+
+APN=""
+case "$IMSI" in
+	46000* | 46002* | 46004* | 46007* | 46008* | 46015* | 46020*) APN="CMNET" ;;
+	46003* | 46005* | 46011* | 46012* | 46013*) APN="CTNET" ;;
+	46001* | 46006* | 46009* | 46010*) APN="3GNET" ;;
+esac
+
+CUR_APN=$(uci -q get fm350.main.apn)
+case "$CUR_APN" in
+	"" | ctnet | CTNET | cmnet | CMNET | 3gnet | 3GNET | ims | IMS)
+		if [ -n "$APN" ] && [ "$CUR_APN" != "$APN" ]; then
+			uci set fm350.main.apn="$APN"
+			CHANGED=1
+			LOG "IMSI $IMSI → APN $APN"
+		fi
+		;;
+	*) LOG "保留用户自定义 APN：$CUR_APN" ;;
+esac
+
+# ---- 4. 选一个非 ims 的数据承载 CID ----
+CID=$(fm350d at 'AT+CGDCONT?' 2>/dev/null |
+	sed 's/\\n/\n/g' |
+	grep 'CGDCONT' |
+	grep -v 'ims' |
+	sed -n 's/.*+CGDCONT:[[:space:]]*\([0-9]\{1,2\}\),.*/\1/p' |
+	head -n 1)
+[ -n "$CID" ] || CID=2
+
+if [ "$(uci -q get fm350.main.cid)" != "$CID" ]; then
+	uci set fm350.main.cid="$CID"
+	CHANGED=1
+	LOG "数据承载 CID 设为 $CID（避开 ims 承载）"
+fi
+
+# ---- 5. 落盘并按需重启守护 ----
+if [ "$CHANGED" = 1 ]; then
+	uci commit fm350
+	LOG "配置已更新：at_port=$AT_DEV apn=$(uci -q get fm350.main.apn) cid=$CID"
+	if /etc/init.d/fm350d status >/dev/null 2>&1; then
+		/etc/init.d/fm350d restart >/dev/null 2>&1
+	fi
+else
+	LOG "FM350 配置已是正确值，跳过"
+fi
+
+exit 0
