@@ -84,28 +84,15 @@ jobs:
           make -j"$(nproc)" V=s 2>&1 | tee build.log || \
             make -j1 V=s 2>&1 | tee -a build.log
 
-      - name: Upload firmware
-        uses: actions/upload-artifact@v4
-        with:
-          name: tr3000-512-firmware-${{ github.run_number }}
-          path: |
-            firmware/bin/targets/mediatek/filogic/
-            firmware/build.config
-            firmware/source-commit.txt
-            firmware/openclash-commit.txt
-            firmware/turboacc-commit.txt
-            firmware/aurora-commits.txt
-            firmware/tr3000-512.patch
-          if-no-files-found: error
-          retention-days: 7
-
       - name: Publish TR3000 release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p release-assets
-          find bin/targets/mediatek/filogic -maxdepth 1 -type f -exec cp -t release-assets {} +
-          cp build.config source-commit.txt openclash-commit.txt turboacc-commit.txt aurora-commits.txt tr3000-512.patch release-assets/
+          image=bin/targets/mediatek/filogic/immortalwrt-mediatek-filogic-cudy_tr3000-v1-squashfs-sysupgrade.bin
+          test -s "$image"
+          cp "$image" release-assets/
+          (cd release-assets && sha256sum immortalwrt-mediatek-filogic-cudy_tr3000-v1-squashfs-sysupgrade.bin > sha256sums)
           python3 "$GITHUB_WORKSPACE/Scripts/Release/publish.py" \
             --model tr3000-512 --label 'TR3000 512MB' \
             --source https://github.com/VIKINGYFY/immortalwrt --branch owrt \
@@ -113,7 +100,7 @@ jobs:
             --notes "$GITHUB_WORKSPACE/release-notes/TR3000-512.md" --assets release-assets
 
       - name: Upload diagnostics
-        if: always()
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: tr3000-512-diagnostics-${{ github.run_number }}
