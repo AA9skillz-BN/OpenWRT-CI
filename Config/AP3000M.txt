@@ -1,0 +1,59 @@
+# =====================================================================
+# AirPi AP3000M（airpi,ap3000m / MediaTek MT7981B + MT7976，eMMC 8G/16G）
+# 单机型配置：只编 AP3000M，不编整个 filogic 家族
+#
+# 配套文件：
+#   .github/workflows/AP3000M.yml   工作流（调用公用核心 WRT-CORE.yml）
+#   Scripts/PRIVATE.sh              AP3000M 专用扩展（Rust 交叉编译准备）
+#   docs/AP3000M.md                 说明文档
+#
+# 插件来源（由 Scripts/Packages.sh 统一克隆，无需在此处额外指定）：
+#   LianXia233/luci-app-fm350                 -> package/luci-app-fm350
+#   LianXia233/luci-app-airpi3000m-fancontrol -> package/luci-app-airpi3000m-fancontrol
+#                                               ├─ luci-app-airpi-fancontrol
+#                                               └─ airpi-gpio-fan
+# =====================================================================
+
+# 设备平台（MULTI_PROFILE 由 GENERAL.txt 统一启用，这里只做单设备选择）
+CONFIG_TARGET_mediatek=y
+CONFIG_TARGET_mediatek_filogic=y
+CONFIG_TARGET_ALL_PROFILES=n
+CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_airpi_ap3000m=y
+
+# 内核调整
+CONFIG_PACKAGE_kmod-cryptodev=y
+CONFIG_PACKAGE_kmod-tls=y
+CONFIG_PACKAGE_kmod-mtd-rw=y
+CONFIG_PACKAGE_nand-utils=y
+CONFIG_PACKAGE_cpufreq=y
+
+# WiFi 驱动 / 固件（MT7981 + MT7976 DBDC）
+# 设备画像里已带 kmod-mt7915e / kmod-mt7981-firmware / mt7981-wo-firmware，
+# 这里补齐运行时与 LuCI 无线管理界面，避免重复声明造成的误判。
+CONFIG_PACKAGE_wpad-basic-mbedtls=y
+CONFIG_PACKAGE_wireless-regdb=y
+CONFIG_PACKAGE_iwinfo=y
+CONFIG_PACKAGE_luci-mod-network=y
+
+# ---------------------------------------------------------------------
+# AirPi AP3000M 风扇温控（LianXia233/luci-app-airpi3000m-fancontrol）
+#   luci-app-airpi-fancontrol : LuCI JS 界面 + Rust 守护进程 airpi-fanctl
+#   kmod-airpi-gpio-fan       : GPIO 软 PWM 风扇驱动（/sys/kernel/duty_cycle）
+#   kmod-hwmon-pwmfan         : 硬件 PWM 风扇驱动（8G eMMC 版本走硬 PWM 链路）
+# ---------------------------------------------------------------------
+CONFIG_PACKAGE_luci-app-airpi-fancontrol=y
+CONFIG_PACKAGE_kmod-airpi-gpio-fan=y
+CONFIG_PACKAGE_kmod-hwmon-pwmfan=y
+
+# ---------------------------------------------------------------------
+# Fibocom FM350-GL 5G 模组管理（LianXia233/luci-app-fm350）
+#   依赖：luci-base + rpcd-mod-ucode + kmod-usb-net-rndis + kmod-usb-serial-option
+#   后端：/usr/sbin/fm350d（Rust，musl 静态链接）
+# ---------------------------------------------------------------------
+CONFIG_PACKAGE_luci-app-fm350=y
+CONFIG_PACKAGE_rpcd-mod-ucode=y
+CONFIG_PACKAGE_kmod-usb-net-rndis=y
+CONFIG_PACKAGE_kmod-usb-serial-option=y
+# FM350 常见的 CDC-NCM / MBIM 备选链路，命中的模组可直接拨号
+CONFIG_PACKAGE_kmod-usb-net-cdc-ncm=y
+CONFIG_PACKAGE_kmod-usb-net-cdc-mbim=y

@@ -1,0 +1,67 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# AirPi AP3000M 专用扩展脚本
+#
+# 由 Scripts/Packages.sh 末尾的官方扩展钩子自动 source：
+#   if [ -f "$GITHUB_WORKSPACE/Scripts/PRIVATE.sh" ]; then source "$GITHUB_WORKSPACE/Scripts/PRIVATE.sh"; fi
+#
+# 为什么需要它：
+#   luci-app-fm350 的 Makefile 不走 OpenWrt 的 rust-package.mk，而是直接调用编译机上的
+#   `cargo build --release --target aarch64-unknown-linux-musl` 生成静态后端 fm350d。
+#   GitHub 托管的 ubuntu runner 自带 Rust 稳定版，但默认只装了宿主 target，
+#   必须补 aarch64-unknown-linux-musl 的 std，否则 fm350 编译必然失败。
+#   （luci-app-airpi-fancontrol 走 feeds/packages 的 rust-package.mk，不需要这里干预。）
+#
+# 非 AP3000M 构建：直接返回，不改变原有流程的任何行为。
+
+set +e
+
+_ap3000m_log() { echo "==> [AP3000M] $*"; }
+
+# 仅 AP3000M 配置生效（WRT_CONFIG 为空时也跳过）
+if [[ "${WRT_CONFIG,,}" != *"ap3000m"* ]]; then
+	return 0 2>/dev/null || exit 0
+fi
+
+RUST_TARGET="aarch64-unknown-linux-musl"
+
+# 1) rustup 不在 PATH 但已安装的情况（$HOME/.cargo/bin 未导出）
+if ! command -v rustup >/dev/null 2>&1 && [ -x "$HOME/.cargo/bin/rustup" ]; then
+	export PATH="$HOME/.cargo/bin:$PATH"
+fi
+
+# 2) 极端情况：runner 完全没有 Rust，装一个最小化工具链
+if ! command -v rustup >/dev/null 2>&1; then
+	_ap3000m_log "未检测到 rustup，安装最小化 Rust 工具链"
+	curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
+		sh -s -- -y --profile minimal --default-toolchain stable >/dev/null 2>&1
+	export PATH="$HOME/.cargo/bin:$PATH"
+fi
+
+# 3) 把 cargo 目录写进后续步骤的 PATH（GITHUB_PATH 跨步骤生效）
+if [ -n "${GITHUB_PATH:-}" ] && [ -d "$HOME/.cargo/bin" ]; then
+	echo "$HOME/.cargo/bin" >>"$GITHUB_PATH"
+fi
+
+# 4) 补齐 aarch64 musl 目标
+if command -v rustup >/dev/null 2>&1; then
+	_ap3000m_log "rustup target add $RUST_TARGET"
+	rustup target add "$RUST_TARGET" ||
+		_ap3000m_log "rustup target add 失败，若编译机 cargo 来自 feeds/packages 的 rust 主机包可忽略"
+fi
+
+# 5) 打印工具链信息 + 预检两个插件是否已由 Packages.sh 克隆到位
+command -v cargo >/dev/null 2>&1 && _ap3000m_log "cargo: $(cargo --version 2>/dev/null)"
+command -v rustc >/dev/null 2>&1 && _ap3000m_log "rustc: $(rustc --version 2>/dev/null)"
+command -v rustup >/dev/null 2>&1 && _ap3000m_log "已装 target: $(rustup target list --installed 2>/dev/null | tr '\n' ' ')"
+
+for _dir in package/luci-app-fm350 package/luci-app-airpi3000m-fancontrol; do
+	if [ -d "$_dir" ]; then
+		_ap3000m_log "插件已就绪: $_dir"
+	else
+		_ap3000m_log "插件缺失: $_dir（请检查 Scripts/Packages.sh 的 UPDATE_PACKAGE 列表）"
+	fi
+done
+
+_ap3000m_log "扩展准备完成"
+return 0 2>/dev/null || exit 0
