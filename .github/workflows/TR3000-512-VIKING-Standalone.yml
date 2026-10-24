@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: tr3000-512-viking-standalone-${{ github.ref }}
@@ -51,7 +51,36 @@ jobs:
 
       - name: Match running TR3000 512MB partition layout
         shell: bash
-        run: bash "$GITHUB_WORKSPACE/Scripts/TR3000-512/patch-layout.sh"
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          dts = Path('target/linux/mediatek/dts/mt7981b-cudy-tr3000-v1.dts')
+          text = dts.read_text()
+          old = 'reg = <0x5c0000 0x4000000>;'
+          assert text.count(old) == 1, 'Unexpected upstream UBI layout; review patch'
+          text = text.replace(old, 'reg = <0x5c0000 0x1da40000>;')
+          text = text.replace('model = "Cudy TR3000 v1";',
+                              'model = "Cudy TR3000 512MB v1";')
+          dts.write_bytes(text.encode())
+
+          image = Path('target/linux/mediatek/image/filogic.mk')
+          text = image.read_text()
+          pattern = r'(?ms)^define Device/cudy_tr3000-v1\n.*?^endef$'
+          match = re.search(pattern, text)
+          assert match, 'Device definition missing'
+          block = match.group()
+          assert 'IMAGE_SIZE := 65536k' in block, 'Unexpected image size'
+          assert 'BLOCKSIZE := 128k' in block
+          assert 'PAGESIZE := 2048' in block
+          block = block.replace('IMAGE_SIZE := 65536k', 'IMAGE_SIZE := 485632k')
+          text = text[:match.start()] + block + text[match.end():]
+          image.write_bytes(text.encode())
+          PY
+          git diff --check
+          git diff > tr3000-512.patch
+          git rev-parse HEAD > source-commit.txt
 
       - name: Install feeds
         run: |
@@ -59,20 +88,121 @@ jobs:
           ./scripts/feeds install -a
 
       - name: Add OpenClash package
-        shell: bash
-        run: bash "$GITHUB_WORKSPACE/Scripts/TR3000-512/openclash.sh"
+        run: |
+          git clone --depth 1 --single-branch --branch dev \
+            https://github.com/vernesong/OpenClash.git ../openclash-source
+          cp -a ../openclash-source/luci-app-openclash package/
+          git -C ../openclash-source rev-parse HEAD > openclash-commit.txt
 
       - name: Add TurboACC nftables interface
-        shell: bash
-        run: bash "$GITHUB_WORKSPACE/Scripts/TR3000-512/turboacc.sh"
+        run: |
+          git clone https://github.com/chenmozhijin/turboacc.git ../turboacc-source
+          git -C ../turboacc-source checkout --detach 530092c532839efb96e9f328d34dbf3adff4b557
+          # Use this reviewed package instead of a duplicate feed entry.
+          if [ -e package/feeds/luci/luci-app-turboacc ] || [ -L package/feeds/luci/luci-app-turboacc ]; then
+            rm -f package/feeds/luci/luci-app-turboacc
+          fi
+          test ! -e package/luci-app-turboacc
+          cp -a ../turboacc-source/luci-app-turboacc package/
+          git -C ../turboacc-source rev-parse HEAD > turboacc-commit.txt
 
       - name: Add Aurora theme and configuration
-        shell: bash
-        run: bash "$GITHUB_WORKSPACE/Scripts/TR3000-512/aurora.sh"
+        run: |
+          for pkg in luci-theme-aurora luci-app-aurora-config; do
+            # Remove only an existing feed symlink to avoid duplicate definitions.
+            if [ -L "package/feeds/luci/$pkg" ]; then
+              rm "package/feeds/luci/$pkg"
+            fi
+            test ! -e "package/$pkg"
+            git clone --depth 1 --single-branch --branch master \
+              "https://github.com/eamonxg/$pkg.git" "package/$pkg"
+            git -C "package/$pkg" rev-parse HEAD >> aurora-commits.txt
+          done
 
       - name: Configure single device
-        shell: bash
-        run: bash "$GITHUB_WORKSPACE/Scripts/TR3000-512/configure.sh"
+        run: |
+          cat > .config <<'EOF'
+          CONFIG_TARGET_mediatek=y
+          CONFIG_TARGET_mediatek_filogic=y
+          CONFIG_TARGET_mediatek_filogic_DEVICE_cudy_tr3000-v1=y
+          CONFIG_PACKAGE_luci=y
+          CONFIG_PACKAGE_luci-ssl=y
+          CONFIG_PACKAGE_luci-theme-aurora=y
+          CONFIG_PACKAGE_luci-app-aurora-config=y
+          CONFIG_LUCI_LANG_zh_Hans=y
+          CONFIG_PACKAGE_luci-i18n-aurora-config-zh-cn=y
+          CONFIG_PACKAGE_luci-i18n-base-zh-cn=y
+          CONFIG_PACKAGE_luci-app-openclash=y
+          CONFIG_PACKAGE_kmod-mt7915e=y
+          CONFIG_PACKAGE_kmod-mt7981-firmware=y
+          CONFIG_PACKAGE_mt7981-wo-firmware=y
+          CONFIG_PACKAGE_kmod-nft-offload=y
+          CONFIG_PACKAGE_luci-app-turboacc=y
+          CONFIG_PACKAGE_luci-compat=y
+          CONFIG_PACKAGE_luci-i18n-turboacc-zh-cn=y
+          CONFIG_PACKAGE_luci-app-turboacc_INCLUDE_OFFLOADING=y
+          # CONFIG_PACKAGE_luci-app-turboacc_INCLUDE_SHORTCUT_FE is not set
+          # CONFIG_PACKAGE_luci-app-turboacc_INCLUDE_SHORTCUT_FE_CM is not set
+          # CONFIG_PACKAGE_luci-app-turboacc_INCLUDE_SHORTCUT_FE_DRV is not set
+          # CONFIG_PACKAGE_luci-app-turboacc_INCLUDE_BBR_CCA is not set
+          # CONFIG_PACKAGE_luci-app-turboacc_INCLUDE_NFT_FULLCONE is not set
+          CONFIG_PACKAGE_bash=y
+          CONFIG_PACKAGE_curl=y
+          CONFIG_PACKAGE_ca-bundle=y
+          CONFIG_PACKAGE_ip-full=y
+          CONFIG_PACKAGE_kmod-tun=y
+          CONFIG_PACKAGE_kmod-inet-diag=y
+          CONFIG_PACKAGE_unzip=y
+          CONFIG_PACKAGE_ruby=y
+          CONFIG_PACKAGE_ruby-yaml=y
+          CONFIG_PACKAGE_kmod-nft-tproxy=y
+          CONFIG_PACKAGE_kmod-nft-socket=y
+          CONFIG_PACKAGE_kmod-nft-nat=y
+          CONFIG_PACKAGE_kmod-usb-net-rndis=y
+          CONFIG_PACKAGE_kmod-usb-net-cdc-ether=y
+          CONFIG_PACKAGE_kmod-usb-net-cdc-ncm=y
+          CONFIG_PACKAGE_usbutils=y
+          EOF
+          make defconfig
+          grep -qx 'CONFIG_TARGET_mediatek_filogic_DEVICE_cudy_tr3000-v1=y' .config
+          grep -qx 'CONFIG_PACKAGE_luci-app-openclash=y' .config
+          grep -qx 'CONFIG_PACKAGE_kmod-usb-net-rndis=y' .config
+          grep -qx 'CONFIG_PACKAGE_kmod-usb-net-cdc-ncm=y' .config
+          grep -qx 'CONFIG_PACKAGE_kmod-mt7915e=y' .config
+          grep -qx 'CONFIG_PACKAGE_kmod-nft-offload=y' .config
+          grep -qx 'CONFIG_PACKAGE_luci-app-turboacc=y' .config
+          grep -qx 'CONFIG_PACKAGE_luci-theme-aurora=y' .config
+          grep -qx 'CONFIG_PACKAGE_luci-app-aurora-config=y' .config
+          grep -qx 'CONFIG_PACKAGE_luci-i18n-base-zh-cn=y' .config
+          grep -qx 'CONFIG_PACKAGE_luci-i18n-aurora-config-zh-cn=y' .config
+          cp .config build.config
+          mkdir -p files/etc/uci-defaults
+          cat > files/etc/uci-defaults/99-tr3000-flow-offload <<'EOF'
+          #!/bin/sh
+          uci set firewall.@defaults[0].flow_offloading='1'
+          uci set firewall.@defaults[0].flow_offloading_hw='1'
+          uci commit firewall
+          uci set turboacc.config.sw_flow='1'
+          uci set turboacc.config.hw_flow='1'
+          uci set turboacc.config.sfe_flow='0'
+          uci set turboacc.config.hw_wed='1'
+          uci set turboacc.config.bbr_cca='0'
+          uci set turboacc.config.fullcone_nat='1'
+          uci commit turboacc
+          exit 0
+          EOF
+          chmod +x files/etc/uci-defaults/99-tr3000-flow-offload
+          cat > files/etc/uci-defaults/99-tr3000-local-settings <<'EOF'
+          #!/bin/sh
+          uci set network.lan.ipaddr='192.168.6.1'
+          uci set network.lan.netmask='255.255.255.0'
+          uci commit network
+          uci set luci.main.lang='zh_cn'
+          uci set luci.main.mediaurlbase='/luci-static/aurora'
+          uci commit luci
+          exit 0
+          EOF
+          chmod +x files/etc/uci-defaults/99-tr3000-local-settings
 
       - name: Download sources
         run: make download -j8
@@ -98,19 +228,6 @@ jobs:
             firmware/tr3000-512.patch
           if-no-files-found: error
           retention-days: 7
-
-      - name: Publish TR3000 release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          mkdir -p release-assets
-          find bin/targets/mediatek/filogic -maxdepth 1 -type f -exec cp -t release-assets {} +
-          cp build.config source-commit.txt openclash-commit.txt turboacc-commit.txt aurora-commits.txt tr3000-512.patch release-assets/
-          python3 "$GITHUB_WORKSPACE/Scripts/Release/publish.py" \
-            --model tr3000-512 --label 'TR3000 512MB' \
-            --source https://github.com/VIKINGYFY/immortalwrt --branch owrt \
-            --commit "$(cat source-commit.txt)" \
-            --notes "$GITHUB_WORKSPACE/release-notes/TR3000-512.md" --assets release-assets
 
       - name: Upload diagnostics
         if: always()
