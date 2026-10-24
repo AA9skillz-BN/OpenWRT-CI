@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # AirPi AP3000M 单机型固件（基于主线 main line / kernel 6.18）
 #
-# 地基：本仓库公用核心 .github/workflows/WRT-CORE.yml（不改动任何原有文件）
+# 地基：本仓库公用核心 .github/workflows/AP3000M-CORE.yml（不改动任何原有文件）
 # 新增：Config/AP3000M.txt、Scripts/PRIVATE.sh、docs/AP3000M.md、本工作流
 #
 # 集成插件（Scripts/Packages.sh 已内置克隆，此处只需 CONFIG 选中）：
@@ -56,8 +56,8 @@ jobs:
         # 只编 AP3000M 一款，变体在 Config/AP3000M.txt 内调整
         CONFIG: [AP3000M]
 
-    #调用公用编译核心 WRT-CORE.yml（原文件不做任何修改）
-    uses: ./.github/workflows/WRT-CORE.yml
+    #调用 AP3000M 专用核心，公共 WRT-CORE.yml 保持原样
+    uses: ./.github/workflows/AP3000M-CORE.yml
     with:
       #编译配置
       WRT_CONFIG: ${{ matrix.CONFIG }}

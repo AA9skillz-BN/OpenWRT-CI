@@ -3,9 +3,9 @@
 ## 应用方式
 
 将本包内容按目录合并到 OpenWRT-CI 仓库。更新三个已有工作流：
-TR3000-512-VIKING-Standalone.yml、WRT-CORE.yml、Auto-Clean.yml。
-其余文件为新增；AP3000M.yml、AP3000M.txt、GENERAL.txt 和 PRIVATE.sh 无需变更。
-公共核心的改动仅涉及发布和 TEST 产物，不改变其他型号的编译步骤。
+TR3000-512-VIKING-Standalone.yml、AP3000M.yml、Auto-Clean.yml；新增 AP3000M-CORE.yml。
+AP3000M.txt、GENERAL.txt 和 PRIVATE.sh 无需变更。
+WRT-CORE.yml 已恢复原版。AP3000M 改为调用专用 AP3000M-CORE.yml，发布与 TEST 改动仅在专用核心中维护。
 
 ## 配置结构
 
@@ -13,6 +13,7 @@ TR3000-512-VIKING-Standalone.yml、WRT-CORE.yml、Auto-Clean.yml。
 - Scripts/TR3000-512/：源码分区修改、插件下载和配置检查。
 - Files/TR3000-512/：首次启动设置；后台 192.168.6.1、简体中文、Aurora。
 - Config/AP3000M.txt、Scripts/PRIVATE.sh：继续使用现有 AP3000M 配置。
+- .github/workflows/AP3000M-CORE.yml：AP3000M 专用构建与发布核心。
 - release-notes/：各型号独立介绍。
 - Scripts/Release/：两个型号共用的发布和清理工具。
 
