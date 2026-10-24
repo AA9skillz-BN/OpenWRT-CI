@@ -1,72 +1,27 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 VIKINGYFY
+
 name: Auto-Clean
 
 on:
+  #自动清理：每天早上5点
   schedule:
-    - cron: '21 21 * * *'
+    - cron: 21 21 * * *
+  #手动清理
   workflow_dispatch:
 
-permissions:
-  contents: write
-
-concurrency:
-  group: release-cleanup-per-model
-  cancel-in-progress: false
+permissions: write-all
 
 jobs:
   auto_clean:
     runs-on: ubuntu-latest
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      GH_REPO: ${{ github.repository }}
     steps:
-      - name: Keep latest three releases per model
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          import json
-          import os
-          import re
-          import subprocess
-          from collections import defaultdict
-          
-          repo = os.environ['GH_REPO']
-          
-          def gh(*args):
-              return subprocess.check_output(['gh', *args], text=True)
-          
-          pages = json.loads(gh('api', '--paginate', '--slurp',
-                                f'repos/{repo}/releases?per_page=100'))
-          groups = defaultdict(list)
-          for release in (item for page in pages for item in page):
-              if release.get('draft'):
-                  continue
-              body = release.get('body') or ''
-              tag = release['tag_name']
-              marker = re.search(r'<!--\s*firmware-model:\s*([A-Za-z0-9_.-]+)\s*-->', body)
-              if marker:
-                  model = marker.group(1).lower()
-              elif re.match(r'^ap3000m(?:[-_]|$)', tag, re.I):
-                  model = 'ap3000m'
-              elif re.match(r'^tr3000[-_]512(?:mb)?(?:[-_]|$)', tag, re.I):
-                  model = 'tr3000-512'
-              else:
-                  # Existing WRT-CORE releases include this configuration field.
-                  match = re.search(r'^\s*配置[：:]\s*`?([A-Za-z0-9_.-]+)', body, re.M)
-                  if not match:
-                      print(f'SKIP unrecognized release: {tag}')
-                      continue
-                  model = match.group(1).lower()
-              groups[model].append(release)
-          
-          for model, releases in sorted(groups.items()):
-              # Published time is the order visible to users; drafts are excluded.
-              releases.sort(key=lambda r: (r.get('published_at') or r['created_at'], r['id']), reverse=True)
-              print(f'{model}: {len(releases)} releases; keep latest 3', flush=True)
-              for release in releases[:3]:
-                  print(f"  KEEP {release['tag_name']}", flush=True)
-              for release in releases[3:]:
-                  tag = release['tag_name']
-                  print(f'  DELETE {tag}', flush=True)
-                  subprocess.run(['gh', 'release', 'delete', tag, '--repo', repo,
-                                  '--yes', '--cleanup-tag'], check=True)
-          PY
+      - name: Delete old Releases and Workflows
+        uses: ophub/delete-releases-workflows@main
+        with:
+          gh_token: ${{secrets.GITHUB_TOKEN}}
+          delete_releases: true
+          releases_keep_latest: 0
+          delete_tags: true
+          delete_workflows: true
+          workflows_keep_day: 0
