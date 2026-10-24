@@ -94,6 +94,18 @@ jobs:
           cp -a ../openclash-source/luci-app-openclash package/
           git -C ../openclash-source rev-parse HEAD > openclash-commit.txt
 
+      - name: Add TurboACC nftables interface
+        run: |
+          git clone https://github.com/chenmozhijin/turboacc.git ../turboacc-source
+          git -C ../turboacc-source checkout --detach 530092c532839efb96e9f328d34dbf3adff4b557
+          # Use this reviewed package instead of a duplicate feed entry.
+          if [ -e package/feeds/luci/luci-app-turboacc ] || [ -L package/feeds/luci/luci-app-turboacc ]; then
+            rm -f package/feeds/luci/luci-app-turboacc
+          fi
+          test ! -e package/luci-app-turboacc
+          cp -a ../turboacc-source/luci-app-turboacc package/
+          git -C ../turboacc-source rev-parse HEAD > turboacc-commit.txt
+
       - name: Configure single device
         run: |
           cat > .config <<'EOF'
@@ -104,6 +116,19 @@ jobs:
           CONFIG_PACKAGE_luci-ssl=y
           CONFIG_PACKAGE_luci-i18n-base-zh-cn=y
           CONFIG_PACKAGE_luci-app-openclash=y
+          CONFIG_PACKAGE_kmod-mt7915e=y
+          CONFIG_PACKAGE_kmod-mt7981-firmware=y
+          CONFIG_PACKAGE_mt7981-wo-firmware=y
+          CONFIG_PACKAGE_kmod-nft-offload=y
+          CONFIG_PACKAGE_luci-app-turboacc=y
+          CONFIG_PACKAGE_luci-compat=y
+          CONFIG_PACKAGE_luci-i18n-turboacc-zh-cn=y
+          CONFIG_PACKAGE_luci-app-turboacc_INCLUDE_OFFLOADING=y
+          # CONFIG_PACKAGE_luci-app-turboacc_INCLUDE_SHORTCUT_FE is not set
+          # CONFIG_PACKAGE_luci-app-turboacc_INCLUDE_SHORTCUT_FE_CM is not set
+          # CONFIG_PACKAGE_luci-app-turboacc_INCLUDE_SHORTCUT_FE_DRV is not set
+          # CONFIG_PACKAGE_luci-app-turboacc_INCLUDE_BBR_CCA is not set
+          # CONFIG_PACKAGE_luci-app-turboacc_INCLUDE_NFT_FULLCONE is not set
           CONFIG_PACKAGE_bash=y
           CONFIG_PACKAGE_curl=y
           CONFIG_PACKAGE_ca-bundle=y
@@ -126,7 +151,26 @@ jobs:
           grep -qx 'CONFIG_PACKAGE_luci-app-openclash=y' .config
           grep -qx 'CONFIG_PACKAGE_kmod-usb-net-rndis=y' .config
           grep -qx 'CONFIG_PACKAGE_kmod-usb-net-cdc-ncm=y' .config
+          grep -qx 'CONFIG_PACKAGE_kmod-mt7915e=y' .config
+          grep -qx 'CONFIG_PACKAGE_kmod-nft-offload=y' .config
+          grep -qx 'CONFIG_PACKAGE_luci-app-turboacc=y' .config
           cp .config build.config
+          mkdir -p files/etc/uci-defaults
+          cat > files/etc/uci-defaults/99-tr3000-flow-offload <<'EOF'
+          #!/bin/sh
+          uci set firewall.@defaults[0].flow_offloading='1'
+          uci set firewall.@defaults[0].flow_offloading_hw='1'
+          uci commit firewall
+          uci set turboacc.config.sw_flow='1'
+          uci set turboacc.config.hw_flow='1'
+          uci set turboacc.config.sfe_flow='0'
+          uci set turboacc.config.hw_wed='1'
+          uci set turboacc.config.bbr_cca='0'
+          uci set turboacc.config.fullcone_nat='1'
+          uci commit turboacc
+          exit 0
+          EOF
+          chmod +x files/etc/uci-defaults/99-tr3000-flow-offload
 
       - name: Download sources
         run: make download -j8
@@ -147,6 +191,7 @@ jobs:
             firmware/build.config
             firmware/source-commit.txt
             firmware/openclash-commit.txt
+            firmware/turboacc-commit.txt
             firmware/tr3000-512.patch
           if-no-files-found: error
           retention-days: 7
