@@ -1,0 +1,85 @@
+# SPDX-License-Identifier: MIT
+# AirPi AP3000M 单机型固件（基于主线 main line / kernel 6.18）
+#
+# 地基：本仓库公用核心 .github/workflows/WRT-CORE.yml（不改动任何原有文件）
+# 新增：Config/AP3000M.txt、Scripts/PRIVATE.sh、docs/AP3000M.md、本工作流
+#
+# 集成插件（Scripts/Packages.sh 已内置克隆，此处只需 CONFIG 选中）：
+#   LianXia233/luci-app-fm350                 Fibocom FM350-GL 5G 模组管理（Rust 后端 fm350d）
+#   LianXia233/luci-app-airpi3000m-fancontrol AP3000M 风扇温控（LuCI JS + Rust airpi-fanctl + kmod-airpi-gpio-fan）
+#
+# 说明：ImmortalWrt 源码仓库没有 main 分支，其主线开发分支即 master（内核 6.18）；
+#       OpenWrt 上游已把 master 重命名为 main（两者同一提交）。如需直接编 OpenWrt 主线，
+#       手动触发时把 SOURCE 填 openwrt/openwrt、BRANCH 填 main 即可。
+
+name: AP3000M
+
+on:
+  # 手动编译
+  workflow_dispatch:
+    inputs:
+      SOURCE:
+        description: '源码仓库（owner/repo），默认 immortalwrt/immortalwrt'
+        required: false
+        default: 'immortalwrt/immortalwrt'
+        type: string
+      BRANCH:
+        description: '源码分支，默认 master（主线 6.18；OpenWrt 上游同名分支为 main）'
+        required: false
+        default: 'master'
+        type: string
+      PACKAGE:
+        description: '手动追加插件包，多个请用\n符号隔开。'
+        required: false
+        type: string
+      TEST:
+        description: '仅输出配置文件，不编译固件。'
+        default: false
+        required: false
+        type: boolean
+
+#CI权限
+permissions: write-all
+
+#同一时间只跑一个 AP3000M 构建，避免重复占用缓存与 Actions 额度
+concurrency:
+  group: ap3000m-${{ github.ref }}
+  cancel-in-progress: false
+
+#CI任务
+jobs:
+  ap3000m:
+    name: AP3000M-${{ inputs.SOURCE }}-${{ inputs.BRANCH }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # 只编 AP3000M 一款，变体在 Config/AP3000M.txt 内调整
+        CONFIG: [AP3000M]
+
+    #调用公用编译核心 WRT-CORE.yml（原文件不做任何修改）
+    uses: ./.github/workflows/WRT-CORE.yml
+    with:
+      #编译配置
+      WRT_CONFIG: ${{ matrix.CONFIG }}
+      #默认主题
+      WRT_THEME: aurora
+      #默认主机名
+      WRT_NAME: AP3000M
+      #默认WIFI名称
+      WRT_SSID: AP3000M
+      #默认WIFI密码
+      WRT_WORD: 12345678
+      #默认地址
+      WRT_IP: 192.168.10.1
+      #默认密码，仅作提示，修改无用
+      WRT_PW: 无
+      #源码链接
+      WRT_REPO: https://github.com/${{ inputs.SOURCE || 'immortalwrt/immortalwrt' }}.git
+      #源码分支
+      WRT_BRANCH: ${{ inputs.BRANCH || 'master' }}
+      #源码名称
+      WRT_SOURCE: ${{ inputs.SOURCE || 'immortalwrt/immortalwrt' }}
+      #插件调整
+      WRT_PACKAGE: ${{ inputs.PACKAGE }}
+      #仅输出配置文件
+      WRT_TEST: ${{ inputs.TEST || false }}
