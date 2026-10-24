@@ -83,3 +83,42 @@ jobs:
       WRT_PACKAGE: ${{ inputs.PACKAGE }}
       #仅输出配置文件
       WRT_TEST: ${{ inputs.TEST || false }}
+
+  # WRT-CORE 发布时会把 bin/targets 下的全部文件（含 mt798x-bl2 等引导件、manifest）
+  # 一并塞进 Release。这里只保留真正要用的两个：sysupgrade 固件 + 本次生效的配置。
+  trim-release:
+    name: Trim release assets
+    needs: ap3000m
+    if: ${{ needs.ap3000m.result == 'success' && !inputs.TEST }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Keep only firmware + config
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          TAG=$(gh api "repos/$GH_REPO/releases?per_page=30" \
+            --jq '[.[] | select(.tag_name | startswith("AP3000M-"))][0].tag_name')
+          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
+            echo "no AP3000M release found, skip"
+            exit 0
+          fi
+          echo "release: $TAG"
+
+          gh api "repos/$GH_REPO/releases/tags/$TAG" --jq '.assets[].name' |
+            while IFS= read -r ASSET; do
+              case "$ASSET" in
+                *sysupgrade*.bin|Config-*.txt)
+                  echo "  keep   $ASSET" ;;
+                *)
+                  echo "  delete $ASSET"
+                  gh release delete-asset "$TAG" "$ASSET" --yes || echo "  warn: delete failed" ;;
+              esac
+            done
+
+          echo "--- remaining assets ---"
+          gh api "repos/$GH_REPO/releases/tags/$TAG" --jq '.assets[] | "\(.name)  \(.size) bytes"'
