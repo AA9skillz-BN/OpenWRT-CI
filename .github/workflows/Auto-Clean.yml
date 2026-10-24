@@ -1,27 +1,35 @@
-# SPDX-License-Identifier: MIT
-# Copyright (C) 2026 VIKINGYFY
-
 name: Auto-Clean
 
 on:
-  #自动清理：每天早上5点
   schedule:
-    - cron: 21 21 * * *
-  #手动清理
+    - cron: '21 21 * * *'
   workflow_dispatch:
+    inputs:
+      APPLY:
+        description: '执行删除；不勾选则只预览清理列表'
+        type: boolean
+        default: false
 
-permissions: write-all
+permissions:
+  contents: write
+
+concurrency:
+  group: release-cleanup-per-model
+  cancel-in-progress: false
 
 jobs:
   auto_clean:
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - name: Delete old Releases and Workflows
-        uses: ophub/delete-releases-workflows@main
-        with:
-          gh_token: ${{secrets.GITHUB_TOKEN}}
-          delete_releases: true
-          releases_keep_latest: 0
-          delete_tags: true
-          delete_workflows: true
-          workflows_keep_day: 0
+      - uses: actions/checkout@v4
+      - name: Preview or clean releases per model
+        env:
+          APPLY: ${{ github.event_name == 'schedule' || inputs.APPLY }}
+        run: |
+          if [ "$APPLY" = true ]; then
+            python3 Scripts/Release/cleanup.py --apply
+          else
+            python3 Scripts/Release/cleanup.py
+          fi

@@ -253,7 +253,25 @@ jobs:
             make clean -j$(nproc)
           fi
 
+      - name: Upload configuration test
+        if: ${{ inputs.WRT_TEST }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: config-${{ inputs.WRT_CONFIG }}-${{ github.run_number }}
+          path: ./wrt/upload/
+
+      - name: Publish AP3000M release
+        if: ${{ inputs.WRT_CONFIG == 'AP3000M' && !inputs.WRT_TEST }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 "$GITHUB_WORKSPACE/Scripts/Release/publish.py" \
+            --model ap3000m --label AP3000M \
+            --source "$WRT_REPO" --branch "$WRT_BRANCH" --commit "$WRT_HASH" \
+            --notes "$GITHUB_WORKSPACE/release-notes/AP3000M.md" --assets ./wrt/upload
+
       - name: Release Firmware
+        if: ${{ inputs.WRT_CONFIG != 'AP3000M' && !inputs.WRT_TEST }}
         uses: softprops/action-gh-release@master
         with:
           tag_name: ${{env.WRT_CONFIG}}-${{env.WRT_INFO}}-${{env.WRT_BRANCH}}-${{env.WRT_DATE}}

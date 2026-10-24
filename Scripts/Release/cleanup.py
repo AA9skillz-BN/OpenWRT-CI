@@ -1,0 +1,51 @@
+"""Keep newest three published releases per recognized firmware model."""
+import argparse
+from collections import defaultdict
+import json
+import os
+import re
+import subprocess
+
+def model_of(release):
+    body = release.get('body') or ''
+    marker = re.search(r'<!--\s*firmware-model:\s*([a-zA-Z0-9-]+)\s*-->', body)
+    if marker:
+        return marker.group(1).lower()
+    # Only migrate known single-device releases; platform bundles stay untouched.
+    if re.match(r'^AP3000M-', release['tag_name'], re.I):
+        return 'ap3000m'
+    if re.match(r'^TR3000[-_]512(?:MB)?-', release['tag_name'], re.I):
+        return 'tr3000-512'
+    return None
+
+def plan(releases, keep=3):
+    groups = defaultdict(list)
+    for release in releases:
+        if release.get('draft'):
+            continue
+        model = model_of(release)
+        if model:
+            groups[model].append(release)
+    result = []
+    for model, group in sorted(groups.items()):
+        group.sort(key=lambda r: (r.get('published_at') or r['created_at'], r['id']), reverse=True)
+        for index, release in enumerate(group):
+            result.append((model, index >= keep, release))
+    return result
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument('--apply', action='store_true')
+    a = p.parse_args()
+    repo = os.environ['GITHUB_REPOSITORY']
+    pages = json.loads(subprocess.check_output(
+        ['gh', 'api', '--paginate', '--slurp', f'repos/{repo}/releases?per_page=100'], text=True))
+    for model, delete, release in plan([r for page in pages for r in page]):
+        tag = release['tag_name']
+        print(f'{model}: {"DELETE" if delete else "KEEP"} {tag}', flush=True)
+        if delete and a.apply:
+            # Keep Git tags: they may also be referenced outside Releases.
+            subprocess.run(['gh', 'release', 'delete', tag, '--repo', repo, '--yes'], check=True)
+
+if __name__ == '__main__':
+    main()
