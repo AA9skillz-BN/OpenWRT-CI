@@ -100,11 +100,11 @@ if [ -d "$_ap3000m_ota_dir" ]; then
 		printf '/etc/ap3000m-pending\n/etc/ap3000m-result\n' >>"$_ap3000m_bf/etc/sysupgrade.conf"
 	fi
 
-	# 开机回写升级结果（rc.local 在系统 init 完成后执行，每次启动都跑）
-	if ! grep -q 'ap3000m-ota boot-hook' "$_ap3000m_bf/etc/rc.local" 2>/dev/null; then
-		sed -i 's#^exit 0$#[ -x /usr/sbin/ap3000m-ota ] \&\& /usr/sbin/ap3000m-ota boot-hook >/dev/null 2>\&1\nexit 0#' \
-			"$_ap3000m_bf/etc/rc.local"
-	fi
+	# 开机回写升级结果：自带 init.d 脚本 + 构建期建 rc.d 软链（不碰 rc.local）
+	cp -f "$_ap3000m_ota_dir/ap3000m-ota-boot" "$_ap3000m_bf/etc/init.d/ap3000m-ota-boot"
+	chmod 0755 "$_ap3000m_bf/etc/init.d/ap3000m-ota-boot"
+	mkdir -p "$_ap3000m_bf/etc/rc.d"
+	ln -sf ../init.d/ap3000m-ota-boot "$_ap3000m_bf/etc/rc.d/S99ap3000m-ota-boot"
 
 	_ap3000m_log "已投放 OTA：ap3000m-ota（构建标签 $_ap3000m_tag）"
 else
