@@ -1,0 +1,20 @@
+#!/bin/sh /etc/rc.common
+# SPDX-License-Identifier: MIT
+# ap3000m-rdnis-guard-boot —— 开机后台启动 RNDIS 卡死自愈
+#
+# START=98：排在 fm350d（95）之后，那时守护已经在拨号。
+# 真正检查在 ap3000m-rdnis-guard 内部延迟执行（默认 120s，含两次采样），
+# 不会阻塞 rcS。
+
+START=98
+STOP=03
+
+start() {
+	[ -x /usr/sbin/ap3000m-rdnis-guard ] || return 0
+	/usr/sbin/ap3000m-rdnis-guard >/dev/null 2>&1 &
+	return 0
+}
+
+stop() {
+	return 0
+}

@@ -18,18 +18,6 @@ set +e
 
 _ap3000m_log() { echo "==> [AP3000M] $*"; }
 
-# ---- TR3000 分支：走独立钩子（分区补丁 / 固定版本插件 / 首启 / F50 即插即用）----
-if [[ "${WRT_CONFIG,,}" == *"tr3000"* ]]; then
-	_tr_private="$GITHUB_WORKSPACE/Scripts/TR3000-512/private.sh"
-	if [ -f "$_tr_private" ]; then
-		# shellcheck disable=SC1090
-		source "$_tr_private"
-		return $? 2>/dev/null || exit $?
-	fi
-	echo "==> [TR3000] 缺少 $_tr_private，跳过专属扩展" >&2
-	return 0 2>/dev/null || exit 0
-fi
-
 # 仅 AP3000M 配置生效（WRT_CONFIG 为空时也跳过）
 if [[ "${WRT_CONFIG,,}" != *"ap3000m"* ]]; then
 	return 0 2>/dev/null || exit 0
@@ -121,6 +109,25 @@ if [ -d "$_ap3000m_ota_dir" ]; then
 	_ap3000m_log "已投放 OTA：ap3000m-ota（构建标签 $_ap3000m_tag）"
 else
 	_ap3000m_log "缺少 $_ap3000m_ota_dir，跳过 OTA 集成"
+fi
+
+# 8) 开机 RNDIS 卡死自愈
+#    真机两次复现：刷机/重启后 eth2 有地址但 rx_packets=0、tx_errors 飞涨，唯一解法是
+#    软重启模组（AT+CFUN=1,1）+ 重新定位 AT 口。这里做成开机 120s 后自动执行。
+_ap3000m_guard_dir="$GITHUB_WORKSPACE/Scripts/AP3000M/rdnis-guard"
+if [ -d "$_ap3000m_guard_dir" ]; then
+	cp -f "$_ap3000m_guard_dir/ap3000m-rdnis-guard" "$_ap3000m_bf/usr/sbin/ap3000m-rdnis-guard"
+	chmod 0755 "$_ap3000m_bf/usr/sbin/ap3000m-rdnis-guard"
+
+	cp -f "$_ap3000m_guard_dir/ap3000m-rdnis-guard-boot" "$_ap3000m_bf/etc/init.d/ap3000m-rdnis-guard"
+	chmod 0755 "$_ap3000m_bf/etc/init.d/ap3000m-rdnis-guard"
+
+	mkdir -p "$_ap3000m_bf/etc/rc.d"
+	ln -sf ../init.d/ap3000m-rdnis-guard "$_ap3000m_bf/etc/rc.d/S98ap3000m-rdnis-guard"
+
+	_ap3000m_log "已投放 RNDIS 自愈（ap3000m-rdnis-guard，开机 120s 自检）"
+else
+	_ap3000m_log "缺少 $_ap3000m_guard_dir，跳过 RNDIS 自愈"
 fi
 
 _ap3000m_log "扩展准备完成"

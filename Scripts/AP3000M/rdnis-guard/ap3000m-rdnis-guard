@@ -1,0 +1,131 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# ap3000m-rdnis-guard —— FM350 RNDIS 端点卡死自愈
+#
+# 现象（2026-10-25 真机两次复现）：刷机/重启后 eth2 有运营商地址，但没有默认路由、
+# 上不了网；`tx_errors` 一路涨而 `rx_packets` 恒为 0 —— 模组 RNDIS 端点卡死，
+# 不是配置问题。唯一可靠恢复手段是让模组软重启：
+#     fm350d at 'AT+CFUN=1,1'   →   等模组重新枚举（ttyUSBN 可能漂移）
+#     → 重新按 USB 接口定位 AT 口 → /etc/init.d/fm350d restart
+#
+# 本脚本由 /etc/init.d/ap3000m-rdnis-guard 在开机后台调用，也可以手工执行：
+#     ap3000m-rdnis-guard --check     # 只检查并打印，不动作
+#     ap3000m-rdnis-guard --force     # 立即自愈（跳过采样）
+#     ap3000m-rdnis-guard --delay 180 # 自定义开机延迟
+
+set -u
+
+DEV_DEFAULT="eth2"
+DELAY=120
+MODE="auto"
+
+log() { logger -t ap3000m-rdnis "$*" 2>/dev/null; printf '%s\n' "ap3000m-rdnis-guard: $*" >&2; }
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+		--check) MODE="check" ;;
+		--force) MODE="force" ;;
+		--delay) shift; DELAY="${1:-120}" ;;
+		--dev) shift; DEV_DEFAULT="${1:-eth2}" ;;
+		*) printf '用法: %s [--check|--force] [--delay N] [--dev ethX]\n' "$0" >&2; exit 2 ;;
+	esac
+	shift
+done
+
+dev() {
+	d=$(uci -q get network.fm350.device 2>/dev/null)
+	[ -n "$d" ] && printf '%s' "$d" || printf '%s' "$DEV_DEFAULT"
+}
+
+stat() { cat "/sys/class/net/$(dev)/statistics/$1" 2>/dev/null || echo 0; }
+
+snapshot() { printf '%s %s %s' "$(stat rx_packets)" "$(stat tx_packets)" "$(stat tx_errors)"; }
+
+# 端点卡死判定：一个包都没收到，但明确尝试发过（或有发送错误）
+stalled() {
+	set -- $(snapshot)
+	rx=$1 tx=$2 err=$3
+	[ "$rx" -eq 0 ] || return 1
+	[ "$tx" -gt 0 ] || [ "$err" -gt 0 ] || return 1
+	return 0
+}
+
+at_port_from_usb() {
+	for ifc in /sys/bus/usb/devices/*:1.6 /sys/bus/usb/devices/*:1.2; do
+		[ -d "$ifc" ] || continue
+		for node in "$ifc"/ttyUSB*; do
+			[ -e "$node" ] || continue
+			printf '/dev/%s' "${node##*/}"
+			return 0
+		done
+	done
+	return 1
+}
+
+cmd_check() {
+	log "设备 $(dev) 统计: rx/tx/err = $(snapshot)"
+	if stalled; then
+		log "判定: RNDIS 端点卡死（rx=0 且有发送尝试）"
+		return 10
+	fi
+	log "判定: 数据面正常"
+	return 0
+}
+
+heal() {
+	before=$(snapshot)
+	log "自愈开始（当前 rx/tx/err = $before）"
+
+	if fm350d at 'AT+CFUN=1,1' >/dev/null 2>&1; then
+		log "已下发 AT+CFUN=1,1，等待模组重新枚举（90s）"
+	else
+		log "AT 通道不可用，改用硬复位路径（仅重启 fm350d）"
+	fi
+	sleep 90
+
+	new_port=$(at_port_from_usb) && {
+		old_port=$(uci -q get fm350.main.at_port)
+		if [ "$new_port" != "$old_port" ]; then
+			uci set fm350.main.at_port="$new_port"
+			uci commit fm350
+			log "AT 口更新：$old_port -> $new_port"
+		fi
+	}
+
+	/etc/init.d/fm350d restart >/dev/null 2>&1
+	log "fm350d 已重启，等待 40s 后复检"
+	sleep 40
+
+	after=$(snapshot)
+	if stalled; then
+		log "复检失败（rx/tx/err = $after），本次放弃，等下次开机重试"
+		printf 'failed %s %s %s\n' "$(date +%s)" "$before" "$after" > /etc/ap3000m-rdnis-result
+		return 1
+	fi
+	log "自愈成功（rx/tx/err = $after）"
+	printf 'success %s %s %s\n' "$(date +%s)" "$before" "$after" > /etc/ap3000m-rdnis-result
+	return 0
+}
+
+case "$MODE" in
+	check) cmd_check ;;
+	force) heal ;;
+	auto)
+		# 开机路径：等系统稳定后再采样两次，避免把"正在拨号"误判成卡死
+		sleep "$DELAY"
+		if /etc/init.d/fm350d status >/dev/null 2>&1; then
+			if stalled; then
+				sleep 20
+				if stalled; then
+					heal
+				else
+					log "首次采样异常但第二次已恢复，跳过"
+				fi
+			else
+				log "开机检查：数据面正常（rx/tx/err = $(snapshot)）"
+			fi
+		else
+			log "fm350d 未运行，跳过"
+		fi
+		;;
+esac
