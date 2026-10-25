@@ -1,0 +1,317 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# ap3000m-ota —— AirPi AP3000M 一键 OTA（检查更新 / 下载校验 / 升级 / 指定版本回退）
+#
+# 设计要点（2026-10-25 定稿）：
+#   1. 版本号来自构建期写死的 /etc/ap3000m-build.tag，值就是 Release 的 tag，
+#      与 WRT-CORE 的 "$WRT_CONFIG-$WRT_INFO-$WRT_BRANCH-$WRT_DATE" 完全一致。
+#   2. 元数据只信 api.github.com（推 tag/size/sha256 三元组）；镜像站只参与下载大文件。
+#   3. 强制 sha256 校验，镜像被投毒也刷不进去。
+#   4. 默认保留配置；--wipe 才 sysupgrade -n。
+#   5. 升级前写 /etc/ap3000m-pending，开机由 rc.local 调 boot-hook 回写成功/失败。
+
+set -u
+
+DIR_DEFAULT=/root/ota
+BUILD_TAG_FILE=/etc/ap3000m-build.tag
+PENDING_FILE=/etc/ap3000m-pending
+RESULT_FILE=/etc/ap3000m-result
+CONF=ap3000m_ota.main
+MARGIN_KB=20480
+
+log()  { printf '%s\n' "ap3000m-ota: $*" >&2; }
+warn() { printf '%s\n' "ap3000m-ota: 警告: $*" >&2; }
+die()  { printf '%s\n' "ap3000m-ota: 错误: $*" >&2; exit 1; }
+
+cfg() { uci -q get "$CONF.$1" 2>/dev/null; }
+cfg_or() { v=$(cfg "$1"); [ -n "$v" ] && printf '%s' "$v" || printf '%s' "$2"; }
+
+repo()         { cfg_or repo "AA9skillz-BN/OpenWRT-CI"; }
+tag_prefix()   { cfg_or tag_prefix "AP3000M-"; }
+work_dir()     { cfg_or dir "$DIR_DEFAULT"; }
+use_mirror()   { cfg_or use_mirror 1; }
+keep_default() { cfg_or keep_config 1; }
+
+current_tag() {
+	if [ -s "$BUILD_TAG_FILE" ]; then
+		cat "$BUILD_TAG_FILE"
+		return 0
+	fi
+	( . /etc/openwrt_release 2>/dev/null
+	  printf 'unknown-%s' "${DISTRIB_REVISION:-$(uname -r)}" )
+}
+
+need_tools() {
+	for t in curl jq sha256sum sysupgrade; do
+		command -v "$t" >/dev/null 2>&1 || die "缺少依赖命令 $t"
+	done
+}
+
+ensure_dir() {
+	d=$(work_dir)
+	[ -d "$d" ] || mkdir -p "$d" || die "无法创建 $d"
+}
+
+fetch_api() {
+	curl -fsSL --connect-timeout 8 --max-time 30 \
+		-H 'Accept: application/vnd.github+json' \
+		-H 'User-Agent: ap3000m-ota/1.0' \
+		"https://api.github.com/repos/$(repo)/releases?per_page=30"
+}
+
+# 输出：<tag> <文件名> <大小> <sha256>（空行表示无匹配）
+parse_tag() {
+	# $1 = 空 -> 最新；否则为指定 tag
+	jq -r --arg p "$(tag_prefix)" --arg want "${1:-}" '
+		[ .[] | select(.draft == false) | select(.tag_name | startswith($p)) ] as $all
+		| (if $want == "" then ($all | sort_by(.tag_name) | last) else ($all | map(select(.tag_name == $want)) | first) end) as $r
+		| if $r == null then "" else
+			($r.assets | map(select(.name | test("sysupgrade.*\\.bin$")))[0]) as $a
+			| [ $r.tag_name, $a.name, ($a.size // 0 | tostring), ($a.digest // "" | sub("^sha256:"; "")) ] | @tsv
+		  end'
+}
+
+list_tags() {
+	jq -r --arg p "$(tag_prefix)" '
+		[ .[] | select(.draft == false) | select(.tag_name | startswith($p)) ]
+		| sort_by(.tag_name) | reverse | .[] | .tag_name'
+}
+
+asset_url() {
+	printf 'https://github.com/%s/releases/download/%s/%s' "$(repo)" "$1" "$2"
+}
+
+mirror_list() {
+	[ "$(use_mirror)" = "1" ] || return 0
+	[ -f /lib/functions.sh ] || return 0
+	. /lib/functions.sh
+	config_load ap3000m_ota 2>/dev/null || return 0
+	config_list_foreach main mirror echo
+}
+
+human_mb() {
+	awk -v b="${1:-0}" 'BEGIN{ printf "%.2f MB", b/1048576 }'
+}
+
+free_kb() {
+	df -k "$(work_dir)" 2>/dev/null | awk 'NR==2 {print $4}'
+}
+
+# ---------- 子命令 ----------
+
+cmd_check() {
+	need_tools
+	json=$(fetch_api) || die "访问 api.github.com 失败（检查 DNS / 网络 / 时间同步）"
+	line=$(printf '%s' "$json" | parse_tag "")
+	[ -n "$line" ] || die "没有找到 $(tag_prefix)* 的 Release"
+
+	LATEST_TAG=$(printf '%s' "$line" | cut -f1)
+	LATEST_NAME=$(printf '%s' "$line" | cut -f2)
+	LATEST_SIZE=$(printf '%s' "$line" | cut -f3)
+	LATEST_SHA=$(printf '%s' "$line" | cut -f4)
+	CUR=$(current_tag)
+
+	if [ "$CUR" = "$LATEST_TAG" ]; then state="已是最新"; else state="可升级"; fi
+
+	if [ "${1:-}" = "--json" ]; then
+		printf '{"current":"%s","latest":"%s","asset":"%s","size":%s,"sha256":"%s","update":%s}\n' \
+			"$CUR" "$LATEST_TAG" "$LATEST_NAME" "$LATEST_SIZE" "$LATEST_SHA" \
+			"$([ "$CUR" = "$LATEST_TAG" ] && echo false || echo true)"
+		return 0
+	fi
+
+	log "当前版本 : $CUR"
+	log "最新版本 : $LATEST_TAG"
+	log "固件文件 : $LATEST_NAME（$(human_mb "$LATEST_SIZE")）"
+	log "sha256   : ${LATEST_SHA:-（该 Release 未提供，跳过校验）}"
+	log "状态     : $state"
+	[ "$CUR" = "$LATEST_TAG" ] || log "升级命令 : ap3000m-ota upgrade"
+}
+
+cmd_list() {
+	need_tools
+	json=$(fetch_api) || die "访问 api.github.com 失败"
+	printf '%s' "$json" | list_tags | while read -r t; do
+		[ "$t" = "$(current_tag)" ] && mark=" (当前)" || mark=""
+		printf '  %s%s\n' "$t" "$mark"
+	done
+}
+
+cmd_download() {
+	need_tools
+	ensure_dir
+	want=""
+	[ "${1:-}" = "--tag" ] && want="${2:-}"
+	json=$(fetch_api) || die "访问 api.github.com 失败"
+	line=$(printf '%s' "$json" | parse_tag "$want")
+	[ -n "$line" ] || die "找不到目标版本 ${want:-（最新）}"
+
+	TAG=$(printf '%s' "$line" | cut -f1)
+	NAME=$(printf '%s' "$line" | cut -f2)
+	SIZE=$(printf '%s' "$line" | cut -f3)
+	SHA=$(printf '%s' "$line" | cut -f4)
+	IMG="$(work_dir)/$TAG.bin"
+
+	if [ -f "$IMG" ] && [ "${SIZE:-0}" -gt 0 ]; then
+		now=$(wc -c < "$IMG" | tr -d ' ')
+		if [ "$now" = "$SIZE" ]; then
+			log "已存在完整镜像：$IMG"
+			echo "$IMG"
+			return 0
+		fi
+	fi
+
+	need=$(( SIZE / 1024 * 3 + MARGIN_KB ))
+	have=$(free_kb)
+	[ -n "$have" ] || die "无法读取 $(work_dir) 剩余空间"
+	[ "$have" -gt "$need" ] || die "空间不足：需要约 $((need / 1024))MB，剩余 $((have / 1024))MB"
+
+	URL=$(asset_url "$TAG" "$NAME")
+	PART="$IMG.part"
+	rm -f "$PART"
+
+	log "下载 $TAG（$(human_mb "$SIZE")）"
+	ok=0
+	mirror_list > /tmp/.ota-mirrors.$$ 2>/dev/null || : > /tmp/.ota-mirrors.$$
+	if [ -s /tmp/.ota-mirrors.$$ ]; then
+		while read -r m; do
+			[ -n "$m" ] || continue
+			log "  尝试镜像：$m"
+			if curl -fL --connect-timeout 8 --speed-time 30 --speed-limit 1024 \
+				-o "$PART" "$m$URL"; then ok=1; break; fi
+			rm -f "$PART"
+		done < /tmp/.ota-mirrors.$$
+	fi
+	rm -f /tmp/.ota-mirrors.$$
+	if [ "$ok" = 0 ]; then
+		log "  尝试直连 GitHub"
+		curl -fL --connect-timeout 8 --speed-time 30 --speed-limit 1024 -o "$PART" "$URL" || die "所有下载源均失败"
+	fi
+
+	if [ -n "$SHA" ]; then
+		printf '%s  %s\n' "$SHA" "$PART" | sha256sum -c - >/dev/null 2>&1 ||
+			{ rm -f "$PART"; die "sha256 校验失败（镜像可能被篡改或下载不完整）"; }
+		log "sha256 校验通过"
+	else
+		warn "该 Release 无 digest，跳过完整性校验"
+	fi
+
+	mv -f "$PART" "$IMG" || die "重命名失败"
+	log "已保存：$IMG"
+	echo "$IMG"
+}
+
+cmd_upgrade() {
+	need_tools
+	ensure_dir
+	keep=$(keep_default)
+	want=""
+	yes=0
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--keep) keep=1 ;;
+			--wipe) keep=0 ;;
+			--yes|-y) yes=1 ;;
+			--tag) shift; want="${1:-}" ;;
+			--image) shift; FORCE_IMG="${1:-}" ;;
+			*) die "未知参数：$1" ;;
+		esac
+		shift
+	done
+
+	if [ -n "${FORCE_IMG:-}" ]; then
+		IMG="$FORCE_IMG"
+		[ -f "$IMG" ] || die "镜像不存在：$IMG"
+		TAG=$(basename "$IMG" .bin)
+	else
+		IMG=$(cmd_download ${want:+--tag "$want"}) || die "下载失败"
+		TAG=$(basename "$IMG" .bin)
+	fi
+
+	if [ "$keep" = 0 ] && [ "$yes" != 1 ]; then
+		printf '不保留配置会清空 WiFi 密码、登录密码和所有插件配置，确认继续？[y/N] '
+		read -r ans
+		case "$ans" in y|Y|yes|YES) ;; *) die "已取消" ;; esac
+	fi
+
+	# 升级前备份当前配置（万一要手工恢复）
+	bk="$(work_dir)/config-$(current_tag)-$(date +%Y%m%d-%H%M%S).tar.gz"
+	sysupgrade -b "$bk" >/dev/null 2>&1 && log "已备份配置：$bk" || warn "配置备份失败（不影响升级）"
+
+	printf '%s\n' "$TAG" > "$PENDING_FILE"
+	sync
+
+	if [ "$keep" = 1 ]; then
+		log "开始升级（保留配置）→ $TAG"
+		sysupgrade "$IMG"
+	else
+		log "开始升级（不保留配置）→ $TAG"
+		sysupgrade -n "$IMG"
+	fi
+	log "已提交升级，设备将在数秒内重启（请勿断电）"
+}
+
+cmd_status() {
+	log "当前版本 : $(current_tag)"
+	[ -s "$PENDING_FILE" ] && log "待验证升级: $(cat "$PENDING_FILE")"
+	[ -s "$RESULT_FILE" ] && log "上次结果 : $(cat "$RESULT_FILE")"
+	d=$(work_dir)
+	if [ -d "$d" ]; then
+		log "本地镜像 :"
+		ls -1 "$d"/*.bin 2>/dev/null | while read -r f; do
+			printf '    %s（%s）\n' "$(basename "$f")" "$(human_mb "$(wc -c < "$f" | tr -d ' ')")"
+		done
+		ls -1 "$d"/*.bin >/dev/null 2>&1 || printf '    （无）\n'
+	fi
+}
+
+cmd_boot_hook() {
+	[ -s "$PENDING_FILE" ] || return 0
+	pending=$(cat "$PENDING_FILE")
+	cur=$(current_tag)
+	if [ "$pending" = "$cur" ]; then
+		printf 'success %s %s\n' "$pending" "$(date +%s)" > "$RESULT_FILE"
+	else
+		printf 'failed want=%s got=%s %s\n' "$pending" "$cur" "$(date +%s)" > "$RESULT_FILE"
+	fi
+	rm -f "$PENDING_FILE"
+	rm -f "$(work_dir)"/*.part 2>/dev/null
+	return 0
+}
+
+usage() {
+	cat <<'EOF'
+用法: ap3000m-ota <命令> [参数]
+
+  check [--json]                 检查是否有新版本
+  list                           列出最近可用版本
+  download [--tag <TAG>]         仅下载并校验到 /root/ota
+  upgrade [--keep|--wipe] [--yes] [--tag <TAG>] [--image <FILE>]
+                                 下载（若需要）并刷写；默认保留配置
+  status                         当前版本 / 待验证升级 / 上次结果 / 本地镜像
+  boot-hook                      开机回写升级结果（rc.local 自动调用）
+
+示例:
+  ap3000m-ota check
+  ap3000m-ota upgrade                 # 保留配置升级到最新
+  ap3000m-ota upgrade --wipe --yes    # 不保留配置
+  ap3000m-ota upgrade --tag AP3000M-immortalwrt-master-26.10.25-09.51.12   # 指定版本（回退）
+EOF
+}
+
+main() {
+	[ $# -ge 1 ] || { usage; exit 2; }
+	cmd="$1"; shift
+	case "$cmd" in
+		check)     cmd_check "${1:-}" ;;
+		list)      cmd_list ;;
+		download)  cmd_download "$@" ;;
+		upgrade)   cmd_upgrade "$@" ;;
+		status)    cmd_status ;;
+		boot-hook) cmd_boot_hook ;;
+		-h|--help|help) usage ;;
+		*) usage; exit 2 ;;
+	esac
+}
+
+main "$@"

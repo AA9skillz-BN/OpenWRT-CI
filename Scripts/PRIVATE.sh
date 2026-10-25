@@ -77,5 +77,39 @@ else
 	_ap3000m_log "缺少 $_ap3000m_uci，FM350 将沿用插件默认值（AT 口可能不对）"
 fi
 
+# 7) 一键 OTA：CLI 脚本 + 构建标签 + 升级结果回写
+#    构建标签就是将来的 Release tag：WRT-CORE 在「Initialization Values」里已经算好
+#    WRT_CONFIG/WRT_INFO/WRT_BRANCH/WRT_DATE 并写进 $GITHUB_ENV，本步能直接读到。
+_ap3000m_ota_dir="$GITHUB_WORKSPACE/Scripts/AP3000M/ota"
+_ap3000m_bf="package/base-files/files"
+if [ -d "$_ap3000m_ota_dir" ]; then
+	mkdir -p "$_ap3000m_bf/usr/sbin" "$_ap3000m_bf/etc/config"
+
+	cp -f "$_ap3000m_ota_dir/ap3000m-ota" "$_ap3000m_bf/usr/sbin/ap3000m-ota"
+	chmod 0755 "$_ap3000m_bf/usr/sbin/ap3000m-ota"
+
+	cp -f "$_ap3000m_ota_dir/ap3000m_ota.config" "$_ap3000m_bf/etc/config/ap3000m_ota"
+	chmod 0644 "$_ap3000m_bf/etc/config/ap3000m_ota"
+
+	_ap3000m_tag="$WRT_CONFIG-$WRT_INFO-$WRT_BRANCH-$WRT_DATE"
+	printf '%s\n' "$_ap3000m_tag" >"$_ap3000m_bf/etc/ap3000m-build.tag"
+	chmod 0644 "$_ap3000m_bf/etc/ap3000m-build.tag"
+
+	# 升级状态要跨越 sysupgrade 保留（只保留这两个文件，build.tag 必须用新镜像里的）
+	if ! grep -q '^/etc/ap3000m-pending$' "$_ap3000m_bf/etc/sysupgrade.conf" 2>/dev/null; then
+		printf '/etc/ap3000m-pending\n/etc/ap3000m-result\n' >>"$_ap3000m_bf/etc/sysupgrade.conf"
+	fi
+
+	# 开机回写升级结果（rc.local 在系统 init 完成后执行，每次启动都跑）
+	if ! grep -q 'ap3000m-ota boot-hook' "$_ap3000m_bf/etc/rc.local" 2>/dev/null; then
+		sed -i 's#^exit 0$#[ -x /usr/sbin/ap3000m-ota ] \&\& /usr/sbin/ap3000m-ota boot-hook >/dev/null 2>\&1\nexit 0#' \
+			"$_ap3000m_bf/etc/rc.local"
+	fi
+
+	_ap3000m_log "已投放 OTA：ap3000m-ota（构建标签 $_ap3000m_tag）"
+else
+	_ap3000m_log "缺少 $_ap3000m_ota_dir，跳过 OTA 集成"
+fi
+
 _ap3000m_log "扩展准备完成"
 return 0 2>/dev/null || exit 0
