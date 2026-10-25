@@ -46,6 +46,25 @@ else
 	exit 1
 fi
 
+# ------------------------------------------------------------ 1b. 内核启用 BBR
+# 上游 target/linux/generic/config-6.18 里 BBR 是 `# CONFIG_TCP_CONG_BBR is not set`，
+# 且 config/Config-kernel.in 没有暴露该选项 —— 所以 Config 里写 CONFIG_TCP_CONG_BBR=y
+# 会被 make defconfig 静默丢弃（实测固件里只有 reno/cubic，日志里也没有任何 BBR 输出）。
+# 这里直接改内核配置片段。
+_tr3000_kcfg="target/linux/generic/config-6.18"
+if [ -f "$_tr3000_kcfg" ]; then
+	if grep -q '^# CONFIG_TCP_CONG_BBR is not set' "$_tr3000_kcfg"; then
+		sed -i 's/^# CONFIG_TCP_CONG_BBR is not set$/CONFIG_TCP_CONG_BBR=y/' "$_tr3000_kcfg"
+		log "已启用内核 BBR（$_tr3000_kcfg）"
+	elif grep -q '^CONFIG_TCP_CONG_BBR=y' "$_tr3000_kcfg"; then
+		log "内核 BBR 已处于启用状态"
+	else
+		log "警告：$_tr3000_kcfg 里没有 BBR 条目，跳过"
+	fi
+else
+	log "警告：找不到 $_tr3000_kcfg，BBR 无法启用"
+fi
+
 # ---------------------------------------------------------- 2. 固定版本插件
 # Packages.sh 已按分支最新克隆过 aurora / aurora-config / openclash，
 # 这里先清掉，再按本仓库审阅过的 commit 重新拉取，保证每次构建内容一致。

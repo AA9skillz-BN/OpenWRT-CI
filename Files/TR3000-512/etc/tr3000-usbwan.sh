@@ -106,7 +106,9 @@ main() {
 	if [ -n "$zone" ]; then
 		sec="${zone#firewall.}"
 		if ! uci -q get "firewall.$sec.network" 2>/dev/null | tr ' ' '\n' | grep -qx f50; then
-			uci -q add_list "firewall.$sec.network='f50'"
+			# 注意：值里不要再套一层引号，否则 UCI 会存成带引号的字面量 'f50'，
+			# 既进不了区域匹配、又会随每次 hotplug 累积脏条目。
+			uci -q add_list "firewall.$sec.network=f50"
 			uci -q commit firewall
 			log "f50 已并入 wan 防火墙区"
 		fi
@@ -126,9 +128,14 @@ main() {
 	sleep 1
 	ifup f50 >/dev/null 2>&1 || /sbin/ifup f50 >/dev/null 2>&1
 
-	# USB 网卡的接收默认全压在 CPU0 上。MT7981 是双核，实测单核实测只有
+	# USB 网卡的接收默认全压在 CPU0 上。MT7981 是双核，实测单核只有
 	# 10~40 Mbps，而同一张 F50 用 WiFi 能跑 262 Mbps —— 差的就是这一口气。
 	# 把 RPS 铺到两核，并放开每队列的流表，让软中断并行处理。
+	#
+	# 关键：必须在 netifd 把接口完全拉起之后再写。实测 ifup 刚返回就写，
+	# 值会随后被 netifd 重置回 0（日志显示设置成功但实际是 0）。
+	# 所以先睡 3 秒，再由 /etc/hotplug.d/iface/30-tr3000-rps 在 ifup 事件里兜一次。
+	sleep 3
 	if [ -d "/sys/class/net/$ifc/queues" ]; then
 		local q
 		for q in /sys/class/net/"$ifc"/queues/rx-*/rps_cpus; do
@@ -137,7 +144,7 @@ main() {
 		for q in /sys/class/net/"$ifc"/queues/rx-*/rps_flow_cnt; do
 			[ -w "$q" ] && echo 4096 >"$q" 2>/dev/null
 		done
-		log "已为 $ifc 启用双核 RPS"
+		log "已为 $ifc 启用双核 RPS（$(cat /sys/class/net/"$ifc"/queues/rx-0/rps_cpus 2>/dev/null)）"
 	fi
 
 	/etc/init.d/firewall reload >/dev/null 2>&1

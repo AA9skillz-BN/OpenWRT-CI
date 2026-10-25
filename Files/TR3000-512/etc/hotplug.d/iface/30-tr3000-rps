@@ -1,0 +1,23 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# f50 接口 ifup 事件后补设双核 RPS。
+#
+# 背景：在 /etc/hotplug.d/net/20-tr3000-usbwan 里、ifup 刚返回时写 RPS，
+# 值会被 netifd 随后重置回 0（日志显示"已启用"，实际读出来是 0）。
+# 这里挂在 iface 事件上，等接口真正 up 之后再写一次。
+[ "$ACTION" = "ifup" ] || exit 0
+[ "$INTERFACE" = "f50" ] || exit 0
+
+dev=$(uci -q get network.f50.device 2>/dev/null)
+[ -n "$dev" ] || exit 0
+[ -d "/sys/class/net/$dev/queues" ] || exit 0
+
+for q in /sys/class/net/"$dev"/queues/rx-*/rps_cpus; do
+	[ -w "$q" ] && echo 3 >"$q" 2>/dev/null
+done
+for q in /sys/class/net/"$dev"/queues/rx-*/rps_flow_cnt; do
+	[ -w "$q" ] && echo 4096 >"$q" 2>/dev/null
+done
+
+logger -t tr3000-rps "iface-up: RPS applied to $dev ($(cat /sys/class/net/"$dev"/queues/rx-0/rps_cpus 2>/dev/null))"
+exit 0
