@@ -78,3 +78,19 @@ done
 > 最后是 `trim-release` 的 manifest 校验报出「缺少 luci-app-turboacc」才暴露。
 
 拆开之后，改哪台机只动它自己的文件，冲突面为零。
+
+## 冻结清单（FROZEN，2026-10-25 定稿）
+
+以下文件属于**基础设施**，除"修改本条约定"外**不要再动**：
+
+| 文件 | 职责 | 谁需要改 |
+| :--- | :--- | :--- |
+| `Scripts/PRIVATE.sh` | 目录分发器（按序 source 所有 `Scripts/*/private.sh`） | **没有人**。新增/修改机型只动自己目录 |
+| `Scripts/Packages.sh` | 通用插件克隆清单（上游文件） | 极少。机型专属插件请在自己的 `private.sh` 里 clone |
+| `Config/GENERAL.txt` | 所有机型共用配置（WRT-CORE 固定追加） | 极少。机型专属包写 `Config/<机型>.txt` |
+| `.github/workflows/WRT-CORE.yml` | 编译核心（所有机型共用） | 极少。机型差异走 `with:` 输入或 `private.sh` |
+| `.github/workflows/Auto-Clean.yml` | Release 保留策略（按机型分组留 3 个） | 不需要。已按 tag 前缀 / `firmware-model` marker 通用化 |
+
+> 必须改动其中之一时，两条硬要求：
+> 1. **先取主干最新版再改**——禁止拿本地旧副本整文件覆盖（这正是 TR3000 事故的成因）；
+> 2. 提交信息里写明**改什么、影响哪些机型、为什么不能在机型目录里解决**。

@@ -1,6 +1,11 @@
 #!/bin/bash
 # SPDX-License-Identifier: MIT
 #
+# FROZEN（2026-10-25 起）：本文件是基础设施，**请勿再修改**。
+# 它只有一个职责：按字母序 source 所有 Scripts/*/private.sh。
+# 任何机型逻辑都必须写进各自的 Scripts/<机型>/private.sh，不要加到这里。
+# 新增/修改机型 = 只动该机型目录，本文件零改动。
+#
 # 扩展分发器（2026-10-25 改为目录扫描，各机型互不干扰）
 #
 # 由 Scripts/Packages.sh 末尾的官方扩展钩子 source：
