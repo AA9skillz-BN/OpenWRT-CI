@@ -93,7 +93,7 @@ jobs:
           test -s "$image"
           cp "$image" release-assets/
           (cd release-assets && sha256sum immortalwrt-mediatek-filogic-cudy_tr3000-v1-squashfs-sysupgrade.bin > sha256sums)
-          python3 "$GITHUB_WORKSPACE/Scripts/Release/publish.py" \
+          python3 "$GITHUB_WORKSPACE/Scripts/TR3000-512/publish.py" \
             --model tr3000-512 --label 'TR3000 512MB' \
             --source https://github.com/VIKINGYFY/immortalwrt --branch owrt \
             --commit "$(cat source-commit.txt)" \
