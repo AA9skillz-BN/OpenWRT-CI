@@ -1,17 +1,23 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 #
-# Cudy TR3000 512MB 构建钩子（与 AP3000M 同构，统一入口）
+# Cudy TR3000 512MB 构建钩子（与 AP3000M 同构，各自独立文件）
 #
 # 调用链：
 #   WRT-CORE.yml「Custom Packages」→ Scripts/Packages.sh 末尾 source Scripts/PRIVATE.sh
-#   → PRIVATE.sh 命中 WRT_CONFIG=*tr3000* 分支 → 本脚本（cwd = ./wrt 源码根）
+#   → PRIVATE.sh 扫描 Scripts/*/private.sh → 本脚本（cwd = ./wrt 源码根）
 #
 # 本脚本负责四件事，全部失败即中止构建（分区/镜像不对的固件宁可不发）：
 #   1. 512MB 硬改机的 UBI 分区补丁（不改则 sysupgrade 平台检查拒绝刷入）
 #   2. 按固定 commit 拉取 Aurora / OpenClash / TurboACC（构建可复现）
 #   3. 投放首启配置与 F50 即插即用脚本到源码 files/
 #   4. 写入构建标签（即 Release tag），便于设备端识别当前版本
+
+# 仅 TR3000 配置生效；return 放在 set -e 之前，避免误伤其它项目的 source
+if [[ "${WRT_CONFIG,,}" != *"tr3000"* ]]; then
+	return 0 2>/dev/null || exit 0
+fi
+
 set -euo pipefail
 
 WRT_REPO_ROOT="${GITHUB_WORKSPACE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
