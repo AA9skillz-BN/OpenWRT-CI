@@ -365,6 +365,33 @@ cmd_boot_hook() {
 	return 0
 }
 
+# 自我更新：从 GitHub 仓库 main 分支拉取最新版脚本并替换自身
+# 用途：设备上固件里带的脚本可能比仓库旧（例如 OTA 早期版本有 jq 正则 bug），
+#       不用刷机也能拿到修复。备份在 /usr/sbin/ap3000m-ota.bak。
+cmd_self_update() {
+	command -v curl >/dev/null 2>&1 || die "缺少 curl"
+	branch="${1:-main}"
+	url="https://api.github.com/repos/$(repo)/contents/Scripts/AP3000M/ota/ap3000m-ota?ref=$branch"
+	tmp=/tmp/ap3000m-ota.new
+
+	log "从 $branch 分支拉取最新脚本…"
+	curl -fsSL --connect-timeout 8 --max-time 60 \
+		-H 'Accept: application/vnd.github.raw' \
+		-H 'User-Agent: ap3000m-ota/1.0' \
+		-o "$tmp" "$url" || { rm -f "$tmp"; die "下载失败（api.github.com 不可达）"; }
+
+	[ -s "$tmp" ] || { rm -f "$tmp"; die "下载内容为空"; }
+	head -n 1 "$tmp" | grep -q '^#!/bin/sh' || { rm -f "$tmp"; die "内容不像本脚本（首行不是 #!/bin/sh），放弃替换"; }
+	grep -q 'cmd_self_update' "$tmp" || { rm -f "$tmp"; die "下载内容缺少 self-update 实现，放弃替换"; }
+
+	chmod 0755 "$tmp"
+	cp -f /usr/sbin/ap3000m-ota /usr/sbin/ap3000m-ota.bak 2>/dev/null
+	mv -f "$tmp" /usr/sbin/ap3000m-ota || die "替换失败"
+	chmod 0755 /usr/sbin/ap3000m-ota
+	log "已更新（旧版备份：/usr/sbin/ap3000m-ota.bak）"
+	log "重新执行命令即可使用新版本，例如：ap3000m-ota check"
+}
+
 usage() {
 	cat <<'EOF'
 用法: ap3000m-ota <命令> [参数]
@@ -376,6 +403,7 @@ usage() {
   upgrade [--keep|--wipe] [--yes] [--tag <TAG>] [--image <FILE>]
                                  下载（若需要）并刷写；默认保留配置
   status                         当前版本 / 待验证升级 / 上次结果 / 本地镜像
+  self-update [branch]           从 GitHub 拉取最新版本脚本（默认 main），免刷机升级工具
   ui-status                      输出 JSON 状态（LuCI 页面用）
   boot-hook                      开机回写升级结果（init.d 自动调用）
 
@@ -396,6 +424,7 @@ main() {
 		download)  cmd_download "$@" ;;
 		upgrade)   cmd_upgrade "$@" ;;
 		status)    cmd_status ;;
+		self-update) cmd_self_update ${1:-main} ;;
 		ui-status) cmd_ui_status ;;
 		boot-hook) cmd_boot_hook ;;
 		-h|--help|help) usage ;;
