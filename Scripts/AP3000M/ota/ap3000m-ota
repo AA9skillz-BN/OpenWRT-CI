@@ -60,14 +60,18 @@ fetch_api() {
 }
 
 # 输出：<tag> <文件名> <大小> <sha256>（空行表示无匹配）
+#
+# 注意：OpenWrt 的 jq 是 --without-oniguruma 编译的，test/match/sub 等正则函数
+# 运行时会报 "jq was compiled without ONIGURUMA regex library"。
+# 这里只用纯字符串函数：startswith / endswith / contains / ltrimstr。
 parse_tag() {
 	# $1 = 空 -> 最新；否则为指定 tag
 	jq -r --arg p "$(tag_prefix)" --arg want "${1:-}" '
 		[ .[] | select(.draft == false) | select(.tag_name | startswith($p)) ] as $all
 		| (if $want == "" then ($all | sort_by(.tag_name) | last) else ($all | map(select(.tag_name == $want)) | first) end) as $r
 		| if $r == null then "" else
-			($r.assets | map(select(.name | test("sysupgrade.*\\.bin$")))[0]) as $a
-			| [ $r.tag_name, $a.name, ($a.size // 0 | tostring), ($a.digest // "" | sub("^sha256:"; "")) ] | @tsv
+			($r.assets | map(select((.name | endswith(".bin")) and (.name | contains("sysupgrade"))))[0]) as $a
+			| [ $r.tag_name, $a.name, ($a.size // 0 | tostring), (($a.digest // "") | ltrimstr("sha256:")) ] | @tsv
 		  end'
 }
 
