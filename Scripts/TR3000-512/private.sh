@@ -18,6 +18,18 @@ WRT_REPO_ROOT="${GITHUB_WORKSPACE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." &
 TR_DIR="$WRT_REPO_ROOT/Scripts/TR3000-512"
 log() { echo "==> [TR3000] $*"; }
 
+# ------------------------------------------------------------ 0. 清理坏 feed
+# feeds/video 的 qt5base/Config.in 存在 Kconfig 递归依赖错误：
+#   feeds/video/frameworks/qt5/qt5base/Config.in:18: error: recursive dependency detected!
+# 这会让 make defconfig 直接失败，.config 里丢掉 DEVICE_cudy_tr3000-v1，
+# 于是 make world 空跑两小时一个镜像都不出，最后卡在 profiles.json 生成。
+# 本项目不需要 video（GENERAL.txt 已 CONFIG_FEED_video=n），整包移除。
+if [ -d feeds/video ]; then
+	rm -rf feeds/video
+	log "已移除 feeds/video（qt5 递归依赖会破坏 defconfig）"
+fi
+rm -rf package/feeds/video
+
 # ---------------------------------------------------------------- 1. 分区布局
 log "打 512MB 分区补丁（UBI 0x5c0000 + 0x1da40000，IMAGE_SIZE 485632k）"
 bash "$TR_DIR/patch-layout.sh"
