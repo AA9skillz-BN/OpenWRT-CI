@@ -1,0 +1,205 @@
+# SPDX-License-Identifier: MIT
+# Cudy TR3000 512MB 单机型固件（与 AP3000M 同构：复用公用核心 WRT-CORE.yml）
+#
+# 地基：.github/workflows/WRT-CORE.yml（不改动任何原有文件）
+# 专属文件：
+#   Config/TR3000-512.txt                     单机型配置
+#   Scripts/TR3000-512/patch-layout.sh        512MB 硬改机 UBI 布局
+#   Scripts/TR3000-512/{openclash,turboacc,aurora}.sh  固定 commit 插件
+#   Scripts/TR3000-512/private.sh             钩子总入口（分区/插件/首启/F50）
+#   Files/TR3000-512/                         首启配置 + F50 即插即用
+#   docs/TR3000-512.md
+#
+# 说明：默认源码 VIKINGYFY/immortalwrt 的 owrt 分支（MTK 专用，内核 6.6 系），
+#       保持与原独立工作流一致的基座，避免换基座带来的未知回归。
+#       需要跟上上游时可手动把 SOURCE 填 immortalwrt/immortalwrt、BRANCH 填 master。
+
+name: TR3000
+
+on:
+  # 手动编译
+  workflow_dispatch:
+    inputs:
+      SOURCE:
+        description: '源码仓库（owner/repo），默认 VIKINGYFY/immortalwrt'
+        required: false
+        default: 'VIKINGYFY/immortalwrt'
+        type: string
+      BRANCH:
+        description: '源码分支，默认 owrt（VIKINGYFY 的 MTK 专用分支）'
+        required: false
+        default: 'owrt'
+        type: string
+      PACKAGE:
+        description: '手动追加插件包，多个请用\n符号隔开。'
+        required: false
+        type: string
+      TEST:
+        description: '仅输出配置文件，不编译固件。'
+        default: false
+        required: false
+        type: boolean
+
+#CI权限
+permissions: write-all
+
+#同一时间只跑一个 TR3000 构建
+concurrency:
+  group: tr3000-${{ github.ref }}
+  cancel-in-progress: false
+
+#CI任务
+jobs:
+  tr3000:
+    name: TR3000-${{ inputs.SOURCE }}-${{ inputs.BRANCH }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # 只编 TR3000 一款，变体在 Config/TR3000-512.txt 内调整
+        CONFIG: [TR3000-512]
+
+    #调用公用编译核心 WRT-CORE.yml（原文件不做任何修改）
+    uses: ./.github/workflows/WRT-CORE.yml
+    with:
+      #编译配置
+      WRT_CONFIG: ${{ matrix.CONFIG }}
+      #默认主题
+      WRT_THEME: aurora
+      #默认主机名
+      WRT_NAME: TR3000
+      #默认WIFI名称
+      WRT_SSID: TR3000
+      #默认WIFI密码
+      WRT_WORD: 12345678
+      #默认地址
+      WRT_IP: 192.168.6.1
+      #默认密码，仅作提示，修改无用
+      WRT_PW: 无
+      #源码链接
+      WRT_REPO: https://github.com/${{ inputs.SOURCE || 'VIKINGYFY/immortalwrt' }}.git
+      #源码分支
+      WRT_BRANCH: ${{ inputs.BRANCH || 'owrt' }}
+      #源码名称
+      WRT_SOURCE: ${{ inputs.SOURCE || 'VIKINGYFY/immortalwrt' }}
+      #插件调整
+      WRT_PACKAGE: ${{ inputs.PACKAGE }}
+      #仅输出配置文件
+      WRT_TEST: ${{ inputs.TEST || false }}
+
+  # WRT-CORE 发布时会把 bin/targets 下的全部文件一并塞进 Release。
+  # 这里先核对镜像包清单，再只保留真正要用的两个：sysupgrade 固件 + 本次配置。
+  trim-release:
+    name: Verify & trim release
+    needs: tr3000
+    if: ${{ needs.tr3000.result == 'success' && !inputs.TEST }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Resolve latest TR3000 release
+        id: rel
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          TAG=$(gh api "repos/$GH_REPO/releases?per_page=40" \
+            --jq '[.[] | select(.tag_name | startswith("TR3000-512-"))][0].tag_name')
+          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
+            echo "no TR3000 release found"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "release: $TAG"
+
+      - name: Verify image packages and metadata
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.rel.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/rel && cd /tmp/rel
+
+          # manifest 是唯一能证明"该进的包真的进了"的东西，先拉下来核对
+          gh release download "$TAG" --pattern '*.manifest' -D . || true
+          gh release download "$TAG" --pattern '*sysupgrade*.bin' -D .
+
+          IMG=$(ls *sysupgrade*.bin | head -n1)
+          test -s "$IMG"
+          tar -tf "$IMG" > /dev/null || { echo "::error::$IMG 不是合法的 sysupgrade tar"; exit 1; }
+          echo "image ok: $(du -h "$IMG" | cut -f1) $IMG"
+
+          MAN=$(ls *.manifest 2>/dev/null | head -n1 || true)
+          if [ -n "$MAN" ]; then
+            echo "--- manifest: $MAN ---"
+            for PKG in luci-app-ttyd ttyd luci-theme-aurora luci-app-aurora-config \
+                       luci-app-openclash luci-app-turboacc \
+                       kmod-usb-net-rndis kmod-usb-net-cdc-ncm kmod-usb-net-cdc-ether \
+                       kmod-nft-offload; do
+              if grep -q "^${PKG} " "$MAN"; then
+                echo "  ok   $PKG"
+              else
+                echo "::error::manifest 缺少 $PKG"
+                exit 1
+              fi
+            done
+          else
+            echo "::warning::release 里没有 manifest，跳过包清单核对"
+          fi
+
+      - name: Keep only firmware + config
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.rel.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GH_REPO/releases/tags/$TAG" --jq '.assets[].name' |
+            while IFS= read -r ASSET; do
+              case "$ASSET" in
+                *sysupgrade*.bin|Config-*.txt)
+                  echo "  keep   $ASSET" ;;
+                *)
+                  echo "  delete $ASSET"
+                  gh release delete-asset "$TAG" "$ASSET" --yes || echo "  warn: delete failed" ;;
+              esac
+            done
+
+          echo "--- remaining assets ---"
+          gh api "repos/$GH_REPO/releases/tags/$TAG" --jq '.assets[] | "\(.name)  \(.size) bytes"'
+
+      - name: Rewrite release notes for single-device build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.rel.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          # 公用核心的通用文案（"平台固件包，内含多个设备"）对单机型构建是错的
+          gh api "repos/$GH_REPO/releases/tags/$TAG" --jq '.body' |
+            grep -v -F -e '这是个平台固件包' \
+                      -e '请注意选择你需要的设备固件' \
+                      -e '不要问，刷就完事了' \
+                      -e '全系带开源硬件加速' > /tmp/body.txt || true
+
+          {
+            echo '**Cudy TR3000 512MB 单机型固件**（`cudy,tr3000-v1` 硬改 512MB / MT7981B + MT7976）'
+            echo
+            echo '本 Release 只包含一款设备的固件，直接下载刷写，无需挑选：'
+            echo
+            echo '- `*sysupgrade*.bin` —— sysupgrade 升级包（仅适用于已核对 512MB 分区布局的机器）'
+            echo '- `Config-*.txt` —— 本次构建实际生效的配置，便于复现'
+            echo
+            echo '> 已内置 F50（USB 网卡）即插即用：插上后自动识别 USB 上网卡、配成 DHCP WAN 并加入 wan 防火墙区。'
+            echo '> 首次开机自动设置 LAN `192.168.6.1`、Aurora 主题、中文界面、Flow Offloading。'
+            echo
+            cat /tmp/body.txt
+          } > /tmp/new-body.txt
+
+          # GitHub 没有 PATCH /releases/tags/{tag}，改正文必须先拿 release id
+          RID=$(gh api "repos/$GH_REPO/releases/tags/$TAG" --jq '.id')
+          gh api -X PATCH "repos/$GH_REPO/releases/$RID" -F body=@/tmp/new-body.txt >/dev/null ||
+            echo "warning: release body patch failed (non-fatal)"
+          echo "release notes rewritten for $TAG"

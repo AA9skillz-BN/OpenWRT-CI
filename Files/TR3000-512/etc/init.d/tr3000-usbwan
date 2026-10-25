@@ -1,0 +1,10 @@
+#!/bin/sh /etc/rc.common
+# SPDX-License-Identifier: MIT
+# 开机把已插着的 USB 上网卡接成 WAN（热插拔由 hotplug.d 负责）
+START=99
+STOP=10
+
+start() {
+	[ -x /etc/tr3000-usbwan.sh ] || return 0
+	/etc/tr3000-usbwan.sh >/dev/null 2>&1
+}

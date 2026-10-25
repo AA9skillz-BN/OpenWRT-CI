@@ -1,0 +1,8 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# 插上 F50 / USB 上网卡时，自动把它接成 WAN（逻辑见 /etc/tr3000-usbwan.sh）
+[ "$ACTION" = "add" ] || exit 0
+[ -n "$INTERFACE" ] || exit 0
+[ -x /etc/tr3000-usbwan.sh ] || exit 0
+/etc/tr3000-usbwan.sh "$INTERFACE" >/dev/null 2>&1
+exit 0

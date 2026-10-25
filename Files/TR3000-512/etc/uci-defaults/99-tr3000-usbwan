@@ -1,0 +1,5 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# 首次开机补一次：此时若 F50 已经插着，net hotplug 事件可能早于本脚本
+[ -x /etc/tr3000-usbwan.sh ] && /etc/tr3000-usbwan.sh >/dev/null 2>&1
+exit 0

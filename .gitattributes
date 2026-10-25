@@ -1,2 +1,8 @@
 *.txt text eol=lf
 *.sh text eol=lf
+# 路由器上直接执行的脚本经常没有 .sh 后缀（uci-defaults / hotplug.d / init.d），
+# 一律按 LF 存，否则 /bin/sh 会报 "bad interpreter: ...^M"
+Files/** text eol=lf
+Scripts/** text eol=lf
+.github/** text eol=lf
+docs/** text eol=lf
