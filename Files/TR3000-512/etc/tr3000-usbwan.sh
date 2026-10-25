@@ -110,6 +110,14 @@ main() {
 			uci -q commit firewall
 			log "f50 已并入 wan 防火墙区"
 		fi
+		# 兜底开启 masquerade：没有 SNAT 的话，LAN 侧（192.168.6.x）访问
+		# F50 内网（192.168.0.1）时源地址还是 192.168.6.x，F50 没有回程
+		# 路由，表现就是「后台打不开」。
+		if [ "$(uci -q get "firewall.$sec.masq")" != "1" ]; then
+			uci -q set "firewall.$sec.masq='1'"
+			uci -q commit firewall
+			log "已强制开启 wan 区 masquerade"
+		fi
 	else
 		log "警告：找不到 wan 防火墙区，NAT 可能不生效"
 	fi
