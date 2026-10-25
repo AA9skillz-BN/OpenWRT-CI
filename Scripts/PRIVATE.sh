@@ -12,16 +12,24 @@
 #
 # 历史教训：原先所有机型逻辑都堆在本文件里，两个会话同时改这一份时，
 # 后提交的会把先提交的整段覆盖掉（TR3000 分支就这样丢过一次，构建全绿但产物残缺）。
+#
+# 2026-10-25 加固：每次 source 后不仅复位 -e，也复位 -u 与 pipefail。
+# 因为 `set -euo pipefail` 里的 -u / pipefail 会残留在同一个 shell 中：
+# 若某个 private.sh 设了它们，按字母序排在它后面的机型会继承 nounset，
+# 出现"某个变量没定义就静默中断构建"的怪问题。
 
 set +e
 
 for _ext in "${GITHUB_WORKSPACE:-/github/workspace}"/Scripts/*/private.sh; do
 	[ -f "$_ext" ] || continue
-	# 每次 source 前后都重置，防止某个 private.sh 的 set -e 影响其它项目
+	# 每次 source 前后都复位 shell 选项，防止某个 private.sh 的副作用影响其它项目
 	set +e
+	set +u
 	# shellcheck disable=SC1090
 	source "$_ext"
 	set +e
+	set +u
+	set +o pipefail
 done
 
 unset _ext
