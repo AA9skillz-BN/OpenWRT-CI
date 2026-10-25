@@ -94,6 +94,53 @@ jobs:
     permissions:
       contents: write
     steps:
+      # 产物校验闸门：defconfig 对已删除/依赖不满足的包是「静默丢弃」，
+      # 构建照样全绿、刷进去才发现功能缺失（TR3000 就这样出过一次事故）。
+      # 这里在裁剪之前先下载镜像核对 manifest，缺关键包直接红。
+      - name: Verify image packages
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          TAG=$(gh api "repos/$GH_REPO/releases?per_page=30" \
+            --jq '[.[] | select(.tag_name | startswith("AP3000M-"))][0].tag_name')
+          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
+            echo "no AP3000M release, skip"
+            exit 0
+          fi
+          echo "release: $TAG"
+
+          W=$(mktemp -d)
+          cd "$W"
+          gh release download "$TAG" --pattern '*sysupgrade*.bin' -D .
+          gh release download "$TAG" --pattern '*.manifest' -D . || true
+
+          IMG=$(ls *sysupgrade*.bin 2>/dev/null | head -n1)
+          [ -n "$IMG" ] || { echo "::error::release 里没有 sysupgrade 镜像"; exit 1; }
+          tar -tf "$IMG" >/dev/null || { echo "::error::$IMG 不是合法 tar"; exit 1; }
+          echo "image ok: $(du -h "$IMG" | cut -f1) $IMG"
+
+          MAN=$(ls *.manifest 2>/dev/null | head -n1 || true)
+          if [ -z "$MAN" ]; then
+            echo "::warning::没有 manifest，跳过包清单核对"
+            exit 0
+          fi
+
+          MISSING=0
+          for PKG in luci-app-fm350 luci-app-airpi-fancontrol luci-app-ap3000m-ota \
+                     luci-app-ttyd ttyd jq kmod-airpi-gpio-fan kmod-tcp-bbr \
+                     kmod-usb-serial-option; do
+            if grep -q "^${PKG} " "$MAN"; then
+              echo "  ok   $PKG"
+            else
+              echo "::error::manifest 缺少 $PKG"
+              MISSING=1
+            fi
+          done
+          [ "$MISSING" = 0 ]
+
       - name: Keep only firmware + config
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

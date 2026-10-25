@@ -90,6 +90,10 @@ if [ -d "$_ap3000m_ota_dir" ]; then
 	cp -f "$_ap3000m_ota_dir/ap3000m_ota.config" "$_ap3000m_bf/etc/config/ap3000m_ota"
 	chmod 0644 "$_ap3000m_bf/etc/config/ap3000m_ota"
 
+	# 每日自动检查（写 /tmp 缓存给 LuCI 页面秒开），auto_check=0 时脚本自己跳过
+	cp -f "$_ap3000m_ota_dir/99-ap3000m-ota-cron" "$_ap3000m_bf/etc/uci-defaults/99-ap3000m-ota-cron"
+	chmod 0755 "$_ap3000m_bf/etc/uci-defaults/99-ap3000m-ota-cron"
+
 	_ap3000m_tag="$WRT_CONFIG-$WRT_INFO-$WRT_BRANCH-$WRT_DATE"
 	printf '%s\n' "$_ap3000m_tag" >"$_ap3000m_bf/etc/ap3000m-build.tag"
 	chmod 0644 "$_ap3000m_bf/etc/ap3000m-build.tag"

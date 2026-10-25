@@ -73,6 +73,21 @@ return {
 			}
 		},
 
+		/* 指定版本（回滚）：只允许 tag 形状，防止把参数拼进 shell */
+		upgrade_tag: {
+			args: { tag: '', keep: true },
+			call: function(req) {
+				let tag = req.args.tag ?? '';
+
+				if (length(tag) == 0 || !match(tag, /^[A-Za-z0-9._-]+$/))
+					return { error: '非法版本号' };
+
+				let mode = (req.args.keep == true) ? '--keep' : '--wipe';
+				run('upgrade --tag ' + tag + ' ' + mode + ' --yes');
+				return { started: true };
+			}
+		},
+
 		set_settings: {
 			args: { keep_config: true, use_mirror: true },
 			call: function(req) {

@@ -9,7 +9,7 @@
 		},
 		"write": {
 			"ubus": {
-				"luci.ap3000m_ota": [ "download", "upgrade", "set_settings" ]
+				"luci.ap3000m_ota": [ "download", "upgrade", "upgrade_tag", "set_settings" ]
 			},
 			"uci": [ "ap3000m_ota" ]
 		}
