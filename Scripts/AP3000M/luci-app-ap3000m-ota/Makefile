@@ -29,6 +29,16 @@ define Package/$(PKG_NAME)/description
   后端为 /usr/sbin/ap3000m-ota（命令行同样可用）。
 endef
 
+# 纯数据包（只有 JS/JSON/ucode），必须显式清空编译步骤，
+# 否则 package.mk 会去空的 PKG_BUILD_DIR 里找 Makefile：
+#   make[4]: *** No targets specified and no makefile found
+define Build/Compile
+endef
+
+define Build/Prepare
+	mkdir -p $(PKG_BUILD_DIR)
+endef
+
 define Package/$(PKG_NAME)/conffiles
 endef
 
