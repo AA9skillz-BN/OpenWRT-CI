@@ -94,3 +94,25 @@ done
 > 必须改动其中之一时，两条硬要求：
 > 1. **先取主干最新版再改**——禁止拿本地旧副本整文件覆盖（这正是 TR3000 事故的成因）；
 > 2. 提交信息里写明**改什么、影响哪些机型、为什么不能在机型目录里解决**。
+
+## 新增一个机型：照抄这份清单
+
+以 `<机型>` 为目录名（AP3000M / TR3000-512 / …），**只新增文件，不改公共文件**：
+
+| # | 要创建的文件 | 内容要点 |
+| :--- | :--- | :--- |
+| 1 | `Config/<机型>.txt` | `CONFIG_TARGET_*` + 设备选择 + 机型专属包。文件名即 `WRT_CONFIG` 的值 |
+| 2 | `.github/workflows/<机型>.yml` | 薄壳：`uses: ./.github/workflows/WRT-CORE.yml`，在 `with:` 里给 `WRT_CONFIG / WRT_THEME / WRT_NAME / WRT_SSID / WRT_WORD / WRT_IP / WRT_REPO / WRT_BRANCH / WRT_SOURCE`；再加一个 `trim-release` job（裁附件 + 改说明 + **产物校验闸门**） |
+| 3 | `Scripts/<机型>/private.sh` | **第一段必须是 `WRT_CONFIG` 守卫 + `return`**；变量统一 `<机型>` 前缀；结尾复位 `set +eu; set +o pipefail`；只做构建期动作（投放文件、打补丁、写构建标签） |
+| 4 | `Scripts/<机型>/**` 或 `Files/<机型>/**` | 真正的脚本/页面/配置模板。二选一：`Scripts/` 里由 `private.sh` 逐条 `cp`，或按 `Files/<机型>/etc/**` 整目录拷进源码 `files/` |
+| 5 | `docs/<机型>.md` | 设备/源码/文件位置/默认参数/改哪里/绝对不碰 |
+
+**不要碰**：`Scripts/PRIVATE.sh`、`Scripts/Packages.sh`、`Config/GENERAL.txt`、`.github/workflows/WRT-CORE.yml`、`.github/workflows/Auto-Clean.yml`（见上表）。
+
+**Release 约定**：tag 必须以 `<机型>` 前缀区分（如 `AP3000M-…`、`tr3000-512-…`），Auto-Clean 才能按机型分组只留最近 3 个。
+
+**推送约定**：只提交自己机型目录下的路径；多人/多会话并行时先 `git fetch` 再改，提交信息写清影响面。
+
+**构建约定**：手动触发；改了 `Config/<机型>.txt` 时先 `TEST=true` 跑一遍（约 10 分钟，只出配置不编固件），确认包名没被 `defconfig` 静默丢弃，再跑全量。
+
+**验收约定**：构建末尾必须下载镜像校验 `tar` 合法 + 核对 manifest 里的关键包（这是"绿但残缺"事故唯一可靠的兜底）。
