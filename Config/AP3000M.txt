@@ -69,8 +69,10 @@ CONFIG_PACKAGE_luci-app-ttyd=y
 CONFIG_PACKAGE_luci-i18n-ttyd-zh-cn=y
 
 # ---------------------------------------------------------------------
-# 一键 OTA（/usr/sbin/ap3000m-ota）
+# 一键 OTA（/usr/sbin/ap3000m-ota + LuCI 页面 luci-app-ap3000m-ota）
 #   除 jq 外全部依赖镜像里已有：curl / ca-bundle / sha256sum / sysupgrade / uci
 #   jq 用于解析 api.github.com 的 releases JSON（tag / size / sha256 三元组）
+#   注意：OpenWrt 的 jq 没有 oniguruma，脚本里只能用 startswith/endswith/contains
 # ---------------------------------------------------------------------
 CONFIG_PACKAGE_jq=y
+CONFIG_PACKAGE_luci-app-ap3000m-ota=y

@@ -1,0 +1,17 @@
+{
+	"luci-app-ap3000m-ota": {
+		"description": "Grant access to AirPi AP3000M OTA 升级",
+		"read": {
+			"ubus": {
+				"luci.ap3000m-ota": [ "status", "check" ]
+			},
+			"uci": [ "ap3000m_ota" ]
+		},
+		"write": {
+			"ubus": {
+				"luci.ap3000m-ota": [ "download", "upgrade", "set_settings" ]
+			},
+			"uci": [ "ap3000m_ota" ]
+		}
+	}
+}

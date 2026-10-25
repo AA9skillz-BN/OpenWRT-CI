@@ -1,0 +1,187 @@
+'use strict';
+'require view';
+'require poll';
+'require rpc';
+'require ui';
+
+var callStatus = rpc.declare({ object: 'luci.ap3000m-ota', method: 'status', expect: {} });
+var callCheck = rpc.declare({ object: 'luci.ap3000m-ota', method: 'check', expect: {} });
+var callDownload = rpc.declare({ object: 'luci.ap3000m-ota', method: 'download', expect: {} });
+var callUpgrade = rpc.declare({ object: 'luci.ap3000m-ota', method: 'upgrade', params: [ 'keep' ], expect: {} });
+var callSettings = rpc.declare({ object: 'luci.ap3000m-ota', method: 'set_settings', params: [ 'keep_config', 'use_mirror' ], expect: {} });
+
+function mb(bytes) {
+	return (Number(bytes || 0) / 1048576).toFixed(2) + ' MB';
+}
+
+function shortTag(tag, prefix) {
+	if (!tag)
+		return '—';
+	return prefix && tag.indexOf(prefix) === 0 ? tag.substring(prefix.length) : tag;
+}
+
+return view.extend({
+	load: function() {
+		return callStatus();
+	},
+
+	render: function(status) {
+		var st = status || {};
+		var latest = null;
+		var self = this;
+
+		var curVal   = E('span', { 'class': 'label' }, st.current || st.build_tag || '未知');
+		var newVal   = E('span', { 'class': 'label' }, '尚未检查');
+		var sizeVal  = E('span', {}, '—');
+		var stateVal = E('span', {}, st.downloading ? '下载中' : '空闲');
+		var msgVal   = E('div', { 'class': 'cbi-value-description' }, '');
+
+		var barFill = E('div', { 'style': 'height:100%;width:0%;background:#2b8cf0;transition:width .3s' }, '');
+		var barWrap = E('div', {
+			'style': 'height:10px;background:#e6e6e6;border-radius:5px;overflow:hidden;margin:.3em 0'
+		}, [ barFill ]);
+
+		var btnCheck = E('button', { 'class': 'cbi-button cbi-button-action' }, '检查更新');
+		var btnDownload = E('button', { 'class': 'cbi-button cbi-button-action', 'disabled': 'disabled' }, '下载并校验');
+		var btnKeep = E('button', { 'class': 'cbi-button cbi-button-apply', 'disabled': 'disabled' }, '升级（保留配置）');
+		var btnWipe = E('button', { 'class': 'cbi-button cbi-button-remove', 'disabled': 'disabled' }, '升级（不保留配置）');
+
+		var chkKeep = E('input', { 'type': 'checkbox', 'checked': st.keep_config ? 'checked' : null });
+		var chkMirror = E('input', { 'type': 'checkbox', 'checked': st.use_mirror ? 'checked' : null });
+
+		function setMsg(text, isError) {
+			msgVal.textContent = text || '';
+			msgVal.style.color = isError ? '#c00' : '#333';
+		}
+
+		function refreshDownloadButtons() {
+			var downloading = !!(st.downloading);
+			var haveImage = (st.images || []).indexOf(st.downloading || (latest && latest.latest) || '') >= 0;
+			var target = (latest && latest.latest) || st.downloading;
+			var ready = !downloading && !!target && (st.images || []).indexOf(target) >= 0;
+
+			btnDownload.disabled = downloading || !latest;
+			btnKeep.disabled = !ready;
+			btnWipe.disabled = !ready;
+		}
+
+		function applyStatus(s) {
+			st = s || {};
+			curVal.textContent = st.current || st.build_tag || '未知';
+			if (st.downloading) {
+				var pct = st.download_size > 0 ? Math.floor(st.download_bytes * 100 / st.download_size) : 0;
+				barFill.style.width = Math.max(0, Math.min(100, pct)) + '%';
+				stateVal.textContent = '下载中 ' + pct + '%（' + mb(st.download_bytes) + ' / ' + mb(st.download_size) + '）';
+			}
+			else {
+				barFill.style.width = '0%';
+				stateVal.textContent = '空闲';
+			}
+			if (st.download_result) {
+				var r = String(st.download_result);
+				setMsg(r, r.indexOf('failed') === 0);
+			}
+			refreshDownloadButtons();
+		}
+
+		btnCheck.addEventListener('click', function() {
+			btnCheck.disabled = true;
+			setMsg('正在检查 api.github.com …');
+			callCheck().then(function(r) {
+				btnCheck.disabled = false;
+				if (!r || r.error || !r.latest) {
+					newVal.textContent = '检查失败';
+					setMsg((r && r.error) || '检查失败：无有效响应', true);
+					return;
+				}
+				latest = r;
+				newVal.textContent = r.latest;
+				sizeVal.textContent = mb(r.size) + '  sha256 ' + String(r.sha256 || '').substring(0, 12) + '…';
+				setMsg(r.update ? '发现新版本，可点击「下载并校验」' : '已是最新版本');
+				refreshDownloadButtons();
+			}).catch(function(e) {
+				btnCheck.disabled = false;
+				setMsg('检查失败：' + e, true);
+			});
+		});
+
+		btnDownload.addEventListener('click', function() {
+			setMsg('已开始后台下载（走镜像，失败自动回落直连）…');
+			callDownload().then(function() { refreshDownloadButtons(); });
+		});
+
+		function doUpgrade(keep) {
+			var warn = keep
+				? '将升级到 ' + (latest && latest.latest) + '，保留全部配置（WiFi/密码/FM350/风扇）。\n\n设备会立即重启，期间请勿断电。继续？'
+				: '将升级到 ' + (latest && latest.latest) + '，并清空所有配置（WiFi 恢复默认 AP3000M/12345678，登录密码重置）。\n\n设备会立即重启，期间请勿断电。继续？';
+
+			if (!confirm(warn))
+				return;
+
+			setMsg('正在提交升级，设备即将重启…');
+			callUpgrade(keep).then(function() {
+				ui.addNotification(null, E('p', {}, '升级已提交，页面将失联约 3 分钟。'), 'info');
+			});
+		}
+
+		btnKeep.addEventListener('click', function() { doUpgrade(true); });
+		btnWipe.addEventListener('click', function() { doUpgrade(false); });
+
+		chkKeep.addEventListener('change', function() { callSettings(chkKeep.checked, chkMirror.checked); });
+		chkMirror.addEventListener('change', function() { callSettings(chkKeep.checked, chkMirror.checked); });
+
+		poll.add(function() {
+			return callStatus().then(applyStatus);
+		}, 3);
+
+		applyStatus(st);
+
+		return E([], [
+			E('h2', {}, 'AP3000M 固件升级（OTA）'),
+			E('div', { 'class': 'cbi-section' }, [
+				E('div', { 'class': 'cbi-value' }, [
+					E('label', { 'class': 'cbi-value-title' }, '当前版本'),
+					E('div', { 'class': 'cbi-value-field' }, curVal)
+				]),
+				E('div', { 'class': 'cbi-value' }, [
+					E('label', { 'class': 'cbi-value-title' }, '最新版本'),
+					E('div', { 'class': 'cbi-value-field' }, [ newVal, E('br'), sizeVal ])
+				]),
+				E('div', { 'class': 'cbi-value' }, [
+					E('label', { 'class': 'cbi-value-title' }, '状态'),
+					E('div', { 'class': 'cbi-value-field' }, stateVal)
+				]),
+				E('div', { 'class': 'cbi-value' }, [
+					E('label', { 'class': 'cbi-value-title' }, '进度'),
+					E('div', { 'class': 'cbi-value-field' }, barWrap)
+				]),
+				E('div', { 'class': 'cbi-value' }, [
+					E('label', { 'class': 'cbi-value-title' }, '操作'),
+					E('div', { 'class': 'cbi-value-field' }, [
+						btnCheck, ' ', btnDownload, ' ', btnKeep, ' ', btnWipe
+					])
+				]),
+				msgVal,
+				st.last_result ? E('div', { 'class': 'cbi-value-description' }, '上次升级结果：' + st.last_result) : ''
+			]),
+			E('div', { 'class': 'cbi-section' }, [
+				E('h3', {}, '选项'),
+				E('div', { 'class': 'cbi-value' }, [
+					E('label', { 'class': 'cbi-value-title' }, '默认保留配置'),
+					E('div', { 'class': 'cbi-value-field' }, chkKeep)
+				]),
+				E('div', { 'class': 'cbi-value' }, [
+					E('label', { 'class': 'cbi-value-title' }, '下载走镜像'),
+					E('div', { 'class': 'cbi-value-field' }, [ chkMirror, E('div', { 'class': 'cbi-value-description' }, '镜像只用于下载大文件；版本信息与 sha256 永远来自 api.github.com') ])
+				])
+			]),
+			E('div', { 'class': 'cbi-page-actions' }, [
+				E('span', { 'class': 'cbi-value-description' }, '命令行等价：ap3000m-ota check / download / upgrade [--wipe] --yes')
+			])
+		]);
+	},
+
+	handleSaveApply: null,
+	handleSave: null,
+	handleReset: null
+});

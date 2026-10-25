@@ -18,6 +18,9 @@ PENDING_FILE=/etc/ap3000m-pending
 RESULT_FILE=/etc/ap3000m-result
 CONF=ap3000m_ota.main
 MARGIN_KB=20480
+DL_TAG_FILE=/tmp/ap3000m-ota-dl.tag
+DL_RESULT_FILE=/tmp/ap3000m-ota-dl.result
+DL_LOG=/tmp/ap3000m-ota-dl.log
 
 log()  { printf '%s\n' "ap3000m-ota: $*" >&2; }
 warn() { printf '%s\n' "ap3000m-ota: 警告: $*" >&2; }
@@ -142,6 +145,14 @@ cmd_list() {
 }
 
 cmd_download() {
+	# --background：给 LuCI 用，立即返回，进度靠 /tmp 下的状态文件 + .part 文件大小
+	if [ "${1:-}" = "--background" ]; then
+		shift
+		( cmd_download "$@" >"$DL_LOG" 2>&1 ) &
+		echo "started"
+		return 0
+	fi
+
 	need_tools
 	ensure_dir
 	want=""
@@ -156,10 +167,16 @@ cmd_download() {
 	SHA=$(printf '%s' "$line" | cut -f4)
 	IMG="$(work_dir)/$TAG.bin"
 
+	# 给 LuCI 页面用的进度状态（字节数由页面自己 stat .part 文件获得）
+	printf '%s %s\n' "$TAG" "$SIZE" > "$DL_TAG_FILE"
+	rm -f "$DL_RESULT_FILE"
+
 	if [ -f "$IMG" ] && [ "${SIZE:-0}" -gt 0 ]; then
 		now=$(wc -c < "$IMG" | tr -d ' ')
 		if [ "$now" = "$SIZE" ]; then
 			log "已存在完整镜像：$IMG"
+			rm -f "$DL_TAG_FILE"
+			printf 'ok 已存在 %s\n' "$TAG" > "$DL_RESULT_FILE"
 			echo "$IMG"
 			return 0
 		fi
@@ -167,8 +184,16 @@ cmd_download() {
 
 	need=$(( SIZE / 1024 * 3 + MARGIN_KB ))
 	have=$(free_kb)
-	[ -n "$have" ] || die "无法读取 $(work_dir) 剩余空间"
-	[ "$have" -gt "$need" ] || die "空间不足：需要约 $((need / 1024))MB，剩余 $((have / 1024))MB"
+	if [ -z "$have" ]; then
+		rm -f "$DL_TAG_FILE"
+		printf 'failed 无法读取剩余空间\n' > "$DL_RESULT_FILE"
+		die "无法读取 $(work_dir) 剩余空间"
+	fi
+	if [ "$have" -le "$need" ]; then
+		rm -f "$DL_TAG_FILE"
+		printf 'failed 空间不足：需要约 %sMB，剩余 %sMB\n' "$((need / 1024))" "$((have / 1024))" > "$DL_RESULT_FILE"
+		die "空间不足：需要约 $((need / 1024))MB，剩余 $((have / 1024))MB"
+	fi
 
 	URL=$(asset_url "$TAG" "$NAME")
 	PART="$IMG.part"
@@ -189,18 +214,31 @@ cmd_download() {
 	rm -f /tmp/.ota-mirrors.$$
 	if [ "$ok" = 0 ]; then
 		log "  尝试直连 GitHub"
-		curl -fL --connect-timeout 8 --speed-time 30 --speed-limit 1024 -o "$PART" "$URL" || die "所有下载源均失败"
+		if ! curl -fL --connect-timeout 8 --speed-time 30 --speed-limit 1024 -o "$PART" "$URL"; then
+			rm -f "$PART" "$DL_TAG_FILE"
+			printf 'failed 所有下载源均失败\n' > "$DL_RESULT_FILE"
+			die "所有下载源均失败"
+		fi
 	fi
 
 	if [ -n "$SHA" ]; then
-		printf '%s  %s\n' "$SHA" "$PART" | sha256sum -c - >/dev/null 2>&1 ||
-			{ rm -f "$PART"; die "sha256 校验失败（镜像可能被篡改或下载不完整）"; }
+		if ! printf '%s  %s\n' "$SHA" "$PART" | sha256sum -c - >/dev/null 2>&1; then
+			rm -f "$PART" "$DL_TAG_FILE"
+			printf 'failed sha256 校验失败\n' > "$DL_RESULT_FILE"
+			die "sha256 校验失败（镜像可能被篡改或下载不完整）"
+		fi
 		log "sha256 校验通过"
 	else
 		warn "该 Release 无 digest，跳过完整性校验"
 	fi
 
-	mv -f "$PART" "$IMG" || die "重命名失败"
+	if ! mv -f "$PART" "$IMG"; then
+		rm -f "$DL_TAG_FILE"
+		printf 'failed 重命名失败\n' > "$DL_RESULT_FILE"
+		die "重命名失败"
+	fi
+	rm -f "$DL_TAG_FILE"
+	printf 'ok 已下载 %s\n' "$TAG" > "$DL_RESULT_FILE"
 	log "已保存：$IMG"
 	echo "$IMG"
 }
@@ -255,6 +293,50 @@ cmd_upgrade() {
 	log "已提交升级，设备将在数秒内重启（请勿断电）"
 }
 
+# 给 LuCI 页面用：一次输出全部本地状态（不联网，快）
+json_escape() { printf '%s' "${1:-}" | tr -d '\r\n' | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+
+cmd_ui_status() {
+	cur=$(current_tag)
+	pend=""
+	[ -s "$PENDING_FILE" ] && pend=$(cat "$PENDING_FILE")
+	last=""
+	[ -s "$RESULT_FILE" ] && last=$(cat "$RESULT_FILE")
+
+	dl_tag=""
+	dl_size=0
+	dl_bytes=0
+	dl_result=""
+	if [ -s "$DL_TAG_FILE" ]; then
+		set -- $(cat "$DL_TAG_FILE")
+		dl_tag="${1:-}"
+		dl_size="${2:-0}"
+		part="$(work_dir)/$dl_tag.bin.part"
+		[ -f "$part" ] && dl_bytes=$(wc -c < "$part" | tr -d ' ')
+	fi
+	[ -s "$DL_RESULT_FILE" ] && dl_result=$(cat "$DL_RESULT_FILE")
+
+	imgs=""
+	d=$(work_dir)
+	if [ -d "$d" ]; then
+		for f in "$d"/*.bin; do
+			[ -f "$f" ] || continue
+			imgs="$imgs\"$(basename "$f" .bin)\","
+		done
+	fi
+
+	printf '{"current":"%s","pending":"%s","last_result":"%s","downloading":"%s","download_size":%s,"download_bytes":%s,"download_result":"%s","images":[%s],"keep_config":%s,"tag_prefix":"%s"}\n' \
+		"$(json_escape "$cur")" \
+		"$(json_escape "$pend")" \
+		"$(json_escape "$last")" \
+		"$(json_escape "$dl_tag")" \
+		"${dl_size:-0}" "${dl_bytes:-0}" \
+		"$(json_escape "$dl_result")" \
+		"${imgs%,}" \
+		"$( [ "$(keep_default)" = 0 ] && echo false || echo true )" \
+		"$(json_escape "$(tag_prefix)")"
+}
+
 cmd_status() {
 	log "当前版本 : $(current_tag)"
 	[ -s "$PENDING_FILE" ] && log "待验证升级: $(cat "$PENDING_FILE")"
@@ -290,10 +372,12 @@ usage() {
   check [--json]                 检查是否有新版本
   list                           列出最近可用版本
   download [--tag <TAG>]         仅下载并校验到 /root/ota
+  download --background          后台下载（LuCI 页面用）
   upgrade [--keep|--wipe] [--yes] [--tag <TAG>] [--image <FILE>]
                                  下载（若需要）并刷写；默认保留配置
   status                         当前版本 / 待验证升级 / 上次结果 / 本地镜像
-  boot-hook                      开机回写升级结果（rc.local 自动调用）
+  ui-status                      输出 JSON 状态（LuCI 页面用）
+  boot-hook                      开机回写升级结果（init.d 自动调用）
 
 示例:
   ap3000m-ota check
@@ -312,6 +396,7 @@ main() {
 		download)  cmd_download "$@" ;;
 		upgrade)   cmd_upgrade "$@" ;;
 		status)    cmd_status ;;
+		ui-status) cmd_ui_status ;;
 		boot-hook) cmd_boot_hook ;;
 		-h|--help|help) usage ;;
 		*) usage; exit 2 ;;

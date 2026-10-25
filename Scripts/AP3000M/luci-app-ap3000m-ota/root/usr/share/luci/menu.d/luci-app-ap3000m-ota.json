@@ -1,0 +1,13 @@
+{
+	"admin/system/ap3000m-ota": {
+		"title": "固件升级",
+		"order": 90,
+		"action": {
+			"type": "view",
+			"path": "ap3000m-ota/overview"
+		},
+		"depends": {
+			"acl": [ "luci-app-ap3000m-ota" ]
+		}
+	}
+}

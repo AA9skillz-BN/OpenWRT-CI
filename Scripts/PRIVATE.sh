@@ -130,5 +130,15 @@ else
 	_ap3000m_log "缺少 $_ap3000m_guard_dir，跳过 RNDIS 自愈"
 fi
 
+# 9) LuCI OTA 页面（luci-app-ap3000m-ota：JS 视图 + rpcd ucode 后端）
+_ap3000m_luci="$GITHUB_WORKSPACE/Scripts/AP3000M/luci-app-ap3000m-ota"
+if [ -d "$_ap3000m_luci" ]; then
+	rm -rf package/luci-app-ap3000m-ota
+	cp -rf "$_ap3000m_luci" package/luci-app-ap3000m-ota
+	_ap3000m_log "已投放 LuCI OTA 页面（package/luci-app-ap3000m-ota）"
+else
+	_ap3000m_log "缺少 $_ap3000m_luci，跳过 LuCI OTA 页面"
+fi
+
 _ap3000m_log "扩展准备完成"
 return 0 2>/dev/null || exit 0
