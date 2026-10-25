@@ -18,6 +18,21 @@ set +e
 
 _ap3000m_log() { echo "==> [AP3000M] $*"; }
 
+# ---- TR3000 分支 ----
+# 注意：本段曾被远程 AP3000M 提交（1833251 / 7aee419）基于旧版整体覆盖过一次，
+# 导致 TR3000 的分区补丁/固定插件/F50 脚本/BBR 全部没生效（构建能过但产物是残的）。
+# 修改本文件时必须保留此段。
+if [[ "${WRT_CONFIG,,}" == *"tr3000"* ]]; then
+	_tr_private="$GITHUB_WORKSPACE/Scripts/TR3000-512/private.sh"
+	if [ -f "$_tr_private" ]; then
+		# shellcheck disable=SC1090
+		source "$_tr_private"
+		return $? 2>/dev/null || exit $?
+	fi
+	echo "==> [TR3000] 缺少 $_tr_private，跳过专属扩展" >&2
+	return 0 2>/dev/null || exit 0
+fi
+
 # 仅 AP3000M 配置生效（WRT_CONFIG 为空时也跳过）
 if [[ "${WRT_CONFIG,,}" != *"ap3000m"* ]]; then
 	return 0 2>/dev/null || exit 0
