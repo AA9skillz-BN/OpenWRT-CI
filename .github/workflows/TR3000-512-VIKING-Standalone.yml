@@ -14,6 +14,8 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     timeout-minutes: 360
+    env:
+      CCACHE_MAXSIZE: 2G
     defaults:
       run:
         working-directory: firmware
@@ -74,6 +76,25 @@ jobs:
         shell: bash
         run: bash "$GITHUB_WORKSPACE/Scripts/TR3000-512/configure.sh"
 
+      - name: Verify ccache and identify source
+        id: cache-source
+        run: |
+          grep -qx 'CONFIG_CCACHE=y' .config
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore TR3000 build cache
+        id: build-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            firmware/.ccache
+            firmware/dl
+          key: tr3000-512-ccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.cache-source.outputs.sha }}-${{ hashFiles('Config/TR3000-512.txt', 'Scripts/TR3000-512/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            tr3000-512-ccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.cache-source.outputs.sha }}-${{ hashFiles('Config/TR3000-512.txt', 'Scripts/TR3000-512/**') }}-
+            tr3000-512-ccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.cache-source.outputs.sha }}-
+            tr3000-512-ccache-v1-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Download sources
         run: make download -j8
 
@@ -83,6 +104,22 @@ jobs:
           set -o pipefail
           make -j"$(nproc)" V=s 2>&1 | tee build.log || \
             make -j1 V=s 2>&1 | tee -a build.log
+
+      - name: Show ccache statistics
+        if: always()
+        run: |
+          if [ -x staging_dir/host/bin/ccache ]; then
+            CCACHE_DIR="$PWD/.ccache" staging_dir/host/bin/ccache --show-stats
+          fi
+
+      - name: Save TR3000 build cache
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            firmware/.ccache
+            firmware/dl
+          key: ${{ steps.build-cache.outputs.cache-primary-key }}
 
       - name: Publish TR3000 release
         env:
