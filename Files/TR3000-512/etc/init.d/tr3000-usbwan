@@ -1,10 +1,33 @@
 #!/bin/sh /etc/rc.common
 # SPDX-License-Identifier: MIT
 # 开机把已插着的 USB 上网卡接成 WAN（热插拔由 hotplug.d 负责）
+#
+# 注意：USB 枚举经常晚于 S99，若本脚本跑的时候 eth2 还不存在，
+# tr3000-usbwan.sh 会认为「没插网卡」直接返回，导致 f50 和双核 RPS 全部漏掉。
+# 实机踩过：刷机重启后 RPS 停在 0，手动跑一次脚本才变 3。
+# 所以先最多等 20 秒，直到总线上出现 USB 网卡，再交给 tr3000-usbwan.sh。
 START=99
 STOP=10
 
 start() {
 	[ -x /etc/tr3000-usbwan.sh ] || return 0
+
+	_i=0
+	while [ "$_i" -lt 20 ]; do
+		_found=0
+		for _d in /sys/class/net/*; do
+			case "$(readlink -f "$_d/device" 2>/dev/null)" in
+				*/usb[0-9]*/*)
+					_found=1
+					break
+					;;
+			esac
+		done
+		[ "$_found" = "1" ] && break
+		sleep 1
+		_i=$((_i + 1))
+	done
+
+	logger -t tr3000-usbwan "boot: usb netdev wait ${_i}s, found=${_found:-0}"
 	/etc/tr3000-usbwan.sh >/dev/null 2>&1
 }
