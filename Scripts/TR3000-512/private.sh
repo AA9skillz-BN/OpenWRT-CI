@@ -55,7 +55,16 @@ _tr3000_kcfg="target/linux/generic/config-6.18"
 if [ -f "$_tr3000_kcfg" ]; then
 	if grep -q '^# CONFIG_TCP_CONG_BBR is not set' "$_tr3000_kcfg"; then
 		sed -i 's/^# CONFIG_TCP_CONG_BBR is not set$/CONFIG_TCP_CONG_BBR=y/' "$_tr3000_kcfg"
-		log "已启用内核 BBR（$_tr3000_kcfg）"
+		# 关键：开 BBR 后内核「默认拥塞控制」的 choice 会从 2 项变 3 项
+		# （DEFAULT_CUBIC / DEFAULT_BBR / DEFAULT_RENO），而 OpenWrt 的
+		# CONFIG_DEFAULT_TCP_CONG="cubic" 是字符串、不匹配内核 choice，
+		# 于是 syncconfig 变成交互式提问 choice[1-3?] 并卡死：
+		#   make[8]: *** [scripts/kconfig/Makefile:85: syncconfig] Error 1
+		# 这里把默认选项一并钉成 DEFAULT_BBR。
+		sed -i '/^CONFIG_DEFAULT_TCP_CONG=/d' "$_tr3000_kcfg"
+		grep -q '^CONFIG_DEFAULT_BBR=y' "$_tr3000_kcfg" ||
+			printf 'CONFIG_DEFAULT_BBR=y\n' >>"$_tr3000_kcfg"
+		log "已启用内核 BBR（默认拥塞控制 = BBR）"
 	elif grep -q '^CONFIG_TCP_CONG_BBR=y' "$_tr3000_kcfg"; then
 		log "内核 BBR 已处于启用状态"
 	else
