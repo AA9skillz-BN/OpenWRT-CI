@@ -161,4 +161,9 @@ else
 fi
 
 _ap3000m_log "扩展准备完成"
+
+# 按 Scripts/README.md 规则 3：收尾复位 shell 选项，不依赖分发器
+# （本脚本只开了 set +e，没开 -u/pipefail；显式复位更稳妥）
+set +eu
+set +o pipefail
 return 0 2>/dev/null || exit 0
