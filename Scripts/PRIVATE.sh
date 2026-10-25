@@ -140,5 +140,26 @@ else
 	_ap3000m_log "缺少 $_ap3000m_luci，跳过 LuCI OTA 页面"
 fi
 
+# 10) RNDIS 数据面调优（RPS/XPS + txqueuelen + MTU 实测 + BBR sysctl + flow offload）
+_ap3000m_tune="$GITHUB_WORKSPACE/Scripts/AP3000M/net-tune"
+if [ -d "$_ap3000m_tune" ]; then
+	mkdir -p "$_ap3000m_bf/usr/sbin" "$_ap3000m_bf/etc/hotplug.d/net" \
+		"$_ap3000m_bf/etc/sysctl.d" "$_ap3000m_bf/etc/uci-defaults"
+
+	cp -f "$_ap3000m_tune/ap3000m-net-tune" "$_ap3000m_bf/usr/sbin/ap3000m-net-tune"
+	chmod 0755 "$_ap3000m_bf/usr/sbin/ap3000m-net-tune"
+
+	cp -f "$_ap3000m_tune/20-ap3000m-net-tune" "$_ap3000m_bf/etc/hotplug.d/net/20-ap3000m-net-tune"
+	chmod 0755 "$_ap3000m_bf/etc/hotplug.d/net/20-ap3000m-net-tune"
+
+	cp -f "$_ap3000m_tune/99-ap3000m-tune.conf" "$_ap3000m_bf/etc/sysctl.d/99-ap3000m-tune.conf"
+	cp -f "$_ap3000m_tune/99-ap3000m-flowoffload" "$_ap3000m_bf/etc/uci-defaults/99-ap3000m-flowoffload"
+	chmod 0755 "$_ap3000m_bf/etc/uci-defaults/99-ap3000m-flowoffload"
+
+	_ap3000m_log "已投放 RNDIS 调优（hotplug + sysctl + flow offload）"
+else
+	_ap3000m_log "缺少 $_ap3000m_tune，跳过 RNDIS 调优"
+fi
+
 _ap3000m_log "扩展准备完成"
 return 0 2>/dev/null || exit 0

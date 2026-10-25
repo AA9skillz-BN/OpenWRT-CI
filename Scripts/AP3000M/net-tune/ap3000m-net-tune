@@ -1,0 +1,97 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# ap3000m-net-tune —— 把 FM350 的 USB-RNDIS 数据面榨干
+#
+# FM350 只有 RNDIS 一种数据通路（GTUSBMODE 40/41 都是 RNDIS），没有 ECM/NCM 可选，
+# 所以能做的就是把这一个通道的参数调到最优：
+#   1. RPS/XPS：把单流的中断/发送分摊到两个 A53 核（usbnet 默认只压一个核）
+#   2. txqueuelen：USB 高 BDP 下加大队列
+#   3. MTU：用 DF ping 实测运营商上限，避免分片
+#
+# 用法：
+#   ap3000m-net-tune apply [dev]   应用即时参数（RPS/XPS/队列/已缓存的 MTU）
+#   ap3000m-net-tune probe [dev]   实测 MTU 并缓存到 /etc/ap3000m-mtu
+#   ap3000m-net-tune status [dev]  打印当前生效值
+
+set -u
+
+MTU_CACHE=/etc/ap3000m-mtu
+PING_HOST=223.5.5.5
+
+log() { logger -t ap3000m-net "$*" 2>/dev/null; printf '%s\n' "ap3000m-net-tune: $*" >&2; }
+
+dev_of() {
+	d="${1:-}"
+	[ -n "$d" ] && { printf '%s' "$d"; return; }
+	d=$(uci -q get network.fm350.device 2>/dev/null)
+	[ -n "$d" ] && printf '%s' "$d" || printf 'eth2'
+}
+
+rps_mask() {
+	n=$(nproc 2>/dev/null || echo 1)
+	[ "$n" -ge 8 ] && n=8
+	printf '%x' $(( (1 << n) - 1 ))
+}
+
+apply_tuning() {
+	dev=$(dev_of "${1:-}")
+	[ -d "/sys/class/net/$dev" ] || { log "设备 $dev 不存在，跳过"; return 1; }
+
+	mask=$(rps_mask)
+	for f in /sys/class/net/"$dev"/queues/rx-*/rps_cpus; do
+		[ -w "$f" ] && echo "$mask" >"$f" 2>/dev/null
+	done
+	for f in /sys/class/net/"$dev"/queues/tx-*/xps_cpus; do
+		[ -w "$f" ] && echo "$mask" >"$f" 2>/dev/null
+	done
+
+	ip link set dev "$dev" txqueuelen 2000 2>/dev/null
+
+	mtu=$(cat "$MTU_CACHE" 2>/dev/null)
+	if [ -n "$mtu" ]; then
+		ip link set dev "$dev" mtu "$mtu" 2>/dev/null
+	fi
+
+	log "已应用：dev=$dev RPS/XPS=$mask txqueuelen=$(cat /sys/class/net/"$dev"/tx_queue_len 2>/dev/null) mtu=${mtu:-默认}"
+}
+
+probe_mtu() {
+	dev=$(dev_of "${1:-}")
+	ip4=$(ip -4 -o addr show dev "$dev" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n 1)
+	[ -n "$ip4" ] || { log "设备 $dev 还没有 IPv4，稍后再探 MTU"; return 1; }
+
+	for mtu in 1500 1476 1460 1432 1420 1400 1360 1300 1280; do
+		payload=$((mtu - 28))
+		if ping -M do -s "$payload" -c 1 -W 2 -I "$ip4" "$PING_HOST" >/dev/null 2>&1; then
+			printf '%s\n' "$mtu" >"$MTU_CACHE"
+			ip link set dev "$dev" mtu "$mtu" 2>/dev/null
+			uci -q set network.fm350.mtu="$mtu" 2>/dev/null
+			uci -q commit network 2>/dev/null
+			log "MTU 实测结果：$mtu（payload $payload，经 $ip4）"
+			return 0
+		fi
+	done
+
+	log "MTU 探测失败（链路可能未就绪），保持默认"
+	return 1
+}
+
+show_status() {
+	dev=$(dev_of "${1:-}")
+	printf 'dev=%s\n' "$dev"
+	printf 'mtu=%s\n' "$(cat /sys/class/net/"$dev"/mtu 2>/dev/null)"
+	printf 'tx_queue_len=%s\n' "$(cat /sys/class/net/"$dev"/tx_queue_len 2>/dev/null)"
+	for f in /sys/class/net/"$dev"/queues/rx-*/rps_cpus; do
+		[ -e "$f" ] && printf '%s=%s\n' "${f#/sys/class/net/}" "$(cat "$f" 2>/dev/null)"
+	done
+	printf 'cached_mtu=%s\n' "$(cat "$MTU_CACHE" 2>/dev/null)"
+	printf 'cc=%s qdisc=%s\n' "$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)" \
+		"$(sysctl -n net.core.default_qdisc 2>/dev/null)"
+}
+
+case "${1:-apply}" in
+	apply)  shift; apply_tuning "${1:-}" ;;
+	probe)  shift; probe_mtu "${1:-}" ;;
+	status) shift; show_status "${1:-}" ;;
+	*) printf '用法: %s [apply|probe|status] [dev]\n' "$0" >&2; exit 2 ;;
+esac

@@ -1,0 +1,19 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# 99-ap3000m-flowoffload —— 首次开机打开 firewall4 的软件 flow offloading
+#
+# kmod-nf-flow / kmod-nft-offload 已经在镜像里（GENERAL.txt 里带），
+# 这里只是把开关打开：LAN↔WAN 转发走 flowtable，少走一遍完整协议栈。
+#
+# 硬件 offload（flow_offloading_hw）对本机无意义：上游是 USB RNDIS，
+# PPE 在以太网 MAC/交换侧，5G 这条链路不经过它，所以刻意不开。
+
+if [ "$(uci -q get firewall.@defaults[0].flow_offloading)" = "1" ]; then
+	exit 0
+fi
+
+uci set firewall.@defaults[0].flow_offloading='1'
+uci commit firewall
+logger -t ap3000m-net "已开启 firewall 软件 flow offloading"
+
+exit 0

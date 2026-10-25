@@ -1,0 +1,31 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# 20-ap3000m-net-tune —— 接口出现/重建时自动套用 RNDIS 调优
+#
+# 为什么用 hotplug 而不是开机脚本：USB 端点自愈（ap3000m-rdnis-guard）会重置模组，
+# eth 设备会被重建，sysfs 里的 rps_cpus/xps_cpus/tx_queue_len 全部回到默认值。
+# 只有 hotplug 才会在每次设备重建时重新应用。
+
+[ "$ACTION" = "add" ] || [ "$ACTION" = "register" ] || exit 0
+
+dev="${DEVICE:-${DEVICENAME:-}}"
+[ -n "$dev" ] || exit 0
+[ -d "/sys/class/net/$dev" ] || exit 0
+
+# 只对 usbnet 家族的网卡生效（FM350 = rndis_host）
+drv=$(basename "$(readlink -f "/sys/class/net/$dev/device/driver" 2>/dev/null)")
+case "$drv" in
+	rndis_host|usbnet|cdc_ether|cdc_ncm) ;;
+	*) exit 0 ;;
+esac
+
+[ -x /usr/sbin/ap3000m-net-tune ] || exit 0
+
+# 后台跑，别拖住 hotplug：先立即应用，等接口拿到地址后再实测 MTU
+(
+	/usr/sbin/ap3000m-net-tune apply "$dev"
+	sleep 10
+	/usr/sbin/ap3000m-net-tune probe "$dev"
+) >/dev/null 2>&1 &
+
+exit 0
