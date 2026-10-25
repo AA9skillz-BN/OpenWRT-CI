@@ -36,6 +36,7 @@ def main():
         "CONFIG_TARGET_mediatek_filogic_DEVICE_cudy_tr3000-v1=y",
         "CONFIG_LUCI_LANG_zh_Hans=y",
         "CONFIG_PACKAGE_luci-app-turboacc_INCLUDE_OFFLOADING=y",
+        "CONFIG_DEVEL=y",
         "CONFIG_CCACHE=y",
     ))
     missing = [symbol for symbol in required if symbol not in config]
