@@ -6,7 +6,12 @@ uci set turboacc.config.sw_flow='1'
 uci set turboacc.config.hw_flow='1'
 uci set turboacc.config.sfe_flow='0'
 uci set turboacc.config.hw_wed='1'
-uci set turboacc.config.bbr_cca='0'
+uci set turboacc.config.bbr_cca='1'
 uci set turboacc.config.fullcone_nat='1'
 uci commit turboacc
+# BBR 拥塞控制（内核编了 CONFIG_TCP_CONG_BBR 才生效，5G 高延迟链路更稳）
+if grep -qw bbr /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null; then
+	echo bbr > /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null
+	echo 'net.ipv4.tcp_congestion_control=bbr' >/etc/sysctl.d/11-tr3000-bbr.conf
+fi
 exit 0

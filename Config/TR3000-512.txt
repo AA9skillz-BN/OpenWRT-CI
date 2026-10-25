@@ -49,3 +49,5 @@ CONFIG_PACKAGE_usbutils=y
 # The ccache prompt in config/Config-devel.in is visible only with DEVEL.
 CONFIG_DEVEL=y
 CONFIG_CCACHE=y
+# 5G 上行链路延迟高、有丢包，BBR 比 cubic 更稳（当前固件内核未编 BBR）
+CONFIG_TCP_CONG_BBR=y
