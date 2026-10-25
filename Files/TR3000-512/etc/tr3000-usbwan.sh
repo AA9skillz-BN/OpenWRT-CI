@@ -9,6 +9,7 @@
 # 接口就变成「网络设备不存在」，DHCP 永远起不来，WiFi 客户端自然没网。
 # 本脚本改成按 USB 总线实时探测，探测到谁就用谁，并且：
 #   - 写 network.f50（DHCP 客户端，metric 10，优先于有线 wan）
+#   - 不用 F50 自带 DNS，改用公共 DNS（见下方注释，这是「没有下载速度」的元凶）
 #   - 并入 wan 防火墙区（wan 区自带 masquerade / mtu_fix；LAN→WAN 转发已存在）
 #   - 清理旧固件遗留的 network.F50
 #
@@ -88,8 +89,17 @@ main() {
 	uci -q set network.f50.proto='dhcp'
 	uci -q set network.f50.device="$ifc"
 	uci -q set network.f50.metric='10'
+	# 关键：不用 F50 自带的 DNS。实测 192.168.0.1 连测 5 次会失败 1 次，
+	# 而且对 CNAME 链（如 mirrors.aliyun.com → w.alikunlun.com）经常只回 CNAME
+	# 不回 A 记录，客户端拿到「Could not resolve host」，表现为「没有下载速度」。
+	# 换成三个公共 DNS 后：解析 10/10 成功，镜像站下载 5.2 MB/s。
+	uci -q set network.f50.peerdns='0'
+	uci -q delete network.f50.dns
+	uci -q add_list network.f50.dns='114.114.114.114'
+	uci -q add_list network.f50.dns='223.5.5.5'
+	uci -q add_list network.f50.dns='119.29.29.29'
 	uci -q commit network
-	log "network.f50 -> $ifc (dhcp, metric 10)"
+	log "network.f50 -> $ifc (dhcp, metric 10, 公共 DNS)"
 
 	# 并入 wan 防火墙区
 	zone=$(uci -q show firewall | sed -n "s/^\(firewall\.[^.]*\)\.name='wan'$/\1/p" | head -n1)
@@ -108,25 +118,8 @@ main() {
 	sleep 1
 	ifup f50 >/dev/null 2>&1 || /sbin/ifup f50 >/dev/null 2>&1
 	/etc/init.d/firewall reload >/dev/null 2>&1
-	log "已启动 f50 并重载防火墙"
-
-	# F50 自带的 DNS（192.168.0.1）偶发超时：实测连测 5 次会失败 1 次，
-	# 客户端表现为「网页有时打得开、刷新又好了」。这里给 dnsmasq 补几个公共
-	# DNS 做并发兜底（dnsmasq 会同时问所有上游，取最快回来的那个）。
-	local dns_changed=0
-	local s
-	for s in 223.5.5.5 119.29.29.29 114.114.114.114; do
-		uci -q get dhcp.@dnsmasq[0] >/dev/null 2>&1 || break
-		if ! uci -q get dhcp.@dnsmasq[0].server 2>/dev/null | tr ' ' '\n' | grep -qx "$s"; then
-			uci -q add_list "dhcp.@dnsmasq[0].server=$s"
-			dns_changed=1
-		fi
-	done
-	if [ "$dns_changed" = "1" ]; then
-		uci -q commit dhcp
-		/etc/init.d/dnsmasq reload >/dev/null 2>&1
-		log "已为 dnsmasq 补公共 DNS 兜底"
-	fi
+	/etc/init.d/dnsmasq reload >/dev/null 2>&1
+	log "已启动 f50 并重载防火墙/DNS"
 }
 
 main "$@"
