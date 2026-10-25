@@ -109,6 +109,24 @@ main() {
 	ifup f50 >/dev/null 2>&1 || /sbin/ifup f50 >/dev/null 2>&1
 	/etc/init.d/firewall reload >/dev/null 2>&1
 	log "已启动 f50 并重载防火墙"
+
+	# F50 自带的 DNS（192.168.0.1）偶发超时：实测连测 5 次会失败 1 次，
+	# 客户端表现为「网页有时打得开、刷新又好了」。这里给 dnsmasq 补几个公共
+	# DNS 做并发兜底（dnsmasq 会同时问所有上游，取最快回来的那个）。
+	local dns_changed=0
+	local s
+	for s in 223.5.5.5 119.29.29.29 114.114.114.114; do
+		uci -q get dhcp.@dnsmasq[0] >/dev/null 2>&1 || break
+		if ! uci -q get dhcp.@dnsmasq[0].server 2>/dev/null | tr ' ' '\n' | grep -qx "$s"; then
+			uci -q add_list "dhcp.@dnsmasq[0].server=$s"
+			dns_changed=1
+		fi
+	done
+	if [ "$dns_changed" = "1" ]; then
+		uci -q commit dhcp
+		/etc/init.d/dnsmasq reload >/dev/null 2>&1
+		log "已为 dnsmasq 补公共 DNS 兜底"
+	fi
 }
 
 main "$@"
