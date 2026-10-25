@@ -117,6 +117,21 @@ main() {
 	# 等 netifd 处理完设备事件，再拉起接口
 	sleep 1
 	ifup f50 >/dev/null 2>&1 || /sbin/ifup f50 >/dev/null 2>&1
+
+	# USB 网卡的接收默认全压在 CPU0 上。MT7981 是双核，实测单核实测只有
+	# 10~40 Mbps，而同一张 F50 用 WiFi 能跑 262 Mbps —— 差的就是这一口气。
+	# 把 RPS 铺到两核，并放开每队列的流表，让软中断并行处理。
+	if [ -d "/sys/class/net/$ifc/queues" ]; then
+		local q
+		for q in /sys/class/net/"$ifc"/queues/rx-*/rps_cpus; do
+			[ -w "$q" ] && echo 3 >"$q" 2>/dev/null
+		done
+		for q in /sys/class/net/"$ifc"/queues/rx-*/rps_flow_cnt; do
+			[ -w "$q" ] && echo 4096 >"$q" 2>/dev/null
+		done
+		log "已为 $ifc 启用双核 RPS"
+	fi
+
 	/etc/init.d/firewall reload >/dev/null 2>&1
 	/etc/init.d/dnsmasq reload >/dev/null 2>&1
 	log "已启动 f50 并重载防火墙/DNS"
