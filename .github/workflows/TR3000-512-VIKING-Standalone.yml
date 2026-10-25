@@ -121,6 +121,17 @@ jobs:
             firmware/dl
           key: ${{ steps.build-cache.outputs.cache-primary-key }}
 
+      - name: Verify TR3000 image before publishing
+        run: |
+          image=bin/targets/mediatek/filogic/immortalwrt-mediatek-filogic-cudy_tr3000-v1-squashfs-sysupgrade.bin
+          test -s "$image"
+          tar -tf "$image" > /dev/null
+          staging_dir/host/bin/fwtool -i tr3000-image-metadata.json "$image"
+          python3 "$GITHUB_WORKSPACE/Scripts/TR3000-512/verify-build.py" \
+            --config .config \
+            --manifest bin/targets/mediatek/filogic/immortalwrt-mediatek-filogic-cudy_tr3000-v1.manifest \
+            --metadata tr3000-image-metadata.json
+
       - name: Publish TR3000 release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -143,8 +154,10 @@ jobs:
           name: tr3000-512-diagnostics-${{ github.run_number }}
           path: |
             firmware/build.log
-            firmware/.config
+            firmware/build.config
             firmware/logs/
             firmware/tr3000-512.patch
+            firmware/tr3000-image-metadata.json
+            firmware/bin/targets/mediatek/filogic/*cudy_tr3000-v1.manifest
           if-no-files-found: ignore
           retention-days: 7
