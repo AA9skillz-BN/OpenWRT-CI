@@ -4,11 +4,11 @@
 'require rpc';
 'require ui';
 
-var callStatus = rpc.declare({ object: 'luci.ap3000m-ota', method: 'status', expect: {} });
-var callCheck = rpc.declare({ object: 'luci.ap3000m-ota', method: 'check', expect: {} });
-var callDownload = rpc.declare({ object: 'luci.ap3000m-ota', method: 'download', expect: {} });
-var callUpgrade = rpc.declare({ object: 'luci.ap3000m-ota', method: 'upgrade', params: [ 'keep' ], expect: {} });
-var callSettings = rpc.declare({ object: 'luci.ap3000m-ota', method: 'set_settings', params: [ 'keep_config', 'use_mirror' ], expect: {} });
+var callStatus = rpc.declare({ object: 'luci.ap3000m_ota', method: 'status', expect: {} });
+var callCheck = rpc.declare({ object: 'luci.ap3000m_ota', method: 'check', expect: {} });
+var callDownload = rpc.declare({ object: 'luci.ap3000m_ota', method: 'download', expect: {} });
+var callUpgrade = rpc.declare({ object: 'luci.ap3000m_ota', method: 'upgrade', params: [ 'keep' ], expect: {} });
+var callSettings = rpc.declare({ object: 'luci.ap3000m_ota', method: 'set_settings', params: [ 'keep_config', 'use_mirror' ], expect: {} });
 
 function mb(bytes) {
 	return (Number(bytes || 0) / 1048576).toFixed(2) + ' MB';

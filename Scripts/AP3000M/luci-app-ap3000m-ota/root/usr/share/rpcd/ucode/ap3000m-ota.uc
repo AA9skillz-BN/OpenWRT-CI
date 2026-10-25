@@ -36,7 +36,7 @@ function current_version() {
 }
 
 return {
-	'luci.ap3000m-ota': {
+	'luci.ap3000m_ota': {
 		status: {
 			call: function() {
 				let st = parse_json(run('ui-status'), null) ?? {};
