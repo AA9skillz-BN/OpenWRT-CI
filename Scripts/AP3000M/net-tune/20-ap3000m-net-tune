@@ -32,7 +32,11 @@ esac
 		sleep 10
 		ip4=$(ip -4 -o addr show dev "$dev" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n 1)
 		if [ -n "$ip4" ]; then
-			/usr/sbin/ap3000m-net-tune probe "$dev" && break
+			/usr/sbin/ap3000m-net-tune probe "$dev"
+			rc=$?
+			# 0=探测成功 / 1=暂时失败（可以再等）/ 2=当前 ping 不支持 -M，别再等了
+			[ "$rc" -eq 0 ] && break
+			[ "$rc" -eq 2 ] && break
 		fi
 		i=$((i + 1))
 	done

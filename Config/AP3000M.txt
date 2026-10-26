@@ -84,3 +84,5 @@ CONFIG_PACKAGE_luci-app-ap3000m-ota=y
 #   BBR 需要 tcp_bbr 模块（AUTOLOAD 开机自动加载）
 # ---------------------------------------------------------------------
 CONFIG_PACKAGE_kmod-tcp-bbr=y
+# busybox ping 不支持 -M do，MTU 实测需要 iputils 版 ping
+CONFIG_PACKAGE_iputils-ping=y

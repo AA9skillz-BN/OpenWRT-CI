@@ -77,6 +77,14 @@ probe_mtu() {
 	ip4=$(ip -4 -o addr show dev "$dev" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n 1)
 	[ -n "$ip4" ] || { log "设备 $dev 还没有 IPv4，稍后再探 MTU"; return 1; }
 
+	# 真机教训（2026-10-26）：OpenWrt 默认 /bin/ping 是 busybox 的，
+	# **不支持 `-M do`**（设置 DF 位），所以拿它探测永远失败。
+	# 镜像里装了 iputils-ping 时才有真正的 -M；没有就跳过探测、保持默认 1500。
+	if ! ping -M do -c 1 -W 1 127.0.0.1 >/dev/null 2>&1; then
+		log "当前 ping 不支持 -M do（busybox），跳过 MTU 实测，保持 $(cat /sys/class/net/"$dev"/mtu 2>/dev/null)"
+		return 2
+	fi
+
 	for mtu in 1500 1476 1460 1432 1420 1400 1360 1300 1280; do
 		payload=$((mtu - 28))
 		if ping -M do -s "$payload" -c 1 -W 2 -I "$ip4" "$PING_HOST" >/dev/null 2>&1; then
