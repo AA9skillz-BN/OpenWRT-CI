@@ -90,10 +90,25 @@ done
 | `Config/GENERAL.txt` | 所有机型共用配置（WRT-CORE 固定追加） | 极少。机型专属包写 `Config/<机型>.txt` |
 | `.github/workflows/WRT-CORE.yml` | 编译核心（所有机型共用） | 极少。机型差异走 `with:` 输入或 `private.sh` |
 | `.github/workflows/Auto-Clean.yml` | Release 保留策略（按机型分组留 3 个） | 不需要。已按 tag 前缀 / `firmware-model` marker 通用化 |
+| `Scripts/Settings.sh` | 通用设置补丁（默认项、主题等，WRT-CORE 在 Custom Settings 里调用） | 极少。机型差异写进自己的 `Config/<机型>.txt` 或 `private.sh` |
+| `Scripts/Handles.sh` | 源码树补丁（WRT-CORE 在 Custom Settings 里调用） | 极少。机型专属补丁放 `Scripts/<机型>/` 并由 `private.sh` 应用 |
 
 > 必须改动其中之一时，两条硬要求：
 > 1. **先取主干最新版再改**——禁止拿本地旧副本整文件覆盖（这正是 TR3000 事故的成因）；
 > 2. 提交信息里写明**改什么、影响哪些机型、为什么不能在机型目录里解决**。
+
+## 已被禁用的 workflow（2026-10-26）
+
+以下 workflow 已在**仓库层面禁用**（disabled_manually），不再自行运行：
+
+| workflow | 原用途 | 为什么禁用 |
+| :--- | :--- | :--- |
+| MTK-ALL / OWRT-ALL / QCA-ALL / QCB-ALL | 由 Auto-Clean 链式触发的通用固件构建 | 每天产出约 17 GB 通用 Release，用不到 |
+| Cache-Clean | 每周日 gh cache delete --all | 会把所有机型的构建缓存一起清空，导致每次都是冷构建 |
+
+> **不要用"删文件"的办法停用 workflow**：上游仓库有这些文件，同步时会被加回来并重新启用（新 id）。
+> 正确做法是禁用；恢复用 python tools/disable_workflows.py --apply --enable <NAME>。
+> 注意：禁用状态不会随文件内容变化而丢失，但**删除后重新出现**会变成启用状态。
 
 ## 新增一个机型：照抄这份清单
 
