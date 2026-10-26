@@ -1,0 +1,65 @@
+# =====================================================================
+# NRadio / 鲲鹏无限 C8-688（nradio,c8-688 / MT7981B + MT7531 + eMMC）
+# 单机型配置片段：只编 C8-688，不编整个 filogic 家族
+#
+# 配套：
+#   .github/workflows/C8-688.yml     薄壳（uses: WRT-CORE.yml + 产物闸门）
+#   Scripts/C8-688/private.sh        注入 DTS / 设备定义 / 02_network / 覆盖层
+#   Files/C8-688/                    风扇曲线、首启
+#   docs/C8-688.md
+#
+# 注意：WRT-CORE 用 `CONFIG_TARGET_<X>=y` 推导平台，前两行不能动；
+#       板级包（mt76 固件、maxlinear PHY、pwmfan、USB）写在设备定义里，
+#       这里只补"用户想看见的功能"。
+# =====================================================================
+
+# 平台 / 机型
+CONFIG_TARGET_mediatek=y
+CONFIG_TARGET_mediatek_filogic=y
+CONFIG_TARGET_ALL_PROFILES=n
+CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_nradio_c8-688=y
+
+# 界面
+CONFIG_PACKAGE_luci=y
+CONFIG_PACKAGE_luci-ssl=y
+CONFIG_LUCI_LANG_zh_Hans=y
+CONFIG_PACKAGE_luci-theme-argon=y
+CONFIG_PACKAGE_luci-app-argon-config=y
+CONFIG_PACKAGE_luci-i18n-base-zh-cn=y
+CONFIG_PACKAGE_luci-i18n-firewall-zh-cn=y
+CONFIG_PACKAGE_luci-i18n-package-manager-zh-cn=y
+CONFIG_PACKAGE_luci-i18n-argon-config-zh-cn=y
+
+# 终端 / 运维
+CONFIG_PACKAGE_luci-app-ttyd=y
+CONFIG_PACKAGE_ttyd=y
+CONFIG_PACKAGE_luci-i18n-ttyd-zh-cn=y
+CONFIG_PACKAGE_curl=y
+CONFIG_PACKAGE_ca-bundle=y
+CONFIG_PACKAGE_jq=y
+CONFIG_PACKAGE_htop=y
+CONFIG_PACKAGE_ip-full=y
+CONFIG_PACKAGE_ethtool=y
+CONFIG_PACKAGE_usbutils=y
+CONFIG_PACKAGE_pciutils=y
+
+# 风扇（设备定义里已带 kmod-hwmon-pwmfan；曲线脚本在 Files/C8-688）
+CONFIG_PACKAGE_luci-app-fancontrol=y
+
+# 双系统切换：uboot-envtools + 首启自动探测的 /etc/fw_env.config
+#   fw_printenv boot_system   -> 0=原厂 / 1=第二系统
+#   c8-boot-official official -> 切回原厂并重启
+CONFIG_PACKAGE_uboot-envtools=y
+
+# MT5700M 管理插件（源：FAN789/luci-app-mt5700m v3.0.7，由 private.sh 放入）
+#   模组板在 eth1 那条 2.5G 网线后面，AT 走 TCP 192.168.8.1:20249（插件默认值）
+CONFIG_PACKAGE_mt5700m-transport=y
+CONFIG_PACKAGE_luci-app-mt5700m=y
+CONFIG_PACKAGE_luci-i18n-mt5700m-zh-cn=y
+CONFIG_PACKAGE_flock=y
+CONFIG_PACKAGE_odhcp6c=y
+
+# USB 串口兜底（万一改成 USB 直连/抓 AT 用）
+CONFIG_PACKAGE_kmod-usb-serial=y
+CONFIG_PACKAGE_kmod-usb-serial-option=y
+CONFIG_PACKAGE_kmod-usb-net-cdc-ncm=y

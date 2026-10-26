@@ -1,0 +1,49 @@
+#!/bin/sh /etc/rc.common
+# C8-688：给两个 radio 补上真实 MAC。
+#
+# 背景：出厂 eeprom(factory 分区) 里 offset 4 的 MAC 是占位值 00:00:1d:00:43:26，
+#       真 MAC 在 bdinfo 的 fac_mac。原厂 SDK 驱动自己会覆盖，mt76 不会，
+#       所以这里在 wifi up（S20network）之前把 macaddr 写进 UCI。
+# 只写 UCI，不碰 flash；每次启动都会兜底。
+START=19
+
+mac_plus() {
+	local mac="$1" add="$2"
+	local last=$(( 0x${mac##*:} + add ))
+	printf '%s:%02x\n' "${mac%:*}" $(( last & 0xff ))
+}
+
+apply_mac() {
+	[ -f /tmp/sysinfo/board_name ] || return 0
+	[ "$(cat /tmp/sysinfo/board_name 2>/dev/null)" = "nradio,c8-688" ] || return 0
+
+	# 等 wifi 配置生成
+	i=0
+	while [ ! -s /etc/config/wireless ] && [ $i -lt 20 ]; do
+		sleep 1
+		i=$((i + 1))
+	done
+	[ -s /etc/config/wireless ] || wifi config 2>/dev/null
+	[ -s /etc/config/wireless ] || return 0
+
+	[ -f /lib/functions/system.sh ] && . /lib/functions/system.sh
+	base=$(mmc_get_mac_ascii bdinfo fac_mac 2>/dev/null)
+	[ -n "$base" ] || return 0
+
+	idx=0
+	for sec in $(uci -q show wireless 2>/dev/null | sed -n 's/^wireless\.\([^.=]*\)=wifi-device$/\1/p'); do
+		cur=$(uci -q get "wireless.$sec.macaddr")
+		[ -n "$cur" ] && { idx=$((idx + 1)); continue; }
+		if [ "$idx" = "0" ]; then
+			uci -q set "wireless.$sec.macaddr=$base"
+		else
+			uci -q set "wireless.$sec.macaddr=$(mac_plus "$base" $((idx * 2)))"
+		fi
+		idx=$((idx + 1))
+	done
+	uci -q commit wireless
+	logger -t c8-wifi-mac "base=$base radios=$idx"
+}
+
+start() { apply_mac; }
+boot() { apply_mac; }

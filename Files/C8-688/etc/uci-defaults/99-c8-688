@@ -1,0 +1,31 @@
+#!/bin/sh
+# C8-688 首启兜底：02_network 已经配好 LAN/WAN 时这里只做两件事——
+# 1) wan 兜底挂到 5G 模组的 eth1（防止上游 board.d 变更导致 wan 没有 device）
+# 2) 打开风扇守护
+# 放在 Files/C8-688/etc/uci-defaults/99-c8-688
+
+[ -f /tmp/sysinfo/board_name ] || exit 0
+[ "$(cat /tmp/sysinfo/board_name)" = "nradio,c8-688" ] || exit 0
+
+# ---- WAN 兜底 -------------------------------------------------------------
+if [ -z "$(uci -q get network.wan.device)" ] && [ -z "$(uci -q get network.wan.ifname)" ]; then
+	uci -q set network.wan=interface
+	uci -q set network.wan.device='eth1'
+	uci -q set network.wan.proto='dhcp'
+fi
+# 4 个网口全 LAN（原厂"网口模式 1~4 = LAN"）
+if [ "$(uci -q get network.lan.device)" = "br-lan" ]; then
+	uci -q del_list network.lan.ports='wan'
+	uci -q del_list network.lan.ports='eth1'
+fi
+uci -q commit network
+
+# ---- 风扇 ---------------------------------------------------------------
+[ -x /usr/sbin/c8-fan ] && /etc/init.d/c8-fan enable 2>/dev/null
+/etc/init.d/c8-fan restart 2>/dev/null
+
+# ---- u-boot env（boot_system 双系统开关）-------------------------------
+# 原厂没带 fw_printenv/fw_env.config，env 大小只能自己探
+[ -x /usr/sbin/c8-env-detect ] && /usr/sbin/c8-env-detect
+
+exit 0

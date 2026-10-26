@@ -1,0 +1,45 @@
+#!/bin/sh
+# C8-688：切回原厂系统（boot_system=0）后重启。
+# 放在 Files/C8-688/usr/sbin/c8-boot-official
+#
+# 依赖 uboot-envtools + /etc/fw_env.config（本包已带）。
+# 只做"先只读校验、再写"：读不出来就绝不动手，避免把 env 写坏。
+
+ENV_DEV=/dev/mmcblk0p2
+CONF=/etc/fw_env.config
+
+die() { echo "c8-boot-official: $*" >&2; exit 1; }
+
+command -v fw_printenv >/dev/null 2>&1 || die "缺少 uboot-envtools"
+[ -f "$CONF" ] || die "缺少 $CONF"
+
+cur=$(fw_printenv -n boot_system 2>/dev/null) ||
+	die "读不到 boot_system（CRC 或 env 大小不对，检查 $CONF 里的 0x8000）"
+echo "当前 boot_system=$cur"
+
+case "${1:-}" in
+	status)
+		exit 0
+		;;
+	official|0)
+		[ "$cur" = "0" ] && { echo "已经是原厂系统，无需操作"; exit 0; }
+		fw_setenv boot_system 0 || die "写入 boot_system 失败"
+		now=$(fw_printenv -n boot_system 2>/dev/null) || die "写后读回失败"
+		[ "$now" = "0" ] || die "写后读回不一致（$now）"
+		echo "已切回原厂系统，3 秒后重启…"
+		sync
+		sleep 3
+		reboot
+		;;
+	second|1)
+		fw_setenv boot_system 1 || die "写入 boot_system 失败"
+		echo "已切到第二系统，3 秒后重启…"
+		sync
+		sleep 3
+		reboot
+		;;
+	*)
+		echo "用法: $0 [status|official|second]" >&2
+		exit 2
+		;;
+esac

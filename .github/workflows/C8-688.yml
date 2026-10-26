@@ -1,0 +1,181 @@
+# SPDX-License-Identifier: MIT
+# NRadio / 鲲鹏无限 C8-688 单机型固件（mainline immortalwrt / OpenWrt 25.x 线，内核 6.18）
+#
+# 地基：.github/workflows/WRT-CORE.yml（不改动任何原有文件）
+# 专属文件：
+#   Config/C8-688.txt                    单机型配置
+#   Scripts/C8-688/private.sh            注入 DTS / 设备定义 / 02_network / 覆盖层
+#   Scripts/C8-688/dts/*.dts             C8-688 设备树
+#   Scripts/C8-688/device-nradio_c8-688.mk  设备定义片段
+#   Files/C8-688/                        风扇曲线 + 首启兜底
+#   docs/C8-688.md
+#
+# 说明：C8-688 不在 immortalwrt 主线设备表里，但同门 C8-668GL 在内核树里，
+#       我们照它移植（MT7981B + MT7531 DSA + eMMC + 2.5G GPY211），
+#       所以不需要另开源码 fork，全部补丁都在本仓库里。
+
+name: C8-688
+
+on:
+  workflow_dispatch:
+    inputs:
+      SOURCE:
+        description: '源码仓库（owner/repo），默认 immortalwrt/immortalwrt'
+        required: false
+        default: 'immortalwrt/immortalwrt'
+        type: string
+      BRANCH:
+        description: '源码分支，默认 master（内核 6.18；要 25.12 稳定线填 openwrt-25.12，内核 6.12）'
+        required: false
+        default: 'master'
+        type: string
+      PACKAGE:
+        description: '手动追加插件包，多个请用\n符号隔开。'
+        required: false
+        type: string
+      TEST:
+        description: '仅输出配置文件，不编译固件。'
+        default: false
+        required: false
+        type: boolean
+
+permissions: write-all
+
+concurrency:
+  group: c8-688-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  c8-688:
+    name: C8-688-${{ inputs.SOURCE }}-${{ inputs.BRANCH }}
+    strategy:
+      fail-fast: false
+      matrix:
+        CONFIG: [C8-688]
+
+    uses: ./.github/workflows/WRT-CORE.yml
+    with:
+      WRT_CONFIG: ${{ matrix.CONFIG }}
+      WRT_THEME: argon
+      WRT_NAME: C8-688
+      WRT_SSID: C8-688
+      WRT_WORD: '12345678'
+      WRT_IP: 192.168.66.1
+      WRT_PW: 无
+      WRT_REPO: https://github.com/${{ inputs.SOURCE || 'immortalwrt/immortalwrt' }}.git
+      WRT_BRANCH: ${{ inputs.BRANCH || 'master' }}
+      WRT_SOURCE: ${{ inputs.SOURCE || 'immortalwrt/immortalwrt' }}
+      WRT_PACKAGE: ${{ inputs.PACKAGE }}
+      WRT_TEST: ${{ inputs.TEST || false }}
+
+  trim-release:
+    name: Trim release assets
+    needs: c8-688
+    if: ${{ needs.c8-688.result == 'success' && !inputs.TEST }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Verify image packages
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          TAG=$(gh api "repos/$GH_REPO/releases?per_page=30" \
+            --jq '[.[] | select(.tag_name | startswith("C8-688-"))][0].tag_name')
+          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
+            echo "no C8-688 release, skip"
+            exit 0
+          fi
+          echo "release: $TAG"
+
+          W=$(mktemp -d); cd "$W"
+          gh release download "$TAG" --pattern '*sysupgrade*.bin' -D .
+          gh release download "$TAG" --pattern '*.manifest' -D . || true
+
+          IMG=$(ls *sysupgrade*.bin 2>/dev/null | head -n1)
+          [ -n "$IMG" ] || { echo "::error::release 里没有 sysupgrade 镜像"; exit 1; }
+          tar -tf "$IMG" >/dev/null || { echo "::error::$IMG 不是合法 tar"; exit 1; }
+          echo "image ok: $(du -h "$IMG" | cut -f1) $IMG"
+          tar -tf "$IMG" | sed 's/^/  /'
+
+          MAN=$(ls *.manifest 2>/dev/null | head -n1 || true)
+          if [ -z "$MAN" ]; then
+            echo "::warning::没有 manifest，跳过包清单核对"
+            exit 0
+          fi
+
+          MISSING=0
+          for PKG in kmod-mt7915e kmod-mt7981-firmware mt7981-wo-firmware \
+                     kmod-phy-maxlinear kmod-hwmon-pwmfan luci-app-argon-config \
+                     luci-app-mt5700m mt5700m-transport luci-i18n-mt5700m-zh-cn \
+                     luci-app-ttyd ttyd jq; do
+            if grep -q "^${PKG} " "$MAN"; then
+              echo "  ok   $PKG"
+            else
+              echo "::error::manifest 缺少 $PKG"
+              MISSING=1
+            fi
+          done
+          [ "$MISSING" = 0 ]
+
+      - name: Keep only firmware + config
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          TAG=$(gh api "repos/$GH_REPO/releases?per_page=30" \
+            --jq '[.[] | select(.tag_name | startswith("C8-688-"))][0].tag_name')
+          [ -n "$TAG" ] && [ "$TAG" != "null" ] || { echo "skip"; exit 0; }
+          echo "release: $TAG"
+
+          gh api "repos/$GH_REPO/releases/tags/$TAG" --jq '.assets[].name' |
+            while IFS= read -r ASSET; do
+              case "$ASSET" in
+                *sysupgrade*.bin|Config-*.txt) echo "  keep   $ASSET" ;;
+                *) echo "  delete $ASSET"
+                   gh release delete-asset "$TAG" "$ASSET" --yes || echo "  warn: delete failed" ;;
+              esac
+            done
+
+          echo "--- remaining assets ---"
+          gh api "repos/$GH_REPO/releases/tags/$TAG" --jq '.assets[] | "\(.name)  \(.size) bytes"'
+
+      - name: Rewrite release notes for single-device build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          TAG=$(gh api "repos/$GH_REPO/releases?per_page=30" \
+            --jq '[.[] | select(.tag_name | startswith("C8-688-"))][0].tag_name')
+          [ -n "$TAG" ] && [ "$TAG" != "null" ] || exit 0
+
+          gh api "repos/$GH_REPO/releases/tags/$TAG" --jq '.body' |
+            grep -v -F -e '这是个平台固件包' \
+                      -e '请注意选择你需要的设备固件' \
+                      -e '不要问，刷就完事了' \
+                      -e '全系带开源硬件加速' > /tmp/body.txt || true
+
+          {
+            echo '**鲲鹏无限 C8-688 单机型固件**（`nradio,c8-688` / MT7981B + MT7531 + eMMC）'
+            echo
+            echo '- `*sysupgrade*.bin` —— **只写 eMMC 的 `kernel_2nd` / `rootfs_2nd`**（原厂双系统的第二系统槽）'
+            echo '- `Config-*.txt` —— 本次构建实际生效的配置'
+            echo
+            echo '刷机：原厂 NROS 后台 → 备份/升级 → **烧录第二系统**（先关掉"存储扩展"，否则该槽位被占用）。'
+            echo
+            echo '> 本固件不带原厂 APP（NR-OS）、不带多卡切换界面；5G 上行按 eth1 / DHCP 处理。'
+            echo
+            cat /tmp/body.txt
+          } > /tmp/new-body.txt
+
+          RID=$(gh api "repos/$GH_REPO/releases/tags/$TAG" --jq '.id')
+          gh api -X PATCH "repos/$GH_REPO/releases/$RID" -F body=@/tmp/new-body.txt >/dev/null ||
+            echo "warning: release body patch failed (non-fatal)"
+          echo "release notes rewritten for $TAG"
