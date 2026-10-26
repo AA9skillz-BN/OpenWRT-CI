@@ -172,21 +172,24 @@ fi
 #     immortalwrt 自带的 package/network/config/firewall4/patches/001-...fullcone-nat.patch
 #     最后修改于 2024-08，遇到上游 firewall4 大版本更新就会打不上而让整条构建失败
 #     （2026-10-26 实测：firewall4 升到 bac1d656 后 hunk #8 失败，构建整体红）。
-#     这里只在"已知会失败的那个版本"上把这一个补丁移开，让其余部分照常编译；
-#     上游修好后（版本再变或补丁更新）本逻辑自动不生效。
+#
+#     判定条件 = 「已知坏版本」+「补丁内容未变（sha256 匹配）」两个都要满足才跳过：
+#       · 上游升级 firewall4 → 版本变化 → 不跳过（按上游新补丁走）
+#       · 上游修好补丁但版本没变 → sha256 变化 → 不跳过（按上游新补丁走）
+#     也就是说：上游一修好，我们这边自动跟随，无需再改代码。
 _ap3000m_fw4_mk="package/network/config/firewall4/Makefile"
 _ap3000m_fw4_patch="package/network/config/firewall4/patches/001-firewall4-add-support-for-fullcone-nat.patch"
+_ap3000m_fw4_bad_ver="bac1d656e09b48e542f860844fe91cbba82abae2"
+_ap3000m_fw4_bad_sum="e043a5f7d07d7569f32df8af4b70f11b809611dfa5bc8cf8c33f6ee4478fefd9"
 if [ -f "$_ap3000m_fw4_mk" ] && [ -f "$_ap3000m_fw4_patch" ]; then
 	_ap3000m_fw4_ver=$(sed -n 's/^PKG_SOURCE_VERSION:=//p' "$_ap3000m_fw4_mk" | head -n1)
-	case "$_ap3000m_fw4_ver" in
-		bac1d656e09b48e542f860844fe91cbba82abae2)
-			mv -f "$_ap3000m_fw4_patch" "$_ap3000m_fw4_patch.disabled-ap3000m"
-			_ap3000m_log "⚠ firewall4=$_ap3000m_fw4_ver 与 fullcone 补丁不兼容，已临时跳过该补丁（本版无 fullcone NAT，普通 NAT 不受影响）"
-			;;
-		*)
-			_ap3000m_log "fullcone 补丁检查通过（firewall4=$_ap3000m_fw4_ver，保持原样）"
-			;;
-	esac
+	_ap3000m_fw4_sum=$(sha256sum "$_ap3000m_fw4_patch" 2>/dev/null | cut -d' ' -f1)
+	if [ "$_ap3000m_fw4_ver" = "$_ap3000m_fw4_bad_ver" ] && [ "$_ap3000m_fw4_sum" = "$_ap3000m_fw4_bad_sum" ]; then
+		mv -f "$_ap3000m_fw4_patch" "$_ap3000m_fw4_patch.disabled-ap3000m"
+		_ap3000m_log "⚠ firewall4=$_ap3000m_fw4_ver 且 fullcone 补丁未更新，临时跳过该补丁（本版无 fullcone NAT，普通 NAT 不受影响）"
+	else
+		_ap3000m_log "fullcone 补丁检查通过（firewall4=$_ap3000m_fw4_ver，补丁前缀 $(echo "$_ap3000m_fw4_sum" | cut -c1-8)…），按上游原样编译"
+	fi
 else
 	_ap3000m_log "未找到 firewall4 Makefile 或 fullcone 补丁，跳过检查"
 fi
