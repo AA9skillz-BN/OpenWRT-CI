@@ -5,6 +5,10 @@
 #
 # 实机分区（2026-10-26 实测）：kernel_2nd = 128 MiB、rootfs_2nd = 6.56 GiB，
 # 空间富裕，所以不设 IMAGE_SIZE；overlay 由 fstools 在 rootfs 剩余空间建 loop+f2fs。
+#
+# ⚠️ 下面的 DEVICE_PACKAGES 只是记录，**不会进镜像**：
+#    实测 CONFIG_TARGET_DEVICE_PACKAGES_…_nradio_c8-688 为空，闸门抓到镜像缺 kmod-mt7915e。
+#    真正生效的是 Config/C8-688.txt 里那几行显式 CONFIG_PACKAGE_*=y。
 # ---------------------------------------------------------------------------
 define Device/nradio_c8-688
   DEVICE_VENDOR := NRadio

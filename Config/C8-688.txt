@@ -9,8 +9,8 @@
 #   docs/C8-688.md
 #
 # 注意：WRT-CORE 用 `CONFIG_TARGET_<X>=y` 推导平台，前两行不能动；
-#       板级包（mt76 固件、maxlinear PHY、pwmfan、USB）写在设备定义里，
-#       这里只补"用户想看见的功能"。
+#       板级包**必须在这里显式选**，只写 filogic.mk 的 DEVICE_PACKAGES 不会进镜像
+#       （2026-10-26 实测：闸门抓到镜像缺 kmod-mt7915e）。
 # =====================================================================
 
 # 平台 / 机型
@@ -18,6 +18,21 @@ CONFIG_TARGET_mediatek=y
 CONFIG_TARGET_mediatek_filogic=y
 CONFIG_TARGET_ALL_PROFILES=n
 CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_nradio_c8-688=y
+
+# ---------------------------------------------------------------------
+# 板级驱动（按 TR3000 的做法逐项 =y，Config 为准）
+# ---------------------------------------------------------------------
+# WiFi：MT7981 内置 2x2 双频（mt76）
+CONFIG_PACKAGE_kmod-mt7915e=y
+CONFIG_PACKAGE_kmod-mt7981-firmware=y
+CONFIG_PACKAGE_mt7981-wo-firmware=y
+# 2.5G PHY：GPY211 x2（实机在 mdio 5 / mdio 15）
+CONFIG_PACKAGE_kmod-phy-maxlinear=y
+# 风扇：PWM0 -> pwm-fan
+CONFIG_PACKAGE_kmod-hwmon-pwmfan=y
+# USB：MT5700M 模组挂在主 SoC USB 上（3466:3301，ttyUSB0~3）
+CONFIG_PACKAGE_kmod-usb-acm=y
+CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y
 
 # 界面
 CONFIG_PACKAGE_luci=y
