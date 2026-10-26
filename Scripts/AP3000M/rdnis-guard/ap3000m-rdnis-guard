@@ -72,6 +72,29 @@ cmd_check() {
 	return 0
 }
 
+have_ipv4() {
+	ip -4 -o addr show dev "$(dev)" 2>/dev/null | grep -q 'inet '
+}
+
+have_route() {
+	ip route 2>/dev/null | grep -q '^default '
+}
+
+# 等"地址 + 默认路由"都就位，最多等 $1 秒。
+# 真机教训：AT+CFUN=1,1 之后模组要重新注网+激活 PDP+重建接口，
+# 原来只等 90+40 秒就复检，常常在"还没拨完"时就判失败，白等一次开机。
+wait_dial() {
+	n=0
+	while [ "$n" -lt "$1" ]; do
+		if have_ipv4 && have_route; then
+			return 0
+		fi
+		sleep 5
+		n=$((n + 5))
+	done
+	return 1
+}
+
 heal() {
 	before=$(snapshot)
 	log "自愈开始（当前 rx/tx/err = $before）"
@@ -93,12 +116,19 @@ heal() {
 	}
 
 	/etc/init.d/fm350d restart >/dev/null 2>&1
-	log "fm350d 已重启，等待 40s 后复检"
-	sleep 40
+	log "fm350d 已重启，等重新拨号（最多 120s）"
+	wait_dial 120 || log "120s 内没等到地址+默认路由，继续检查数据面"
 
+	# 静置 10 秒让首个数据包进出，再采样两次，避免把"刚起来"误判成卡死
+	sleep 10
+	mid=$(snapshot)
+	log "拨号完成，采样 rx/tx/err = $mid"
+	sleep 10
 	after=$(snapshot)
+
 	if stalled; then
-		log "复检失败（rx/tx/err = $after），本次放弃，等下次开机重试"
+		log "自愈失败（rx/tx/err = $after）：接口有地址但数据面仍无收包"
+		log "提示：这属于 USB 端点级死锁，软件无法恢复，需要重启整机"
 		printf 'failed %s %s %s\n' "$(date +%s)" "$before" "$after" > /etc/ap3000m-rdnis-result
 		return 1
 	fi
