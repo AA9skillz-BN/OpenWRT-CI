@@ -185,10 +185,14 @@ case "$MODE" in
 	force) heal ;;
 	watch) watch_once ;;
 	auto)
-		# 开机路径：等系统稳定后再采样两次，避免把"正在拨号"误判成卡死
+		# 开机路径：先等拨号完成（最多 delay + 180 秒），再采样两次判定。
+		# 2026-10-26 修正：旧版只 sleep 120 秒就开始判，若当时还在拨号（rx=0、tx>0），
+		# 会被误判成"端点卡死"而白白复位一次模组。现在必须先有 IPv4 才判定。
 		sleep "$DELAY"
 		if /etc/init.d/fm350d status >/dev/null 2>&1; then
-			if stalled; then
+			if ! wait_dial 180; then
+				log "开机 $((${DELAY} + 180))s 内仍未拿到 IPv4/默认路由，跳过自愈（可能是无信号或运营商侧问题）"
+			elif stalled; then
 				sleep 20
 				if stalled; then
 					heal
