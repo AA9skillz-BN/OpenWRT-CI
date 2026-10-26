@@ -27,9 +27,17 @@ dev_of() {
 	[ -n "$d" ] && printf '%s' "$d" || printf 'eth2'
 }
 
-rps_mask() {
-	n=$(nproc 2>/dev/null || echo 1)
+cpu_count() {
+	# 直接数 /sys/devices/system/cpu 下的 cpuN 目录：比 nproc 可靠
+	# （实测 nproc 在本机型上返回 1，导致掩码算成 1，只压了一个核）
+	n=$(ls -d /sys/devices/system/cpu/cpu[0-9]* 2>/dev/null | wc -l)
+	[ "${n:-0}" -ge 1 ] || n=$(nproc 2>/dev/null || echo 1)
 	[ "$n" -ge 8 ] && n=8
+	printf '%s' "$n"
+}
+
+rps_mask() {
+	n=$(cpu_count)
 	printf '%x' $(( (1 << n) - 1 ))
 }
 
@@ -38,11 +46,15 @@ apply_tuning() {
 	[ -d "/sys/class/net/$dev" ] || { log "设备 $dev 不存在，跳过"; return 1; }
 
 	mask=$(rps_mask)
+	nq=0
 	for f in /sys/class/net/"$dev"/queues/rx-*/rps_cpus; do
-		[ -w "$f" ] && echo "$mask" >"$f" 2>/dev/null
+		[ -w "$f" ] || continue
+		echo "$mask" >"$f" 2>/dev/null
+		nq=$((nq + 1))
 	done
 	for f in /sys/class/net/"$dev"/queues/tx-*/xps_cpus; do
-		[ -w "$f" ] && echo "$mask" >"$f" 2>/dev/null
+		[ -w "$f" ] || continue
+		echo "$mask" >"$f" 2>/dev/null
 	done
 
 	ip link set dev "$dev" txqueuelen 2000 2>/dev/null
@@ -52,7 +64,12 @@ apply_tuning() {
 		ip link set dev "$dev" mtu "$mtu" 2>/dev/null
 	fi
 
-	log "已应用：dev=$dev RPS/XPS=$mask txqueuelen=$(cat /sys/class/net/"$dev"/tx_queue_len 2>/dev/null) mtu=${mtu:-默认}"
+	# 回读实际值：写进去的和读出来的可能不一致（内核会按在线 CPU 重算掩码）
+	real=""
+	for f in /sys/class/net/"$dev"/queues/rx-*/rps_cpus; do
+		[ -r "$f" ] && real="$real $(cat "$f" 2>/dev/null)"
+	done
+	log "已应用：dev=$dev cpus=$(cpu_count) mask=$mask rx队列=$nq 回读=[$real] txqueuelen=$(cat /sys/class/net/"$dev"/tx_queue_len 2>/dev/null) mtu=${mtu:-默认}"
 }
 
 probe_mtu() {
