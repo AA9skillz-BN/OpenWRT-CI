@@ -128,7 +128,11 @@ if [ -d "$_ap3000m_guard_dir" ]; then
 	mkdir -p "$_ap3000m_bf/etc/rc.d"
 	ln -sf ../init.d/ap3000m-rdnis-guard "$_ap3000m_bf/etc/rc.d/S98ap3000m-rdnis-guard"
 
-	_ap3000m_log "已投放 RNDIS 自愈（ap3000m-rdnis-guard，开机 120s 自检）"
+	# 运行期巡检：RNDIS 卡死也会发生在运行中（不只开机），每 5 分钟检查一次
+	cp -f "$_ap3000m_guard_dir/99-ap3000m-rdnis-cron" "$_ap3000m_bf/etc/uci-defaults/99-ap3000m-rdnis-cron"
+	chmod 0755 "$_ap3000m_bf/etc/uci-defaults/99-ap3000m-rdnis-cron"
+
+	_ap3000m_log "已投放 RNDIS 自愈（开机自检 + 每 5 分钟运行期巡检，两级恢复）"
 else
 	_ap3000m_log "缺少 $_ap3000m_guard_dir，跳过 RNDIS 自愈"
 fi

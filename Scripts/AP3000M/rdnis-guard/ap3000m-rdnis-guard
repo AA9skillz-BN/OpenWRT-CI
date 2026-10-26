@@ -1,23 +1,34 @@
 #!/bin/sh
 # SPDX-License-Identifier: MIT
-# ap3000m-rdnis-guard —— FM350 RNDIS 端点卡死自愈
+# ap3000m-rdnis-guard —— FM350 RNDIS 端点卡死自愈（两级恢复 + 运行期看门狗）
 #
-# 现象（2026-10-25 真机两次复现）：刷机/重启后 eth2 有运营商地址，但没有默认路由、
-# 上不了网；`tx_errors` 一路涨而 `rx_packets` 恒为 0 —— 模组 RNDIS 端点卡死，
-# 不是配置问题。唯一可靠恢复手段是让模组软重启：
-#     fm350d at 'AT+CFUN=1,1'   →   等模组重新枚举（ttyUSBN 可能漂移）
-#     → 重新按 USB 接口定位 AT 口 → /etc/init.d/fm350d restart
+# 现象（2026-10-25/26 真机多次复现）：eth2 有运营商地址，但没有默认路由、上不了网；
+# `tx_errors` 一路涨而 `rx_packets` 恒为 0 —— 模组 RNDIS 端点卡死，不是配置问题。
 #
-# 本脚本由 /etc/init.d/ap3000m-rdnis-guard 在开机后台调用，也可以手工执行：
-#     ap3000m-rdnis-guard --check     # 只检查并打印，不动作
+# 恢复手段（2026-10-26 真机对照测试后确定，只保留有效的一级）：
+#   一级：fm350d at 'AT+CFUN=1,1' → 等重新枚举 → 重新定位 AT 口 → 重启 fm350d
+#   兜底：一级失败就写日志提示"需要人工重启整机"
+#
+# 不要用 USB authorized 置 0/1 那一招：真机实测（2026-10-26）切完后设备确实重新枚举、
+# 也拿回了运营商地址，但 rx_packets 依旧是 0（数据面还是死的），等于把链路弄断而没有修好。
+# 对比之下 AT+CFUN=1,1 在同样场景下 30 秒内就恢复到 rx>0。
+#
+# 用法：
+#     ap3000m-rdnis-guard --check     # 只检查并打印
 #     ap3000m-rdnis-guard --force     # 立即自愈（跳过采样）
+#     ap3000m-rdnis-guard --watch     # 运行期巡检（cron 每 5 分钟调用）
 #     ap3000m-rdnis-guard --delay 180 # 自定义开机延迟
+#
+# 2026-10-26 真机教训：旧版自愈只等 90+40 秒就判定，而"重新注网 + 激活 PDP + 重建接口"
+# 常要 2 分钟以上，于是在还没拨完时就判失败、白丢一次机会。现在改为等"真的有 IPv4
+# 且有默认路由"（最多 120s）再采样判定。
 
 set -u
 
 DEV_DEFAULT="eth2"
 DELAY=120
 MODE="auto"
+LOCK=/var/lock/ap3000m-rdnis.lock
 
 log() { logger -t ap3000m-rdnis "$*" 2>/dev/null; printf '%s\n' "ap3000m-rdnis-guard: $*" >&2; }
 
@@ -25,9 +36,10 @@ while [ $# -gt 0 ]; do
 	case "$1" in
 		--check) MODE="check" ;;
 		--force) MODE="force" ;;
+		--watch) MODE="watch" ;;
 		--delay) shift; DELAY="${1:-120}" ;;
 		--dev) shift; DEV_DEFAULT="${1:-eth2}" ;;
-		*) printf '用法: %s [--check|--force] [--delay N] [--dev ethX]\n' "$0" >&2; exit 2 ;;
+		*) printf '用法: %s [--check|--force|--watch] [--delay N] [--dev ethX]\n' "$0" >&2; exit 2 ;;
 	esac
 	shift
 done
@@ -62,16 +74,6 @@ at_port_from_usb() {
 	return 1
 }
 
-cmd_check() {
-	log "设备 $(dev) 统计: rx/tx/err = $(snapshot)"
-	if stalled; then
-		log "判定: RNDIS 端点卡死（rx=0 且有发送尝试）"
-		return 10
-	fi
-	log "判定: 数据面正常"
-	return 0
-}
-
 have_ipv4() {
 	ip -4 -o addr show dev "$(dev)" 2>/dev/null | grep -q 'inet '
 }
@@ -80,9 +82,7 @@ have_route() {
 	ip route 2>/dev/null | grep -q '^default '
 }
 
-# 等"地址 + 默认路由"都就位，最多等 $1 秒。
-# 真机教训：AT+CFUN=1,1 之后模组要重新注网+激活 PDP+重建接口，
-# 原来只等 90+40 秒就复检，常常在"还没拨完"时就判失败，白等一次开机。
+# 等"地址 + 默认路由"都就位，最多等 $1 秒
 wait_dial() {
 	n=0
 	while [ "$n" -lt "$1" ]; do
@@ -95,14 +95,24 @@ wait_dial() {
 	return 1
 }
 
-heal() {
-	before=$(snapshot)
-	log "自愈开始（当前 rx/tx/err = $before）"
 
+record() {
+	printf '%s %s %s\n' "$1" "$(date +%s)" "$2" > /etc/ap3000m-rdnis-result
+}
+
+# 等拨号完成 + 静置后判定是否真的恢复
+verify_healed() {
+	wait_dial 120 || log "  120s 内没等到地址+默认路由"
+	sleep 10
+	log "  采样 rx/tx/err = $(snapshot)"
+	! stalled
+}
+
+level1() {
 	if fm350d at 'AT+CFUN=1,1' >/dev/null 2>&1; then
-		log "已下发 AT+CFUN=1,1，等待模组重新枚举（90s）"
+		log "一级恢复：已下发 AT+CFUN=1,1，等模组重新枚举（90s）"
 	else
-		log "AT 通道不可用，改用硬复位路径（仅重启 fm350d）"
+		log "一级恢复：AT 通道不可用，只重启 fm350d"
 	fi
 	sleep 90
 
@@ -111,35 +121,69 @@ heal() {
 		if [ "$new_port" != "$old_port" ]; then
 			uci set fm350.main.at_port="$new_port"
 			uci commit fm350
-			log "AT 口更新：$old_port -> $new_port"
+			log "  AT 口更新：$old_port -> $new_port"
 		fi
 	}
 
 	/etc/init.d/fm350d restart >/dev/null 2>&1
-	log "fm350d 已重启，等重新拨号（最多 120s）"
-	wait_dial 120 || log "120s 内没等到地址+默认路由，继续检查数据面"
+	verify_healed
+}
 
-	# 静置 10 秒让首个数据包进出，再采样两次，避免把"刚起来"误判成卡死
-	sleep 10
-	mid=$(snapshot)
-	log "拨号完成，采样 rx/tx/err = $mid"
-	sleep 10
-	after=$(snapshot)
 
-	if stalled; then
-		log "自愈失败（rx/tx/err = $after）：接口有地址但数据面仍无收包"
-		log "提示：这属于 USB 端点级死锁，软件无法恢复，需要重启整机"
-		printf 'failed %s %s %s\n' "$(date +%s)" "$before" "$after" > /etc/ap3000m-rdnis-result
-		return 1
+heal() {
+	before=$(snapshot)
+	log "自愈开始（rx/tx/err = $before）"
+
+	if level1; then
+		log "自愈成功（rx/tx/err = $(snapshot)）"
+		record success "$before"
+		return 0
 	fi
-	log "自愈成功（rx/tx/err = $after）"
-	printf 'success %s %s %s\n' "$(date +%s)" "$before" "$after" > /etc/ap3000m-rdnis-result
+
+	log "自愈失败（rx/tx/err = $(snapshot)）：端点死锁较深，软件层已尽力，需要人工重启整机"
+	record failed "$before"
+	return 1
+}
+
+cmd_check() {
+	log "设备 $(dev) 统计: rx/tx/err = $(snapshot)"
+	log "IPv4: $(have_ipv4 && echo 有 || echo 无)  默认路由: $(have_route && echo 有 || echo 无)"
+	if stalled; then
+		log "判定: RNDIS 端点卡死（rx=0 且有发送尝试）"
+		return 10
+	fi
+	log "判定: 数据面正常"
 	return 0
+}
+
+# 运行期巡检：只在"已经拨号成功但收包为 0"时动手，避免把正常拨号/断网误判
+watch_once() {
+	if [ -f "$LOCK" ]; then
+		log "已有巡检实例在跑（$LOCK），跳过"
+		return 0
+	fi
+	printf '%s\n' "$$" >"$LOCK"
+	trap 'rm -f "$LOCK"' EXIT INT TERM
+
+	/etc/init.d/fm350d status >/dev/null 2>&1 || { log "fm350d 未运行，跳过"; return 0; }
+	if ! have_ipv4; then
+		log "接口还没有 IPv4（可能正在拨号/无信号），跳过"
+		return 0
+	fi
+	stalled || return 0
+
+	# 连续两次（间隔 15s）都卡死才动手
+	sleep 15
+	stalled || { log "第二次采样已恢复，跳过"; return 0; }
+
+	log "巡检发现端点卡死，开始自愈"
+	heal
 }
 
 case "$MODE" in
 	check) cmd_check ;;
 	force) heal ;;
+	watch) watch_once ;;
 	auto)
 		# 开机路径：等系统稳定后再采样两次，避免把"正在拨号"误判成卡死
 		sleep "$DELAY"

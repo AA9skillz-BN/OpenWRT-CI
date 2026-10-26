@@ -1,0 +1,27 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# 99-ap3000m-rdnis-cron —— 装一条运行期巡检 cron
+#
+# 为什么需要：RNDIS 端点卡死不只发生在开机（2026-10-25/26 各复现过一次运行中卡死），
+# 只靠开机的自愈覆盖不到。这里每 5 分钟跑一次 --watch：
+#   只有在"已经拿到 IPv4 但 rx_packets 仍为 0"（连续两次采样）时才会动手，
+#   正常拨号/无信号/断网都不会误触发。
+#
+# 关掉的办法：uci set fm350.main.rdnis_watch='0' 后重启（下一轮不再添加）。
+
+[ "$(uci -q get fm350.main.rdnis_watch)" = "0" ] && exit 0
+
+CRON=/etc/crontabs/root
+mkdir -p /etc/crontabs
+
+if grep -q 'ap3000m-rdnis-guard --watch' "$CRON" 2>/dev/null; then
+	exit 0
+fi
+
+printf '*/5 * * * * /usr/sbin/ap3000m-rdnis-guard --watch >/dev/null 2>&1\n' >>"$CRON"
+
+/etc/init.d/cron enable 2>/dev/null
+/etc/init.d/cron restart 2>/dev/null
+logger -t ap3000m-rdnis "已启用运行期巡检（每 5 分钟）"
+
+exit 0
