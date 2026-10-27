@@ -24,33 +24,48 @@ _c8_dst="./target/linux/mediatek"
 
 _c8_die() { echo "::error::C8-688 注入失败：$*" >&2; return 1; }
 
-# ---- 0. 源码 pin（可随时解除，见 Scripts/C8-688/pin-README.md）----------------
-# 2026-10-27：上游 master 把 firewall4 升到 2026.10.26~bac1d656，而它自带的
-# 001-firewall4-add-support-for-fullcone-nat.patch 对不上新源码（8 个 hunk 全失败），
-# package/network/config/firewall4 因此编译失败。这里钉到上次验证通过的 commit。
-#
-# 想跟随上游：把 Scripts/C8-688/source-pin.txt 改成 master 或清空即可。
+# ---- 0. 源码策略（auto / 钉 sha，见 Scripts/C8-688/pin-README.md）------------
+# 背景：2026-10-27 上游在 firewall4 换版本的同时塞进一个 fullcone 补丁
+# （001-firewall4-add-support-for-fullcone-nat.patch），该补丁对不上新源码，
+# 8 个 hunk 全失败 → package/network/config/firewall4 直接编译失败。
+# 这个补丁与本机型无关（我们不用 turboacc/fw4 fullcone），所以 auto 模式直接摘掉它：
+#   auto        = 跟随分支最新 + 摘掉该补丁（默认，无需人工干预）
+#   master/空   = 跟随分支最新，不动补丁（上游修好后可用）
+#   <40位 sha>  = 钉死到该 commit（要可复现时用）
 _c8_pin_file="${GITHUB_WORKSPACE:-/github/workspace}/Scripts/C8-688/source-pin.txt"
-_c8_pin="b16f9456d846adc171ab5eafa3c9600907adeff8"
+_c8_fw4_patch="package/network/config/firewall4/patches/001-firewall4-add-support-for-fullcone-nat.patch"
+
+_c8_mode="auto"
 if [ -f "$_c8_pin_file" ]; then
-	_c8_pin="$(sed -e 's/#.*//' -e 's/[[:space:]]//g' "$_c8_pin_file" | head -n1)"
+	_c8_mode="$(sed -e 's/#.*//' -e 's/[[:space:]]//g' "$_c8_pin_file" | head -n1)"
 fi
-case "$_c8_pin" in
-	"") echo "C8-688: source-pin.txt 为空，跟随分支最新" ;;
-	master|main|HEAD) echo "C8-688: source-pin.txt = $_c8_pin，跟随分支最新" ;;
+
+_c8_do_pin=""
+case "$_c8_mode" in
+	""|master|main|HEAD)
+		echo "C8-688: 源码策略 = 跟随 ${WRT_BRANCH:-分支} 最新（不动补丁）"
+		;;
+	auto)
+		echo "C8-688: 源码策略 = auto（跟随最新 + 摘掉上游失效的 firewall4 fullcone 补丁）"
+		if [ -f "$_c8_fw4_patch" ]; then
+			rm -f "$_c8_fw4_patch" &&
+				echo "C8-688: 已移除 $_c8_fw4_patch"
+		fi
+		;;
+	*)
+		_c8_do_pin="$_c8_mode"
+		echo "C8-688: 源码策略 = 钉住 ${_c8_do_pin:0:8}"
+		;;
 esac
-case "$_c8_pin" in
-	master|main|HEAD) _c8_pin="" ;;
-esac
+
 _c8_head="$(git rev-parse HEAD 2>/dev/null || true)"
-if [ -n "$_c8_pin" ] && [ "$_c8_head" != "$_c8_pin" ]; then
-	echo "C8-688: 源码 pin -> ${_c8_pin:0:8}（当前 ${_c8_head:0:8}）"
-	if git fetch --depth 1 -q origin "$_c8_pin" >/dev/null 2>&1 &&
+if [ -n "$_c8_do_pin" ] && [ "$_c8_head" != "$_c8_do_pin" ]; then
+	echo "C8-688: 源码 pin -> ${_c8_do_pin:0:8}（当前 ${_c8_head:0:8}）"
+	if git fetch --depth 1 -q origin "$_c8_do_pin" >/dev/null 2>&1 &&
 		git checkout -q -f FETCH_HEAD; then
 		echo "C8-688: 已切到 $(git rev-parse --short HEAD)"
 	else
 		echo "::warning::C8-688: pin 失败，留在 ${_c8_head:0:8}，改为摘掉失效补丁"
-		_c8_fw4_patch="package/network/config/firewall4/patches/001-firewall4-add-support-for-fullcone-nat.patch"
 		if [ -f "$_c8_fw4_patch" ]; then
 			rm -f "$_c8_fw4_patch" &&
 				echo "C8-688: 已移除 $_c8_fw4_patch"

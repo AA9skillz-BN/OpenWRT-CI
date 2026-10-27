@@ -1,36 +1,34 @@
-# 源码 pin 说明（Scripts/C8-688/source-pin.txt）
+# 源码策略说明（Scripts/C8-688/source-pin.txt）
 
-这个文件只做一件事：**决定这次编译用哪个上游 commit**。
-`Scripts/C8-688/private.sh` 在注入设备支持之前会读它。
+这个文件只有一行，决定**这次编译用哪个上游源码**。默认 `auto`，平时不用动它。
 
-## 三种写法
+## 四种写法
 
-| 文件内容 | 行为 | 什么时候用 |
+| 内容 | 行为 | 什么时候用 |
 |---|---|---|
-| 一串 40 位 sha（当前） | 钉死到这个 commit，编出来的东西每次都一样 | 默认；刷机验证期、要可复现时 |
-| `master` 或空文件 | 跟随 workflow 里填的 `BRANCH` 最新提交 | 上游把问题修好了、想拿新内核/驱动时 |
-| 另一个 sha | 钉到另一个已知好点 | 想升级但又要可复现时 |
+| **`auto`（默认）** | 跟随 workflow 里的 `BRANCH` 最新，**并自动摘掉**上游那个会编不过的 firewall4 fullcone 补丁 | 平时；不需要任何人干预 |
+| `master` / 空 | 跟随分支最新，**不动**任何补丁 | 上游把补丁修好了，想要完整上游行为 |
+| 40 位 sha | 钉死到该 commit | 要严格可复现、或想绕开上游某个新问题 |
+| `b16f9456…` | 就是上面那种 | 已验证能编出好镜像的提交之一 |
 
-## 当前为什么钉
+## 为什么要有 auto
 
-`immortalwrt/immortalwrt@b16f9456` 是**第一个编出结构正确镜像**的提交。
-在那之后上游把 `firewall4` 升到 `2026.10.26~bac1d656`，而它自带的
-`package/network/config/firewall4/patches/001-firewall4-add-support-for-fullcone-nat.patch`
-对不上新源码（8 个 hunk 全失败），`firewall4` 直接编译失败。
+2026-10-27 上游在换 firewall4 版本的同时塞进
+`package/network/config/firewall4/patches/001-firewall4-add-support-for-fullcone-nat.patch`，
+而该补丁对新源码 **8 个 hunk 全部打不上**，`firewall4` 直接编译失败。
 
-## 上游修好之后怎么解除
+这个补丁提供的是 **fw4 的 fullcone 规则集成**，跟 C8-688 没有任何关系
+（我们的 Config 没选 turboacc，也不依赖 fw4 fullcone）。所以 `auto` 模式的做法是：
+**跟上游最新 + 把这个补丁摘掉**，这样上游怎么变都不会因为这个补丁把产线卡死。
 
-1. 把本文件内容改成 `master`（或直接清空）；
-2. 手动跑一次 `C8-688` workflow，`TEST=false`；
-3. 编过了、镜像验收通过 → 就保持跟随 master；
-4. 又挂了 → 把 sha 填回来，等下一次。
+## 想恢复上游原样（带补丁）
 
-## 兜底
-
-`private.sh` 里还有一层：**pin 失败（拉不到那个 sha）时，会自动退回当前 HEAD
-并删掉那个失效的 fullcone 补丁**，保证至少还能编过，不会因为 pin 把产线卡死。
+1. 把本文件改成 `master`；
+2. 跑一次 `C8-688` workflow；
+3. 如果又红在 `firewall4` → 说明上游还没修，改回 `auto` 即可。
 
 ## 注意
 
-- 换 pin 会导致 Actions 缓存键变化（键里含源码 HEAD 的 sha），**第一次换一定会冷编**（4~6 小时）；
-- 钉住的只是“源码 commit”，`feeds`（packages/luci 等）仍然按 `feeds.conf.default` 跟各自分支，不受影响。
+- `auto` 会跟随上游 HEAD，**源码变了 Actions 缓存键就变**，第一次换会冷编（4~6 小时）；
+- 钉 sha 时命中缓存最快，但拿不到新内核/新驱动；
+- `feeds`（packages/luci 等）始终按 `feeds.conf.default` 跟各自分支，不受本文件影响。
