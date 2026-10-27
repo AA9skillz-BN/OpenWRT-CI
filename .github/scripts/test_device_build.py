@@ -142,6 +142,47 @@ class DeviceContractTests(unittest.TestCase):
             digest, file = line.split("  ", 1)
             self.assertEqual(digest, build.hashlib.sha256((self.tree / "upload" / file).read_bytes()).hexdigest())
 
+    def test_toolchain_cache_ignores_image_date_but_tracks_feed_and_rust(self):
+        build.write(self.reports / "packages.lock.json", "{}")
+        build.write(self.reports / "host-toolchains.txt", "host toolchain version")
+        build.write(self.tree / "feeds/packages/.git", "fixture")
+        build.write(self.tree / "os-release", "Ubuntu 24.04")
+        output = self.tree / "github-output"
+        versions = {"rust": "rustc 1.96.0", "feed": "a" * 40}
+
+        def fake_run(*args, **kwargs):
+            if args[0] == "gcc":
+                return "13.3.0"
+            if args[0] == "rustc":
+                return versions["rust"]
+            if args[0] == "uname":
+                return "x86_64"
+            if args[0] == "git":
+                return versions["feed"] if Path(kwargs["cwd"]).name == "packages" else "b" * 40
+            return "src-git packages https://example.test/feed"
+
+        def fake_path(value):
+            return self.tree / "os-release" if str(value) == "/etc/os-release" else Path(value)
+
+        def key():
+            output.write_text("")
+            with patch.dict(os.environ, {"GITHUB_OUTPUT": str(output)}), \
+                 patch.object(build, "run", side_effect=fake_run), patch.object(build, "Path", side_effect=fake_path):
+                build.cache_keys(REPO, self.tree, "AP3000M", self.reports)
+            return dict(line.split("=", 1) for line in output.read_text().splitlines())
+
+        first = key()
+        build.write(self.tree / "files/etc/ap3000m-build.tag", "a different run and date")
+        self.assertEqual(first, key())
+        versions["feed"] = "c" * 40
+        changed_feed = key()
+        self.assertNotEqual(first["staging"], changed_feed["staging"])
+        self.assertEqual(first["ccache"], changed_feed["ccache"])
+        versions["rust"] = "rustc 1.97.0"
+        changed_rust = key()
+        self.assertNotEqual(changed_feed["staging"], changed_rust["staging"])
+        self.assertNotEqual(changed_feed["ccache"], changed_rust["ccache"])
+
 
 if __name__ == "__main__":
     unittest.main()

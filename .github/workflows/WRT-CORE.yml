@@ -12,6 +12,11 @@ on:
         required: false
         default: ''
         type: string
+      WRT_PUBLISH:
+        description: 'Publish a validated release; false uploads firmware artifacts only'
+        required: false
+        default: true
+        type: boolean
       WRT_CONFIG:
         required: true
         type: string
@@ -246,7 +251,7 @@ jobs:
           fi
 
       - name: Prepare Rust Toolchain
-        if: ${{ !inputs.WRT_TEST }}
+        if: ${{ !inputs.WRT_TEST || inputs.WRT_PROFILE != '' }}
         run: |
           cd ./wrt/
 
@@ -254,7 +259,7 @@ jobs:
 
       - name: Compute Device Cache Keys
         id: device-cache
-        if: ${{ !inputs.WRT_TEST && inputs.WRT_PROFILE != '' }}
+        if: ${{ inputs.WRT_PROFILE != '' }}
         working-directory: ./wrt
         run: python3 "$GITHUB_WORKSPACE/.github/scripts/device-build.py" cache
 
@@ -422,7 +427,7 @@ jobs:
 
       - name: Create Validated Draft Release
         id: device-release
-        if: ${{ inputs.WRT_PROFILE != '' && !inputs.WRT_TEST }}
+        if: ${{ inputs.WRT_PROFILE != '' && !inputs.WRT_TEST && inputs.WRT_PUBLISH }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{env.WRT_RELEASE_TAG}}
@@ -433,12 +438,21 @@ jobs:
           files: ./wrt/upload/*
 
       - name: Publish Complete Device Release
-        if: ${{ inputs.WRT_PROFILE != '' && !inputs.WRT_TEST }}
+        if: ${{ inputs.WRT_PROFILE != '' && !inputs.WRT_TEST && inputs.WRT_PUBLISH }}
         env:
           GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
           RELEASE_ID: ${{steps.device-release.outputs.id}}
         run: |
           gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -F draft=false
+
+      - name: Upload Validated Firmware Without Publishing
+        if: ${{ inputs.WRT_PROFILE != '' && !inputs.WRT_TEST && !inputs.WRT_PUBLISH }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{inputs.WRT_PROFILE}}-${{github.run_id}}-${{github.run_attempt}}
+          path: ./wrt/upload/*
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Release Firmware
         if: ${{ inputs.WRT_PROFILE == '' }}

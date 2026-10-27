@@ -2,9 +2,9 @@
 # AirPi AP3000M 单机型固件（基于主线 main line / kernel 6.18）
 #
 # 地基：本仓库公用核心 .github/workflows/WRT-CORE.yml
-# 新增：Config/AP3000M.txt、Scripts/PRIVATE.sh、docs/AP3000M.md、本工作流
+# 机型清单与插件锁：Profiles/AP3000M.json、Profiles/packages.lock.json
 #
-# 集成插件（Scripts/Packages.sh 已内置克隆，此处只需 CONFIG 选中）：
+# 集成插件（公共核心按机型清单安装）：
 #   LianXia233/luci-app-fm350                 Fibocom FM350-GL 5G 模组管理（Rust 后端 fm350d）
 #   LianXia233/luci-app-airpi3000m-fancontrol AP3000M 风扇温控（LuCI JS + Rust airpi-fanctl + kmod-airpi-gpio-fan）
 #
@@ -32,6 +32,11 @@ on:
         description: '手动追加插件包，多个请用\n符号隔开。'
         required: false
         type: string
+      BUILD_ONLY:
+        description: '编译并校验固件，只上传 Artifact，不发布 Release。'
+        default: false
+        required: false
+        type: boolean
       TEST:
         description: '仅输出配置文件，不编译固件。'
         default: false
@@ -63,6 +68,7 @@ jobs:
     with:
       #编译配置
       WRT_CONFIG: ${{ matrix.CONFIG }}
+      WRT_PUBLISH: ${{ !inputs.BUILD_ONLY }}
       WRT_PROFILE: AP3000M
       #默认主题
       WRT_THEME: aurora

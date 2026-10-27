@@ -5,12 +5,12 @@
 # 专属文件：
 #   Config/TR3000-512.txt                     单机型配置
 #   Scripts/TR3000-512/patch-layout.sh        512MB 硬改机 UBI 布局
-#   Scripts/TR3000-512/{openclash,turboacc,aurora}.sh  固定 commit 插件
+#   Profiles/TR3000-512.json、Profiles/packages.lock.json  固定 commit 插件
 #   Scripts/TR3000-512/private.sh             钩子总入口（分区/插件/首启/F50）
 #   Files/TR3000-512/                         首启配置 + F50 即插即用
 #   docs/TR3000-512.md
 #
-# 说明：默认源码 VIKINGYFY/immortalwrt 的 owrt 分支（MTK 专用，内核 6.6 系），
+# 说明：默认源码 VIKINGYFY/immortalwrt 的 owrt 分支（MTK 专用，实际内核随上游），
 #       保持与原独立工作流一致的基座，避免换基座带来的未知回归。
 #       需要跟上上游时可手动把 SOURCE 填 immortalwrt/immortalwrt、BRANCH 填 master。
 
@@ -34,6 +34,11 @@ on:
         description: '手动追加插件包，多个请用\n符号隔开。'
         required: false
         type: string
+      BUILD_ONLY:
+        description: '编译并校验固件，只上传 Artifact，不发布 Release。'
+        default: false
+        required: false
+        type: boolean
       TEST:
         description: '仅输出配置文件，不编译固件。'
         default: false
@@ -65,6 +70,7 @@ jobs:
     with:
       #编译配置
       WRT_CONFIG: ${{ matrix.CONFIG }}
+      WRT_PUBLISH: ${{ !inputs.BUILD_ONLY }}
       WRT_PROFILE: TR3000-512
       #默认主题
       WRT_THEME: aurora
