@@ -79,6 +79,7 @@ def main():
             lines = (repo / "Scripts/C8-688/source-pin.txt").read_text().splitlines()
             pin = next((line.split("#", 1)[0].strip() for line in lines if line.split("#", 1)[0].strip()), "auto")
             if pin not in ("auto", "master", "main", "HEAD"):
+                pin = pin.lower()
                 sha(pin)
                 if mode == "locked" and pin != revision:
                     raise ValueError("C8 source-pin conflicts with sources.lock.json")

@@ -128,6 +128,10 @@ jobs:
         # Reuse the same tag for device labels, packaging and publication.
         WRT_SAFE_BRANCH=${WRT_BRANCH//\//-}
         WRT_RELEASE_TAG="$WRT_CONFIG-${WRT_SOURCE%%/*}-$WRT_SAFE_BRANCH-$WRT_DATE-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+        # Older deployed OTA clients do not filter GitHub prerelease flags.
+        if [ "$GITHUB_REF" != 'refs/heads/main' ]; then
+          WRT_RELEASE_TAG="preview-$WRT_RELEASE_TAG"
+        fi
         echo "WRT_RELEASE_TAG=$WRT_RELEASE_TAG" >> "$GITHUB_ENV"
         echo "release_tag=$WRT_RELEASE_TAG" >> "$GITHUB_OUTPUT"
         test "$WRT_PROFILE" = "$WRT_CONFIG"

@@ -31,6 +31,9 @@ class PipelineTests(unittest.TestCase):
         builder = data["jobs"]["core"]
         self.assertEqual(builder["permissions"], {"contents": "read"})
         self.assertNotIn("GITHUB_TOKEN", data["env"])
+        initialize = next(step for step in builder["steps"] if step.get("id") == "initialize-values")["run"]
+        self.assertIn("$GITHUB_REF\" != 'refs/heads/main'", initialize)
+        self.assertIn('WRT_RELEASE_TAG="preview-$WRT_RELEASE_TAG"', initialize)
         for step in builder["steps"]:
             self.assertNotIn("secrets.GITHUB_TOKEN", json.dumps(step))
             if "checkout@" in step.get("uses", ""):

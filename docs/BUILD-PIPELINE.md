@@ -30,7 +30,9 @@ README 不作为构建配置来源。
    先上传 draft Release，附件上传成功后公开。
    不再查找“最新 Release”、下载固件、事后裁剪或修改说明。
 
-非 main 分支发布始终标记 prerelease，不标记为 latest。AP3000M OTA 排除
+非 main 分支发布始终标记 prerelease，不标记为 latest，tag 额外加 `preview-`
+前缀，保证尚未更新、不会过滤 prerelease 的旧 OTA 客户端也不会匹配实验版本。
+AP3000M OTA 排除
 prerelease，默认只接受 `AP3000M-immortalwrt-master-` 渠道；旧配置中的
 `AP3000M-` 宽前缀也会收窄。自定义 OTA 渠道可以显式配置其他前缀。
 缓存清理在另一个仅有 contents/read、actions/write 的 job 中执行，不拿发布权限。
