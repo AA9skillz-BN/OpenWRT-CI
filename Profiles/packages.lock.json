@@ -105,5 +105,27 @@
       "luci-app-airpi-fancontrol",
       "airpi-gpio-fan"
     ]
+  },
+  "argon": {
+    "url": "https://github.com/sbwml/luci-theme-argon.git",
+    "commit": "4b8b7849551c558ec905c40b0ebb864641c9fa32",
+    "directory": "luci-theme-argon",
+    "replaces": [
+      "luci-theme-argon",
+      "luci-app-argon-config"
+    ]
+  },
+  "mt5700m": {
+    "url": "https://github.com/FAN789/luci-app-mt5700m.git",
+    "commit": "23f106d4248f7ba439a6d171f4290bb1c1c64b7e",
+    "directory": "mt5700m-source",
+    "replaces": [
+      "luci-app-mt5700m",
+      "mt5700m-transport"
+    ],
+    "subdirectories": [
+      "luci-app-mt5700m",
+      "mt5700m-transport"
+    ]
   }
 }

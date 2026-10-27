@@ -40,5 +40,15 @@
     "Config/Features/usb.txt",
     "Config/Features/storage.txt",
     "Config/Features/diagnostics.txt"
-  ]
+  ],
+  "excluded_feed_packages": {
+    "luci-app-fwknopd": [
+      "luci-app-fwknopd"
+    ],
+    "squeezelite": [
+      "squeezelite-full",
+      "squeezelite-dynamic",
+      "squeezelite-custom"
+    ]
+  }
 }

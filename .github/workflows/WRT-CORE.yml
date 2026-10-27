@@ -161,6 +161,9 @@ jobs:
           git clone --depth=1 --single-branch --branch "$WRT_BRANCH" "$WRT_REPO" ./wrt/
 
           cd ./wrt/
+          if [ -n "$WRT_PROFILE" ]; then
+            bash "$GITHUB_WORKSPACE/.github/scripts/select-device-source.sh"
+          fi
           WRT_HASH=$(git rev-parse HEAD)
           echo "WRT_HASH=$WRT_HASH" >> $GITHUB_ENV
           echo "WRT_CACHE_KEY=$WRT_CACHE_PREFIX-$WRT_HASH" >> $GITHUB_ENV
@@ -245,10 +248,10 @@ jobs:
           $GITHUB_WORKSPACE/Scripts/Settings.sh
           $GITHUB_WORKSPACE/.github/scripts/prepare-build-host.sh
 
-          make defconfig
           if [ -n "$WRT_PROFILE" ]; then
-            python3 "$GITHUB_WORKSPACE/.github/scripts/device-build.py" check
+            python3 "$GITHUB_WORKSPACE/.github/scripts/device-build.py" defconfig
           else
+            make defconfig
             make clean -j"$(nproc)"
           fi
 

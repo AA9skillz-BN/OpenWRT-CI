@@ -33,7 +33,7 @@ def write(path, text):
 
 
 def profile(repo, name):
-    if name not in ("TR3000-512", "AP3000M"):
+    if name not in ("TR3000-512", "AP3000M", "C8-688"):
         raise ValueError(f"unsupported device profile: {name}")
     return json.loads((repo / "Profiles" / f"{name}.json").read_text(encoding="utf-8"))
 
@@ -42,6 +42,18 @@ def merge_config(repo, tree, name, data):
     values = {}
     for item in [*data["config_fragments"], f"Config/{name}.txt"]:
         values.update(read_config(repo / item))
+    requested = dict(values)
+    private = repo / "Config/PRIVATE.txt"
+    if private.exists():
+        requested.update(read_config(private))
+    for line in os.environ.get("WRT_PACKAGE", "").replace("\\n", "\n").splitlines():
+        if line.startswith("CONFIG_") and "=" in line:
+            key, value = line.split("=", 1)
+            requested[key] = value
+    for names in data.get("excluded_feed_packages", {}).values():
+        for package in names:
+            if requested.get(f"CONFIG_PACKAGE_{package}") in ("y", "m"):
+                raise ValueError(f"{package}: excluded due to upstream Kconfig recursion; review profile before enabling")
     write(tree / ".config", "".join(f"{k}={v}\n" for k, v in values.items()))
 
 
@@ -85,16 +97,38 @@ def install_packages(repo, tree, data, reports):
         run("git", "-C", str(dest), "checkout", "--detach", "FETCH_HEAD")
         if run("git", "-C", str(dest), "rev-parse", "HEAD") != revision:
             raise ValueError(f"{key}: fetched revision mismatch")
-        if item.get("subdirectory"):
-            source = dest / item["subdirectory"]
-            if not (source / "Makefile").is_file():
-                raise ValueError(f"{key}: package Makefile missing")
-            extracted = tree / "package" / item["subdirectory"]
-            remove_package(extracted)
-            shutil.copytree(source, extracted)
+        subdirs = item.get("subdirectories", [item["subdirectory"]] if item.get("subdirectory") else [])
+        if subdirs:
+            for subdir in subdirs:
+                source = dest / subdir
+                if not (source / "Makefile").is_file():
+                    raise ValueError(f"{key}: package Makefile missing: {subdir}")
+                extracted = tree / "package" / subdir
+                remove_package(extracted)
+                shutil.copytree(source, extracted)
             remove_package(dest)
         provenance[key] = item
+    for directory in data.get("excluded_feed_packages", {}):
+        # Exclude only unused broken recipes, keeping upstream feed sources intact.
+        for feed in (tree / "package/feeds").iterdir() if (tree / "package/feeds").exists() else []:
+            remove_package(feed / directory)
     write(reports / "packages.lock.json", json.dumps(provenance, indent=2) + "\n")
+
+
+def check_kconfig_output(output):
+    # Some upstream Make/Kconfig combinations print errors but exit with status 0.
+    if re.search(r"(?:^|[\s:])error:|recursive dependency detected", output, re.IGNORECASE | re.MULTILINE):
+        raise ValueError("Kconfig reported errors; see build-reports/defconfig.log")
+
+
+def defconfig(tree, data, reports):
+    result = subprocess.run(["make", "defconfig"], cwd=tree, text=True, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, check=False)
+    write(reports / "defconfig.log", result.stdout)
+    print(result.stdout, end="", flush=True)
+    result.check_returncode()
+    check_kconfig_output(result.stdout)
+    check_config(tree, data)
 
 
 def check_config(tree, data):
@@ -223,7 +257,7 @@ def cache_keys(repo, tree, name, reports):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["merge", "packages", "check", "package", "cache"])
+    parser.add_argument("command", choices=["merge", "packages", "check", "defconfig", "package", "cache"])
     parser.add_argument("--profile", default=os.environ.get("WRT_PROFILE"))
     parser.add_argument("--repo", type=Path, default=Path(os.environ.get("GITHUB_WORKSPACE", ".")))
     parser.add_argument("--tree", type=Path, default=Path.cwd())
@@ -238,6 +272,8 @@ def main():
         install_packages(repo, tree, data, reports)
     elif args.command == "check":
         check_config(tree, data)
+    elif args.command == "defconfig":
+        defconfig(tree, data, reports)
     elif args.command == "package":
         package(tree, repo, args.profile, data, reports)
     elif args.command == "cache":

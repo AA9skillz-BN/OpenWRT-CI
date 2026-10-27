@@ -5,7 +5,7 @@
 # 约定（Scripts/README.md）：
 #   1) 守卫在 set -e 之前；不属于自己就 return
 #   2) 变量统一 _c8_ 前缀
-#   3) 收尾复位 shell 选项
+#   3) 由公共核心通过独立 bash 进程执行，失败立即终止
 #
 # 注入点（全部带幂等判断，锚点缺失就 fail fast，避免"编出来是个假固件"）：
 #   A. target/linux/mediatek/dts/mt7981b-nradio-c8-688.dts        ← 整文件投放
@@ -15,96 +15,59 @@
 #        C2. MAC 分支加 nradio,c8-688（fac_mac 从 eMMC 的 bdinfo 分区读）
 #   D. Files/C8-688 覆盖层（风扇曲线脚本 + 首启）→ package/base-files/files/
 
-if [[ "${WRT_CONFIG,,}" != *"c8-688"* ]]; then
+if [[ "${WRT_CONFIG:-}" != "C8-688" ]]; then
 	return 0 2>/dev/null || exit 0
 fi
+
+set -euo pipefail
 
 _c8_src="${GITHUB_WORKSPACE:-/github/workspace}/Scripts/C8-688"
 _c8_dst="./target/linux/mediatek"
 
-_c8_die() { echo "::error::C8-688 注入失败：$*" >&2; return 1; }
+_c8_die() { echo "::error::C8-688 注入失败：$*" >&2; exit 1; }
 
-# ---- 0. 源码策略（auto / 钉 sha，见 Scripts/C8-688/pin-README.md）------------
-# 背景：2026-10-27 上游在 firewall4 换版本的同时塞进一个 fullcone 补丁
-# （001-firewall4-add-support-for-fullcone-nat.patch），该补丁对不上新源码，
-# 8 个 hunk 全失败 → package/network/config/firewall4 直接编译失败。
-# 这个补丁与本机型无关（我们不用 turboacc/fw4 fullcone），所以 auto 模式直接摘掉它：
-#   auto        = 跟随分支最新 + 摘掉该补丁（默认，无需人工干预）
-#   master/空   = 跟随分支最新，不动补丁（上游修好后可用）
-#   <40位 sha>  = 钉死到该 commit（要可复现时用）
-_c8_pin_file="${GITHUB_WORKSPACE:-/github/workspace}/Scripts/C8-688/source-pin.txt"
+# ---- Source strategy: SHA selection already happened before feeds/cache. ----
+_c8_mode=$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' -e 's/[[:space:]]//g' "$_c8_src/source-pin.txt" | head -n1)
 _c8_fw4_patch="package/network/config/firewall4/patches/001-firewall4-add-support-for-fullcone-nat.patch"
-
-_c8_mode="auto"
-if [ -f "$_c8_pin_file" ]; then
-	_c8_mode="$(sed -e 's/#.*//' -e 's/[[:space:]]//g' "$_c8_pin_file" | head -n1)"
-fi
-
-_c8_do_pin=""
-case "$_c8_mode" in
-	""|master|main|HEAD)
-		echo "C8-688: 源码策略 = 跟随 ${WRT_BRANCH:-分支} 最新（不动补丁）"
-		;;
-	auto)
-		echo "C8-688: 源码策略 = auto（跟随最新 + 摘掉上游失效的 firewall4 fullcone 补丁）"
-		if [ -f "$_c8_fw4_patch" ]; then
-			rm -f "$_c8_fw4_patch" &&
-				echo "C8-688: 已移除 $_c8_fw4_patch"
-		fi
-		;;
-	*)
-		_c8_do_pin="$_c8_mode"
-		echo "C8-688: 源码策略 = 钉住 ${_c8_do_pin:0:8}"
-		;;
-esac
-
-_c8_head="$(git rev-parse HEAD 2>/dev/null || true)"
-if [ -n "$_c8_do_pin" ] && [ "$_c8_head" != "$_c8_do_pin" ]; then
-	echo "C8-688: 源码 pin -> ${_c8_do_pin:0:8}（当前 ${_c8_head:0:8}）"
-	if git fetch --depth 1 -q origin "$_c8_do_pin" >/dev/null 2>&1 &&
-		git checkout -q -f FETCH_HEAD; then
-		echo "C8-688: 已切到 $(git rev-parse --short HEAD)"
-	else
-		echo "::warning::C8-688: pin 失败，留在 ${_c8_head:0:8}，改为摘掉失效补丁"
-		if [ -f "$_c8_fw4_patch" ]; then
-			rm -f "$_c8_fw4_patch" &&
-				echo "C8-688: 已移除 $_c8_fw4_patch"
-		fi
-	fi
+if [ "$_c8_mode" = auto ] && [ -f "$_c8_fw4_patch" ]; then
+    mkdir -p "$GITHUB_WORKSPACE/build-reports"
+    mv "$_c8_fw4_patch" "$GITHUB_WORKSPACE/build-reports/c8-fullcone.patch.disabled"
+    printf '%s\n' 'C8-688 source mode auto: firewall4 fullcone patch removed as configured; ordinary NAT remains available.' \
+        >> "$GITHUB_WORKSPACE/build-reports/compatibility.txt"
 fi
 
 # ---- A. DTS ---------------------------------------------------------------
 _c8_dts="$_c8_dst/dts/mt7981b-nradio-c8-688.dts"
 [ -f "$_c8_src/dts/mt7981b-nradio-c8-688.dts" ] ||
-	{ _c8_die "缺少 $_c8_src/dts/mt7981b-nradio-c8-688.dts"; return 1; }
-[ -d "$_c8_dst/dts" ] || { _c8_die "上游没有 $_c8_dst/dts（源码结构变了？）"; return 1; }
-cp -f "$_c8_src/dts/mt7981b-nradio-c8-688.dts" "$_c8_dts" &&
+	{ _c8_die "缺少 $_c8_src/dts/mt7981b-nradio-c8-688.dts"; }
+[ -d "$_c8_dst/dts" ] || { _c8_die "上游没有 $_c8_dst/dts（源码结构变了？）"; }
+cp -f "$_c8_src/dts/mt7981b-nradio-c8-688.dts" "$_c8_dts"
 	echo "C8-688: DTS 已投放 -> $_c8_dts"
 
 # ---- B. filogic.mk --------------------------------------------------------
 _c8_mk="$_c8_dst/image/filogic.mk"
-[ -f "$_c8_mk" ] || { _c8_die "上游没有 $_c8_mk"; return 1; }
+[ -f "$_c8_mk" ] || { _c8_die "上游没有 $_c8_mk"; }
 if grep -q 'Device/nradio_c8-688' "$_c8_mk"; then
 	echo "C8-688: 设备定义已存在，跳过"
 else
 	printf '\n# ---- C8-688 (injected by Scripts/C8-688/private.sh) ----\n' >>"$_c8_mk"
 	cat "$_c8_src/device-nradio_c8-688.mk" >>"$_c8_mk"
 	grep -q 'TARGET_DEVICES += nradio_c8-688' "$_c8_mk" ||
-		{ _c8_die "设备定义追加后校验失败"; return 1; }
+		{ _c8_die "设备定义追加后校验失败"; }
 	echo "C8-688: 设备定义已追加 -> $_c8_mk"
 fi
 
 # ---- C. 02_network -------------------------------------------------------
 _c8_net="$_c8_dst/filogic/base-files/etc/board.d/02_network"
-[ -f "$_c8_net" ] || { _c8_die "上游没有 $_c8_net"; return 1; }
+[ -f "$_c8_net" ] || { _c8_die "上游没有 $_c8_net"; }
 
 # C1：LAN/WAN —— 4 个网口全 LAN，WAN 走 5G 模组的 eth1
 if grep -q 'nradio,c8-688|' "$_c8_net"; then
 	echo "C8-688: LAN/WAN 分支已存在，跳过"
 else
 	grep -q 'nradio,c8-668gl|' "$_c8_net" ||
-		{ _c8_die "02_network 找不到 nradio,c8-668gl 锚点"; return 1; }
-	sed -i 's/^\(\s*\)nradio,c8-668gl|/\1nradio,c8-688|\\\n\1nradio,c8-668gl|/' "$_c8_net" &&
+		{ _c8_die "02_network 找不到 nradio,c8-668gl 锚点"; }
+	sed -i 's/^\(\s*\)nradio,c8-668gl|/\1nradio,c8-688|\\\n\1nradio,c8-668gl|/' "$_c8_net"
 		echo "C8-688: 已加入 LAN/WAN 分支"
 fi
 
@@ -113,7 +76,7 @@ if grep -q '^	nradio,c8-688)' "$_c8_net"; then
 	echo "C8-688: MAC 分支已存在，跳过"
 else
 	grep -q '^	nradio,c8-668gl)' "$_c8_net" ||
-		{ _c8_die "02_network 找不到 MAC 锚点 nradio,c8-668gl)"; return 1; }
+		{ _c8_die "02_network 找不到 MAC 锚点 nradio,c8-668gl)"; }
 	python3 - "$_c8_net" <<'PY'
 import re
 import sys
@@ -134,7 +97,7 @@ text = text.replace("\tnradio,c8-668gl)\n", block + "\tnradio,c8-668gl)\n", 1)
 open(path, "w", encoding="utf-8").write(text)
 PY
 	grep -q 'nradio,c8-688)' "$_c8_net" ||
-		{ _c8_die "MAC 分支插入失败"; return 1; }
+		{ _c8_die "MAC 分支插入失败"; }
 	echo "C8-688: 已加入 MAC 分支"
 fi
 
@@ -142,7 +105,7 @@ fi
 _c8_files="${GITHUB_WORKSPACE:-/github/workspace}/Files/C8-688"
 if [ -d "$_c8_files" ]; then
 	cp -a "$_c8_files/." ./package/base-files/files/ ||
-		{ _c8_die "覆盖层投放失败"; return 1; }
+		{ _c8_die "覆盖层投放失败"; }
 	chmod 755 ./package/base-files/files/usr/sbin/c8-fan 2>/dev/null
 	chmod 755 ./package/base-files/files/usr/sbin/c8-env-detect 2>/dev/null
 	chmod 755 ./package/base-files/files/usr/sbin/c8-boot-official 2>/dev/null
@@ -150,40 +113,12 @@ if [ -d "$_c8_files" ]; then
 	chmod 755 ./package/base-files/files/etc/init.d/c8-wifi-mac 2>/dev/null
 	chmod 755 ./package/base-files/files/etc/uci-defaults/99-c8-688 2>/dev/null
 	echo "C8-688: 覆盖层已投放（风扇 / WiFi MAC / 首启 / env）"
-fi
-
-# ---- E. MT5700M 管理插件（FAN789/luci-app-mt5700m，钉 v3.0.7） -------------
-# Packages.sh 会先拉 LianXia233 的同名包 + QModem：包名重复会直接编不过，
-# 而且它们会抢同一个 AT 口，所以这里先清掉再放我们的版本。
-for _c8_drop in luci-app-mt5700m luci-app-mt5700 QModem luci-app-qmodem; do
-	if [ -e "./package/$_c8_drop" ]; then
-		rm -rf "./package/$_c8_drop" &&
-			echo "C8-688: 移除冲突包 $_c8_drop"
-	fi
-done
-
-_c8_mt_pkg="./package/luci-app-mt5700m"
-_c8_mt_tr="./package/mt5700m-transport"
-if [ -f "$_c8_mt_pkg/Makefile" ] && [ -f "$_c8_mt_tr/Makefile" ]; then
-	echo "C8-688: MT5700M 插件已就位，跳过克隆"
 else
-	_c8_mt_repo="https://github.com/FAN789/luci-app-mt5700m.git"
-	_c8_mt_tag="v3.0.7"
-	rm -rf /tmp/c8-mt5700m
-	git clone --depth 1 --single-branch --branch "$_c8_mt_tag" \
-		"$_c8_mt_repo" /tmp/c8-mt5700m ||
-		{ _c8_die "克隆 luci-app-mt5700m($_c8_mt_tag) 失败"; return 1; }
-	cp -a /tmp/c8-mt5700m/luci-app-mt5700m ./package/ ||
-		{ _c8_die "复制 luci-app-mt5700m 失败"; return 1; }
-	cp -a /tmp/c8-mt5700m/mt5700m-transport ./package/ ||
-		{ _c8_die "复制 mt5700m-transport 失败"; return 1; }
-	rm -rf /tmp/c8-mt5700m
-	[ -f "$_c8_mt_pkg/Makefile" ] && [ -f "$_c8_mt_tr/Makefile" ] ||
-		{ _c8_die "MT5700M 包结构不符合预期（仓库改版？）"; return 1; }
-	echo "C8-688: 已放入 luci-app-mt5700m + mt5700m-transport ($_c8_mt_tag)"
+	_c8_die "缺少覆盖层 $_c8_files"
 fi
 
-# 收尾：复位 shell 选项（分发器也会复位，这里不依赖它）
-set +eu
-set +o pipefail
-return 0
+# MT5700M packages are installed once from Profiles/packages.lock.json.
+test -f package/luci-app-mt5700m/Makefile
+test -f package/mt5700m-transport/Makefile
+printf '%s\n' "${WRT_RELEASE_TAG:?missing release tag}" > package/base-files/files/etc/c8-688-build.tag
+echo "C8-688: device source and overlay ready"

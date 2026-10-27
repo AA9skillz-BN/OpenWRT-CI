@@ -1,0 +1,51 @@
+{
+  "title": "NRadio C8-688",
+  "image_device": "nradio_c8-688",
+  "supported_device": "nradio,c8-688",
+  "device_symbol": "CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_nradio_c8-688",
+  "config_fragments": [
+    "Config/BASE.txt",
+    "Config/Features/services.txt",
+    "Config/Features/usb.txt",
+    "Config/Features/storage.txt",
+    "Config/Features/diagnostics.txt"
+  ],
+  "excluded_feed_packages": {
+    "luci-app-fwknopd": [
+      "luci-app-fwknopd"
+    ],
+    "squeezelite": [
+      "squeezelite-full",
+      "squeezelite-dynamic",
+      "squeezelite-custom"
+    ]
+  },
+  "packages": [
+    "mini-diskmanager",
+    "viking",
+    "partexp",
+    "natmapt",
+    "stuntman",
+    "luci-natmapt",
+    "argon",
+    "mt5700m"
+  ],
+  "required_packages": [
+    "kmod-mt7915e",
+    "kmod-mt7981-firmware",
+    "mt7981-wo-firmware",
+    "kmod-phy-maxlinear",
+    "kmod-hwmon-pwmfan",
+    "luci-theme-argon",
+    "luci-app-argon-config",
+    "luci-app-mt5700m",
+    "mt5700m-transport",
+    "luci-i18n-mt5700m-zh-cn",
+    "luci-app-ttyd",
+    "ttyd",
+    "jq",
+    "uboot-envtools",
+    "kmod-usb-net-qmi-wwan"
+  ],
+  "release_note": "仅写 eMMC 的 kernel_2nd / rootfs_2nd 第二系统槽。原厂 NROS 后台烧录第二系统前先关闭存储扩展。保留现有风扇、Wi-Fi MAC、双系统切换及 MT5700M 管理功能；不含原厂 NR-OS APP 与多卡切换界面。"
+}

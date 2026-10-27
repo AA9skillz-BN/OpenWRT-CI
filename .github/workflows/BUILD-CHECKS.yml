@@ -9,6 +9,8 @@ on:
       - 'Scripts/TR3000-512/**'
       - 'Scripts/AP3000M/**'
       - 'Files/TR3000-512/**'
+      - 'Scripts/C8-688/**'
+      - 'Files/C8-688/**'
   pull_request:
     paths:
       - '.github/**'
@@ -17,6 +19,8 @@ on:
       - 'Scripts/TR3000-512/**'
       - 'Scripts/AP3000M/**'
       - 'Files/TR3000-512/**'
+      - 'Scripts/C8-688/**'
+      - 'Files/C8-688/**'
   workflow_dispatch:
 
 permissions:
@@ -34,7 +38,7 @@ jobs:
         run: python3 .github/scripts/test_device_build.py -v
       - name: Check shell syntax
         run: |
-          find .github/scripts Scripts/TR3000-512 Scripts/AP3000M -name '*.sh' -print0 |
+          find .github/scripts Scripts/TR3000-512 Scripts/AP3000M Scripts/C8-688 -name '*.sh' -print0 |
             xargs -0 -n1 bash -n
           bash -n Files/TR3000-512/etc/init.d/tr3000-bbr
       - uses: actions/setup-go@v5
@@ -45,4 +49,4 @@ jobs:
         run: |
           go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -shellcheck= \
             .github/workflows/WRT-CORE.yml .github/workflows/TR3000.yml \
-            .github/workflows/AP3000M.yml .github/workflows/BUILD-CHECKS.yml
+            .github/workflows/AP3000M.yml .github/workflows/C8-688.yml .github/workflows/BUILD-CHECKS.yml

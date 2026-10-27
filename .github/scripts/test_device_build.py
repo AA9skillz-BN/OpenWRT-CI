@@ -59,7 +59,7 @@ class DeviceContractTests(unittest.TestCase):
             return build.verify_image(self.tree, self.data, self.reports)
 
     def test_feature_fragments_preserve_existing_general_choices(self):
-        for name in ("AP3000M", "TR3000-512"):
+        for name in ("AP3000M", "TR3000-512", "C8-688"):
             data = build.profile(REPO, name)
             fragments = {}
             for item in data["config_fragments"]:
@@ -74,6 +74,30 @@ class DeviceContractTests(unittest.TestCase):
 
     def test_config_gate_accepts_complete_device(self):
         build.check_config(self.tree, self.data)
+
+    def test_defconfig_exit_zero_cannot_hide_kconfig_errors(self):
+        result = build.subprocess.CompletedProcess(["make", "defconfig"], 0,
+                 stdout="tmp/.config-package.in:12:error: recursive dependency detected!\nconfiguration written to .config\n")
+        with patch.object(build.subprocess, "run", return_value=result), self.assertRaisesRegex(ValueError, "Kconfig reported"):
+            build.defconfig(self.tree, self.data, self.reports)
+
+    def test_clean_defconfig_output_is_allowed(self):
+        build.check_kconfig_output("# configuration written to .config\nWARNING: optional unselected package missing\n")
+
+    def test_excluded_broken_packages_cannot_be_requested_silently(self):
+        with patch.dict(os.environ, {"WRT_PACKAGE": "CONFIG_PACKAGE_squeezelite-custom=y"}), \
+             self.assertRaisesRegex(ValueError, "excluded due to upstream Kconfig"):
+            build.merge_config(REPO, self.tree, "AP3000M", self.data)
+
+    def test_every_device_critical_package_is_explicitly_configured(self):
+        for name in ("AP3000M", "TR3000-512", "C8-688"):
+            data = build.profile(REPO, name)
+            build.merge_config(REPO, self.tree, name, data)
+            # Settings.sh adds the workflow theme after fragment merging.
+            theme = "argon" if name == "C8-688" else "aurora"
+            with (self.tree / ".config").open("a") as stream:
+                stream.write(f"CONFIG_PACKAGE_luci-theme-{theme}=y\nCONFIG_PACKAGE_luci-app-{theme}-config=y\n")
+            build.check_config(self.tree, data)
 
     def test_config_gate_rejects_dropped_package(self):
         with (self.tree / ".config").open("a") as stream:
