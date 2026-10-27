@@ -173,23 +173,22 @@ fi
 #     最后修改于 2024-08，遇到上游 firewall4 大版本更新就会打不上而让整条构建失败
 #     （2026-10-26 实测：firewall4 升到 bac1d656 后 hunk #8 失败，构建整体红）。
 #
-#     判定条件 = 「已知坏版本」+「补丁内容未变（sha256 匹配）」两个都要满足才跳过：
-#       · 上游升级 firewall4 → 版本变化 → 不跳过（按上游新补丁走）
-#       · 上游修好补丁但版本没变 → sha256 变化 → 不跳过（按上游新补丁走）
-#     也就是说：上游一修好，我们这边自动跟随，无需再改代码。
+#     判定条件只看「补丁内容是否还是 2024 那个老版本」（sha256 比对）：
+#       · 补丁没更新 → 无论 firewall4 版本怎么变，都跳过（老补丁对新源码必挂）
+#       · 补丁被上游更新 → 立刻改为按上游原样编译（fullcone 自动回来）
+#     也就是说：只要上游把补丁修好，我们自动跟随；上游只升版本不修，我们也不会被拖挂。
 _ap3000m_fw4_mk="package/network/config/firewall4/Makefile"
 _ap3000m_fw4_patch="package/network/config/firewall4/patches/001-firewall4-add-support-for-fullcone-nat.patch"
-_ap3000m_fw4_bad_ver="bac1d656e09b48e542f860844fe91cbba82abae2"
 _ap3000m_fw4_bad_sum="e043a5f7d07d7569f32df8af4b70f11b809611dfa5bc8cf8c33f6ee4478fefd9"
 if [ -f "$_ap3000m_fw4_mk" ] && [ -f "$_ap3000m_fw4_patch" ]; then
 	_ap3000m_fw4_ver=$(sed -n 's/^PKG_SOURCE_VERSION:=//p' "$_ap3000m_fw4_mk" | head -n1)
 	_ap3000m_fw4_sum=$(sha256sum "$_ap3000m_fw4_patch" 2>/dev/null | cut -d' ' -f1)
-	if [ "$_ap3000m_fw4_ver" = "$_ap3000m_fw4_bad_ver" ] && [ "$_ap3000m_fw4_sum" = "$_ap3000m_fw4_bad_sum" ]; then
+	if [ "$_ap3000m_fw4_sum" = "$_ap3000m_fw4_bad_sum" ]; then
 		# 注意：OpenWrt 的 quilt 会把 patches/ 目录下**所有文件**当补丁应用，
 		# 只改扩展名没用（2026-10-27 实测：改名成 .disabled 后依然被 apply 并失败），
 		# 必须把文件挪出 patches/ 目录。
 		mv -f "$_ap3000m_fw4_patch" /tmp/ap3000m-fw4-fullcone.patch.stashed
-		_ap3000m_log "⚠ firewall4=$_ap3000m_fw4_ver 且 fullcone 补丁未更新，已把它移出 patches/ 目录（本版无 fullcone NAT，普通 NAT 不受影响）"
+		_ap3000m_log "⚠ fullcone 补丁仍是 2024 老版本（不兼容 firewall4=$_ap3000m_fw4_ver），已把它移出 patches/ 目录（本版无 fullcone NAT，普通 NAT 不受影响）"
 		_ap3000m_log "  patches/ 目录现在只剩：$(ls -1 "$(dirname "$_ap3000m_fw4_patch")" 2>/dev/null | tr '\n' ' ')"
 	else
 		_ap3000m_log "fullcone 补丁检查通过（firewall4=$_ap3000m_fw4_ver，补丁前缀 $(echo "$_ap3000m_fw4_sum" | cut -c1-8)…），按上游原样编译"
