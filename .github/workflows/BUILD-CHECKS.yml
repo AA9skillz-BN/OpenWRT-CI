@@ -1,6 +1,14 @@
 name: Build logic checks
 
 on:
+  push:
+    paths:
+      - '.github/**'
+      - 'Profiles/**'
+      - 'Config/**'
+      - 'Scripts/TR3000-512/**'
+      - 'Scripts/AP3000M/**'
+      - 'Files/TR3000-512/**'
   pull_request:
     paths:
       - '.github/**'

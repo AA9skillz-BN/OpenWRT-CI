@@ -163,7 +163,7 @@ def package(tree, repo, name, data, reports):
     shutil.copy2(manifest, upload / manifest.name)
     for file in reports.iterdir():
         if file.is_file() and file.name in ("source-commit.txt", "feeds.buildinfo", "packages.lock.json",
-                                             "build-inputs.json", "image-metadata.json", "compatibility.txt"):
+                                             "build-inputs.json", "image-metadata.json", "compatibility.txt", "ci-commit.txt"):
             shutil.copy2(file, upload / file.name)
     # Do not discard evidence needed to reproduce or diagnose this release.
     checksums = []
@@ -192,6 +192,7 @@ def cache_keys(repo, tree, name, reports):
              for p in sorted((tree / "feeds").iterdir()) if (p / ".git").exists()}
     config = (tree / ".config").read_text()
     write(reports / "source-commit.txt", run("git", "rev-parse", "HEAD", cwd=tree) + "\n")
+    write(reports / "ci-commit.txt", run("git", "rev-parse", "HEAD", cwd=repo) + "\n")
     write(reports / "feeds.buildinfo", run(str(tree / "scripts/feeds"), "list", "-fs", cwd=tree) + "\n")
     compiler = run("gcc", "-dumpfullversion")
     inputs = {"schema": 2, "device": name, "source": run("git", "rev-parse", "HEAD", cwd=tree),

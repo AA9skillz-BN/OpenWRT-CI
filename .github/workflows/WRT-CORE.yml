@@ -293,7 +293,7 @@ jobs:
             ./wrt/staging_dir/target-*/host
 
       - name: Refresh Runner Tool Links
-        if: ${{ !inputs.WRT_TEST && inputs.WRT_PROFILE != '' }}
+        if: ${{ inputs.WRT_PROFILE != '' }}
         working-directory: ./wrt
         run: bash "$GITHUB_WORKSPACE/.github/scripts/refresh-rust-links.sh"
 
