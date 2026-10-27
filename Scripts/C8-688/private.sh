@@ -27,7 +27,7 @@ _c8_dst="./target/linux/mediatek"
 _c8_die() { echo "::error::C8-688 注入失败：$*" >&2; exit 1; }
 
 # Source selection is complete. Keep upstream firewall4 patches intact.
-# auto follows the branch; fullcone was repaired upstream in 21ae803c.
+# auto follows SOURCE_MODE; fullcone was repaired upstream in 21ae803c.
 
 # ---- A. DTS ---------------------------------------------------------------
 _c8_dts="$_c8_dst/dts/mt7981b-nradio-c8-688.dts"

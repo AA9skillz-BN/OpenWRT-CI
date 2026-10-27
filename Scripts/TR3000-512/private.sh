@@ -4,7 +4,7 @@
 # Cudy TR3000 512MB 构建钩子（与 AP3000M 同构，各自独立文件）
 #
 # 调用链：
-#   WRT-CORE.yml → bash 本脚本（cwd = ./wrt 源码根；独立进程）
+#   DEVICE-CORE.yml → bash 本脚本（cwd = ./wrt 源码根；独立进程）
 #
 # 本脚本负责四件事，全部失败即中止构建（分区/镜像不对的固件宁可不发）：
 #   1. 512MB 硬改机的 UBI 分区补丁（不改则 sysupgrade 平台检查拒绝刷入）
@@ -61,7 +61,7 @@ while IFS= read -r f; do
 done < <(find files/etc -type f 2>/dev/null)
 
 # uci-defaults / hotplug.d / init.d 里的脚本没有 .sh 后缀，
-# WRT-CORE 的 dos2unix 步骤只处理 *.sh/*.txt，所以这里显式赋权。
+# 这些文件不一定有 .sh 后缀，所以这里显式赋权。
 while IFS= read -r f; do
 	chmod 0755 "$f"
 done < <(find files/etc/uci-defaults files/etc/hotplug.d files/etc/init.d -type f 2>/dev/null)

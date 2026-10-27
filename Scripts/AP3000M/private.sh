@@ -31,8 +31,8 @@ else
 fi
 
 # 7) 一键 OTA：CLI 脚本 + 构建标签 + 升级结果回写
-#    构建标签就是将来的 Release tag：WRT-CORE 在「Initialization Values」里已经算好
-#    WRT_CONFIG/WRT_INFO/WRT_BRANCH/WRT_DATE 并写进 $GITHUB_ENV，本步能直接读到。
+#    DEVICE-CORE 在「Initialization Values」中写入 WRT_RELEASE_TAG，
+#    固件与发布 job 使用同一个标签。
 _ap3000m_ota_dir="$GITHUB_WORKSPACE/Scripts/AP3000M/ota"
 _ap3000m_bf="package/base-files/files"
 if [ -d "$_ap3000m_ota_dir" ]; then
