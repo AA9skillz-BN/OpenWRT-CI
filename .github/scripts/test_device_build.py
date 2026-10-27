@@ -134,6 +134,24 @@ class DeviceContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "matching manifest"):
             self.verify()
 
+    def test_upstream_target_manifest_for_single_device(self):
+        generic = self.target / "immortalwrt-mediatek-filogic.manifest"
+        self.manifest.rename(generic)
+        self.assertEqual(self.verify()[1], generic)
+
+    def test_target_manifest_rejects_multiple_selected_devices(self):
+        self.manifest.rename(self.target / "immortalwrt-mediatek-filogic.manifest")
+        with (self.tree / ".config").open("a") as stream:
+            stream.write("CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_other=y\n")
+        with self.assertRaisesRegex(ValueError, "expected only"):
+            self.verify()
+
+    def test_target_manifest_still_requires_packages(self):
+        self.manifest.unlink()
+        build.write(self.target / "immortalwrt-mediatek-filogic.manifest", "ttyd - 1.0\n")
+        with self.assertRaisesRegex(ValueError, "manifest missing"):
+            self.verify()
+
     def test_missing_package_cannot_publish(self):
         build.write(self.manifest, "ttyd - 1.0\n")
         with self.assertRaisesRegex(ValueError, "manifest missing"):

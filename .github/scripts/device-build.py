@@ -162,11 +162,19 @@ def verify_image(tree, data, reports, repo=None):
     if len(images) != 1:
         raise ValueError(f"expected exactly one sysupgrade image, got {images}")
     image = images[0]
-    # OpenWrt manifests use IMG_PREFIX-device; images append -squashfs-sysupgrade.
+    # Image/Manifest uses IMG_PREFIX[-PROFILE_SANITIZED]. A normal single-device
+    # source build leaves PROFILE unset and emits the target-wide IMG_PREFIX.
     end = image.name.index(data["image_device"]) + len(data["image_device"])
     manifest = image.with_name(image.name[:end] + ".manifest")
     if not manifest.is_file():
-        raise ValueError(f"missing matching manifest: {manifest}")
+        prefix = image.name[:end - len(data["image_device"])].removesuffix("-")
+        generic = image.with_name(prefix + ".manifest")
+        if not generic.is_file():
+            raise ValueError(f"missing matching manifest: {manifest} or {generic}")
+        # A target-wide manifest is valid only for our enforced single-device
+        # configuration. Never select an arbitrary manifest from the directory.
+        check_config(tree, data)
+        manifest = generic
     installed = {line.split()[0] for line in manifest.read_text().splitlines() if line.strip()}
     missing = set(data["required_packages"]) - installed
     if missing:
