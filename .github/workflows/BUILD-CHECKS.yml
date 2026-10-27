@@ -1,0 +1,40 @@
+name: Build logic checks
+
+on:
+  pull_request:
+    paths:
+      - '.github/**'
+      - 'Profiles/**'
+      - 'Config/**'
+      - 'Scripts/TR3000-512/**'
+      - 'Scripts/AP3000M/**'
+      - 'Files/TR3000-512/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test configuration and publication gates
+        run: python3 .github/scripts/test_device_build.py -v
+      - name: Check shell syntax
+        run: |
+          find .github/scripts Scripts/TR3000-512 Scripts/AP3000M -name '*.sh' -print0 |
+            xargs -0 -n1 bash -n
+          bash -n Files/TR3000-512/etc/init.d/tr3000-bbr
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.1'
+          cache: false
+      - name: Validate workflow syntax and expressions
+        run: |
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -shellcheck= \
+            .github/workflows/WRT-CORE.yml .github/workflows/TR3000.yml \
+            .github/workflows/AP3000M.yml .github/workflows/BUILD-CHECKS.yml

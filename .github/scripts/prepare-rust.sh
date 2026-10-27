@@ -31,7 +31,15 @@ if [ -z "$RUSTUP_BIN" ]; then
 fi
 PATH="$(dirname "$RUSTUP_BIN"):$PATH"
 export PATH
-RUST_TOOLCHAIN=$(rustup show active-toolchain | awk '{print $1}')
+if [ -n "${WRT_PROFILE:-}" ]; then
+    RUST_TOOLCHAIN=$(sed -n 's/^PKG_VERSION:=//p' "$RUST_MAKEFILE")
+    [[ "$RUST_TOOLCHAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid feed Rust version" >&2; exit 1; }
+    rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update
+    echo "RUSTUP_TOOLCHAIN=$RUST_TOOLCHAIN" >> "$GITHUB_ENV"
+    export RUSTUP_TOOLCHAIN="$RUST_TOOLCHAIN"
+else
+    RUST_TOOLCHAIN=$(rustup show active-toolchain | awk '{print $1}')
+fi
 printf 'Rust toolchain: %s\nRust target: %s\n' "$RUST_TOOLCHAIN" "$RUST_TARGET" | tee "$REPORT_DIR/rust-toolchain.txt"
 
 rustup target add --toolchain "$RUST_TOOLCHAIN" "$RUST_TARGET"
@@ -53,3 +61,8 @@ grep -Fxq 'include ./ci-prebuilt.mk' "$RUST_MAKEFILE"
 "$RUST_ROOT/bin/rustc" --version | tee -a "$REPORT_DIR/rust-toolchain.txt"
 echo "Using runner Rust $RUST_TOOLCHAIN for $RUST_TARGET" | tee -a "$REPORT_DIR/rust-toolchain.txt"
 sha256sum "$RUST_MAKEFILE" >> "$REPORT_DIR/rust-toolchain.txt"
+
+if [ -n "${WRT_PROFILE:-}" ]; then
+    # Re-link after cache restore too: cached runner paths must never be trusted.
+    echo "CI_RUST_ROOT=$RUST_ROOT" >> "$GITHUB_ENV"
+fi

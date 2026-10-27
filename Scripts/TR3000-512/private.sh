@@ -4,12 +4,11 @@
 # Cudy TR3000 512MB 构建钩子（与 AP3000M 同构，各自独立文件）
 #
 # 调用链：
-#   WRT-CORE.yml「Custom Packages」→ Scripts/Packages.sh 末尾 source Scripts/PRIVATE.sh
-#   → PRIVATE.sh 扫描 Scripts/*/private.sh → 本脚本（cwd = ./wrt 源码根）
+#   WRT-CORE.yml → bash 本脚本（cwd = ./wrt 源码根；独立进程）
 #
 # 本脚本负责四件事，全部失败即中止构建（分区/镜像不对的固件宁可不发）：
 #   1. 512MB 硬改机的 UBI 分区补丁（不改则 sysupgrade 平台检查拒绝刷入）
-#   2. 按固定 commit 拉取 Aurora / OpenClash / TurboACC（构建可复现）
+#   2. 插件由 Profiles/packages.lock.json 统一管理
 #   3. 投放首启配置与 F50 即插即用脚本到源码 files/
 #   4. 写入构建标签（即 Release tag），便于设备端识别当前版本
 
@@ -46,53 +45,8 @@ else
 	exit 1
 fi
 
-# ------------------------------------------------------------ 1b. 内核启用 BBR
-# 上游 target/linux/generic/config-6.18 里 BBR 是 `# CONFIG_TCP_CONG_BBR is not set`，
-# 且 config/Config-kernel.in 没有暴露该选项 —— 所以 Config 里写 CONFIG_TCP_CONG_BBR=y
-# 会被 make defconfig 静默丢弃（实测固件里只有 reno/cubic，日志里也没有任何 BBR 输出）。
-# 这里直接改内核配置片段。
-_tr3000_kcfg="target/linux/generic/config-6.18"
-if [ -f "$_tr3000_kcfg" ]; then
-	if grep -q '^# CONFIG_TCP_CONG_BBR is not set' "$_tr3000_kcfg"; then
-		sed -i 's/^# CONFIG_TCP_CONG_BBR is not set$/CONFIG_TCP_CONG_BBR=y/' "$_tr3000_kcfg"
-		# 关键：开 BBR 后内核「默认拥塞控制」的 choice 会从 2 项变 3 项
-		# （DEFAULT_CUBIC / DEFAULT_BBR / DEFAULT_RENO），而 OpenWrt 的
-		# CONFIG_DEFAULT_TCP_CONG="cubic" 是字符串、不匹配内核 choice，
-		# 于是 syncconfig 变成交互式提问 choice[1-3?] 并卡死：
-		#   make[8]: *** [scripts/kconfig/Makefile:85: syncconfig] Error 1
-		# 这里把默认选项一并钉成 DEFAULT_BBR。
-		sed -i '/^CONFIG_DEFAULT_TCP_CONG=/d' "$_tr3000_kcfg"
-		grep -q '^CONFIG_DEFAULT_BBR=y' "$_tr3000_kcfg" ||
-			printf 'CONFIG_DEFAULT_BBR=y\n' >>"$_tr3000_kcfg"
-		log "已启用内核 BBR（默认拥塞控制 = BBR）"
-	elif grep -q '^CONFIG_TCP_CONG_BBR=y' "$_tr3000_kcfg"; then
-		log "内核 BBR 已处于启用状态"
-	else
-		log "警告：$_tr3000_kcfg 里没有 BBR 条目，跳过"
-	fi
-else
-	log "警告：找不到 $_tr3000_kcfg，BBR 无法启用"
-fi
-
-# ---------------------------------------------------------- 2. 固定版本插件
-# Packages.sh 已按分支最新克隆过 aurora / aurora-config / openclash，
-# 这里先清掉，再按本仓库审阅过的 commit 重新拉取，保证每次构建内容一致。
-log "清理 Packages.sh 的分支最新版，改拉固定 commit"
-rm -rf package/luci-theme-aurora package/luci-app-aurora-config \
-	package/luci-app-openclash package/OpenClash
-
-log "克隆 OpenClash（固定 commit）"
-bash "$TR_DIR/openclash.sh"
-log "克隆 TurboACC（固定 commit）"
-bash "$TR_DIR/turboacc.sh"
-log "克隆 Aurora 主题与配置（固定 commit）"
-bash "$TR_DIR/aurora.sh"
-
-for _d in package/luci-theme-aurora package/luci-app-aurora-config \
-	package/luci-app-openclash package/luci-app-turboacc; do
-	[ -d "$_d" ] || { log "插件缺失: $_d"; exit 1; }
-done
-log "四个专属插件全部就位"
+# BBR is selected as kmod-tcp-bbr in the device config.
+# Locked plugins are installed once by device-build.py before this hook.
 
 # ------------------------------------------------- 3. 首启配置 + F50 即插即用
 log "投放 Files/TR3000-512 到源码 files/"
@@ -121,7 +75,7 @@ ln -sf ../init.d/tr3000-bbr files/etc/rc.d/S99tr3000-bbr
 chmod 0755 files/etc/init.d/tr3000-bbr
 
 # ---------------------------------------------------------------- 4. 构建标签
-BUILD_TAG="${WRT_CONFIG:-TR3000-512}-${WRT_INFO:-unknown}-${WRT_BRANCH:-owrt}-${WRT_DATE:-unknown}"
+BUILD_TAG="${WRT_RELEASE_TAG:?missing release tag}"
 printf '%s\n' "$BUILD_TAG" > files/etc/tr3000-build.tag
 chmod 0644 files/etc/tr3000-build.tag
 log "构建标签: $BUILD_TAG"

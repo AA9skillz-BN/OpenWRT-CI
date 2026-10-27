@@ -7,6 +7,11 @@ name: WRT-CORE
 on:
   workflow_call:
     inputs:
+      WRT_PROFILE:
+        description: 'Optional single-device contract in Profiles/'
+        required: false
+        default: ''
+        type: string
       WRT_CONFIG:
         required: true
         type: string
@@ -47,6 +52,7 @@ on:
 
 env:
   GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
+  WRT_PROFILE: ${{inputs.WRT_PROFILE}}
   WRT_CONFIG: ${{inputs.WRT_CONFIG}}
   WRT_THEME: ${{inputs.WRT_THEME}}
   WRT_NAME: ${{inputs.WRT_NAME}}
@@ -63,24 +69,31 @@ env:
 jobs:
   core:
     name: ${{inputs.WRT_SOURCE}}
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.WRT_PROFILE != '' && 'ubuntu-24.04' || 'ubuntu-latest' }}
     outputs:
       cache_prefix: ${{steps.initialize-values.outputs.cache_prefix}}
       cache_key: ${{steps.clone-code.outputs.cache_key}}
+      device_cache_prefix: ${{steps.device-cache.outputs.prefix}}
+      device_dl_key: ${{steps.device-cache.outputs.dl}}${{github.run_id}}-${{github.run_attempt}}
+      device_ccache_key: ${{steps.device-cache.outputs.ccache}}${{github.run_id}}-${{github.run_attempt}}
+      device_staging_key: ${{steps.device-cache.outputs.staging}}
+      release_tag: ${{steps.initialize-values.outputs.release_tag}}
     steps:
       - name: Checkout Projects
-        uses: actions/checkout@main
+        uses: actions/checkout@v4
 
       - name: Initialization Environment
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get -yqq purge firefox
           sudo apt-get -yqq update
-          sudo apt-get -yqq full-upgrade
-          sudo apt-get -yqq autoremove --purge
-          sudo apt-get -yqq autoclean
-          sudo apt-get -yqq clean
+          if [ -z "$WRT_PROFILE" ]; then
+            sudo apt-get -yqq purge firefox
+            sudo apt-get -yqq full-upgrade
+            sudo apt-get -yqq autoremove --purge
+            sudo apt-get -yqq autoclean
+            sudo apt-get -yqq clean
+          fi
 
           sudo apt-get install -y --no-install-recommends \
             bc bison build-essential bzip2 ca-certificates ccache clang \
@@ -102,6 +115,7 @@ jobs:
         run: |
           WRT_TARGET=$(grep -m 1 -oP '^CONFIG_TARGET_\K[^=_]+(?=\=y)' "./Config/$WRT_CONFIG.txt")
           WRT_SUBTARGET=$(grep -m 1 -oP "^CONFIG_TARGET_${WRT_TARGET}_\K[^=_]+(?=\=y)" "./Config/$WRT_CONFIG.txt")
+          WRT_DATE=$(TZ=UTC-8 date +"%y.%m.%d-%H.%M.%S")
           WRT_CACHE_SOURCE=${WRT_SOURCE//\//-}
           WRT_CACHE_BRANCH=${WRT_BRANCH//\//-}
           WRT_CACHE_TARGET="$WRT_TARGET-$WRT_SUBTARGET"
@@ -111,7 +125,7 @@ jobs:
           {
             echo "WRT_INFO=${WRT_SOURCE%%/*}"
             echo "WRT_MARK=${GITHUB_REPOSITORY%%/*}"
-            echo "WRT_DATE=$(TZ=UTC-8 date +"%y.%m.%d-%H.%M.%S")"
+            echo "WRT_DATE=$WRT_DATE"
             echo "WRT_CACHE_PREFIX=$WRT_CACHE_PREFIX"
             echo "WRT_CACHE_TARGET=$WRT_CACHE_TARGET"
             echo "WRT_SUBTARGET=$WRT_SUBTARGET"
@@ -121,11 +135,23 @@ jobs:
             echo "WRT_LIST=none"
           } >> "$GITHUB_ENV"
           echo "cache_prefix=$WRT_CACHE_PREFIX" >> "$GITHUB_OUTPUT"
+          # Reuse the same tag for device labels, packaging and publication.
+          WRT_SAFE_BRANCH=${WRT_BRANCH//\//-}
+          WRT_RELEASE_TAG="$WRT_CONFIG-${WRT_SOURCE%%/*}-$WRT_SAFE_BRANCH-$WRT_DATE-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          if [ -z "$WRT_PROFILE" ]; then
+            WRT_RELEASE_TAG="$WRT_CONFIG-${WRT_SOURCE%%/*}-$WRT_BRANCH-$WRT_DATE"
+          fi
+          echo "WRT_RELEASE_TAG=$WRT_RELEASE_TAG" >> "$GITHUB_ENV"
+          echo "release_tag=$WRT_RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          if [ -n "$WRT_PROFILE" ]; then
+            test "$WRT_PROFILE" = "$WRT_CONFIG"
+            test -f "Profiles/$WRT_PROFILE.json"
+          fi
 
       - name: Clone Code
         id: clone-code
         run: |
-          git clone --depth=1 --single-branch --branch $WRT_BRANCH $WRT_REPO ./wrt/
+          git clone --depth=1 --single-branch --branch "$WRT_BRANCH" "$WRT_REPO" ./wrt/
 
           cd ./wrt/
           WRT_HASH=$(git rev-parse HEAD)
@@ -145,8 +171,8 @@ jobs:
 
       - name: Restore Build Cache
         id: cache-restore
-        if: ${{ !inputs.WRT_TEST }}
-        uses: actions/cache/restore@main
+        if: ${{ !inputs.WRT_TEST && inputs.WRT_PROFILE == '' }}
+        uses: actions/cache/restore@v4
         with:
           key: ${{env.WRT_CACHE_KEY}}
           restore-keys: ${{env.WRT_CACHE_PREFIX}}-
@@ -156,7 +182,7 @@ jobs:
             ./wrt/staging_dir/tool*
 
       - name: Prepare Restored Build Cache
-        if: ${{ !inputs.WRT_TEST && steps.cache-restore.outputs.cache-matched-key != '' }}
+        if: ${{ !inputs.WRT_TEST && inputs.WRT_PROFILE == '' && steps.cache-restore.outputs.cache-matched-key != '' }}
         run: |
           find "./wrt/staging_dir" -type d -name "stamp" -not -path "*target*" | while read -r DIR; do
             find "$DIR" -type f -exec touch {} +
@@ -169,6 +195,14 @@ jobs:
         run: |
           cd ./wrt/
 
+          if [ -n "$WRT_PROFILE" ]; then
+            # Config-only feed flags do not prevent feeds install/Kconfig parsing.
+            for file in feeds.conf feeds.conf.default; do
+              if [ -f "$file" ]; then
+                sed -i -E '/^[^#][^[:space:]]*[[:space:]]+(video|pon_drivers|pon_userspace)[[:space:]]/d' "$file"
+              fi
+            done
+          fi
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
@@ -176,15 +210,26 @@ jobs:
         run: |
           cd ./wrt/
 
-          $GITHUB_WORKSPACE/Scripts/Packages.sh
-          $GITHUB_WORKSPACE/Scripts/Handles.sh
-          $GITHUB_WORKSPACE/.github/scripts/prepare-i2c-tools.sh
+          if [ -n "$WRT_PROFILE" ]; then
+            python3 "$GITHUB_WORKSPACE/.github/scripts/device-build.py" packages
+          else
+            bash "$GITHUB_WORKSPACE/Scripts/Packages.sh"
+          fi
+          bash "$GITHUB_WORKSPACE/Scripts/Handles.sh"
+          bash "$GITHUB_WORKSPACE/.github/scripts/prepare-i2c-tools.sh"
+
+      - name: Apply Device Source and Files
+        if: ${{ inputs.WRT_PROFILE != '' }}
+        working-directory: ./wrt
+        run: bash "$GITHUB_WORKSPACE/Scripts/$WRT_PROFILE/private.sh"
 
       - name: Custom Settings
         run: |
           cd ./wrt/
 
-          if [[ "${WRT_CONFIG,,}" == *"test"* ]]; then
+          if [ -n "$WRT_PROFILE" ]; then
+            python3 "$GITHUB_WORKSPACE/.github/scripts/device-build.py" merge
+          elif [[ "${WRT_CONFIG,,}" == *"test"* ]]; then
             cat $GITHUB_WORKSPACE/Config/$WRT_CONFIG.txt >> .config
           else
             cat $GITHUB_WORKSPACE/Config/$WRT_CONFIG.txt $GITHUB_WORKSPACE/Config/GENERAL.txt >> .config
@@ -193,7 +238,12 @@ jobs:
           $GITHUB_WORKSPACE/Scripts/Settings.sh
           $GITHUB_WORKSPACE/.github/scripts/prepare-build-host.sh
 
-          make defconfig -j$(nproc) && make clean -j$(nproc)
+          make defconfig
+          if [ -n "$WRT_PROFILE" ]; then
+            python3 "$GITHUB_WORKSPACE/.github/scripts/device-build.py" check
+          else
+            make clean -j"$(nproc)"
+          fi
 
       - name: Prepare Rust Toolchain
         if: ${{ !inputs.WRT_TEST }}
@@ -202,7 +252,53 @@ jobs:
 
           $GITHUB_WORKSPACE/.github/scripts/prepare-rust.sh
 
+      - name: Compute Device Cache Keys
+        id: device-cache
+        if: ${{ !inputs.WRT_TEST && inputs.WRT_PROFILE != '' }}
+        working-directory: ./wrt
+        run: python3 "$GITHUB_WORKSPACE/.github/scripts/device-build.py" cache
+
+      - name: Restore Downloads
+        if: ${{ !inputs.WRT_TEST && inputs.WRT_PROFILE != '' }}
+        uses: actions/cache/restore@v4
+        with:
+          key: ${{steps.device-cache.outputs.dl}}${{github.run_id}}-${{github.run_attempt}}
+          restore-keys: ${{steps.device-cache.outputs.dl}}
+          path: ./wrt/dl
+
+      - name: Restore Compiler Cache
+        if: ${{ !inputs.WRT_TEST && inputs.WRT_PROFILE != '' }}
+        uses: actions/cache/restore@v4
+        with:
+          key: ${{steps.device-cache.outputs.ccache}}${{github.run_id}}-${{github.run_attempt}}
+          restore-keys: ${{steps.device-cache.outputs.ccache}}
+          path: ./wrt/.ccache
+
+      - name: Restore Exact Toolchain Cache
+        id: device-staging
+        if: ${{ !inputs.WRT_TEST && inputs.WRT_PROFILE != '' }}
+        uses: actions/cache/restore@v4
+        with:
+          key: ${{steps.device-cache.outputs.staging}}
+          path: |
+            ./wrt/staging_dir/host*
+            ./wrt/staging_dir/tool*
+
+      - name: Refresh Runner Tool Links
+        if: ${{ !inputs.WRT_TEST && inputs.WRT_PROFILE != '' }}
+        working-directory: ./wrt
+        run: |
+          mkdir -p staging_dir/host/bin
+          for tool in cargo rustc rustdoc; do
+            test -x "$CI_RUST_ROOT/bin/$tool"
+            ln -sfn "$CI_RUST_ROOT/bin/$tool" "staging_dir/host/bin/$tool"
+          done
+          export CCACHE_DIR="$PWD/.ccache"
+          ccache --max-size=1G
+          ccache --zero-stats
+
       - name: Download Packages
+        id: download
         if: ${{ !inputs.WRT_TEST }}
         run: |
           cd ./wrt/
@@ -210,6 +306,7 @@ jobs:
           make download -j$(nproc)
 
       - name: Compile Firmware
+        id: compile
         if: ${{ !inputs.WRT_TEST }}
         run: |
           cd ./wrt/
@@ -217,6 +314,35 @@ jobs:
           mkdir -p $GITHUB_WORKSPACE/build-reports
           make -j$(nproc) BUILD_TIME_LOG="$GITHUB_WORKSPACE/build-reports/parallel.tsv" || \
             make -j1 V=s BUILD_TIME_LOG="$GITHUB_WORKSPACE/build-reports/serial.tsv"
+
+      - name: Verify and Package Device Firmware
+        id: device-package
+        if: ${{ !inputs.WRT_TEST && inputs.WRT_PROFILE != '' }}
+        working-directory: ./wrt
+        run: python3 "$GITHUB_WORKSPACE/.github/scripts/device-build.py" package
+
+      - name: Save Downloads
+        if: ${{ !cancelled() && inputs.WRT_PROFILE != '' && steps.download.outcome == 'success' }}
+        uses: actions/cache/save@v4
+        with:
+          key: ${{steps.device-cache.outputs.dl}}${{github.run_id}}-${{github.run_attempt}}
+          path: ./wrt/dl
+
+      - name: Save Compiler Cache
+        if: ${{ !cancelled() && inputs.WRT_PROFILE != '' && (steps.compile.outcome == 'success' || steps.compile.outcome == 'failure') }}
+        uses: actions/cache/save@v4
+        with:
+          key: ${{steps.device-cache.outputs.ccache}}${{github.run_id}}-${{github.run_attempt}}
+          path: ./wrt/.ccache
+
+      - name: Save Exact Toolchain Cache
+        if: ${{ !cancelled() && inputs.WRT_PROFILE != '' && steps.device-package.outcome == 'success' && steps.device-staging.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          key: ${{steps.device-cache.outputs.staging}}
+          path: |
+            ./wrt/staging_dir/host*
+            ./wrt/staging_dir/tool*
 
       - name: Collect Build Reports
         if: ${{ !inputs.WRT_TEST && always() }}
@@ -236,8 +362,8 @@ jobs:
           retention-days: 7
 
       - name: Save Build Cache
-        if: ${{ !inputs.WRT_TEST && success() && steps.cache-restore.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@main
+        if: ${{ !inputs.WRT_TEST && inputs.WRT_PROFILE == '' && success() && steps.cache-restore.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
         with:
           key: ${{env.WRT_CACHE_KEY}}
           path: |
@@ -258,10 +384,15 @@ jobs:
           echo "======================="
 
       - name: Package Firmware
+        if: ${{ inputs.WRT_PROFILE == '' || inputs.WRT_TEST }}
         run: |
           cd ./wrt/ && mkdir ./upload/
 
-          cp -f ./.config ./upload/Config-"$WRT_CONFIG"-"$WRT_INFO"-"$WRT_BRANCH"-"$WRT_DATE".txt
+          if [ -n "$WRT_PROFILE" ]; then
+            cp .config "./upload/Config-$WRT_RELEASE_TAG.txt"
+          else
+            cp -f ./.config ./upload/Config-"$WRT_CONFIG"-"$WRT_INFO"-"$WRT_BRANCH"-"$WRT_DATE".txt
+          fi
 
           if [[ "$WRT_TEST" != 'true' ]]; then
             echo "WRT_KVER=$(find ./bin/targets/ -type f -name "*.manifest" -exec grep -oP '^kernel - \K[\d\.]+' {} \;)" >> $GITHUB_ENV
@@ -281,8 +412,37 @@ jobs:
             make clean -j$(nproc)
           fi
 
+      - name: Upload Configuration Preview
+        if: ${{ inputs.WRT_PROFILE != '' && inputs.WRT_TEST }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: config-${{inputs.WRT_PROFILE}}-${{github.run_id}}-${{github.run_attempt}}
+          path: ./wrt/upload/Config-*.txt
+          if-no-files-found: error
+
+      - name: Create Validated Draft Release
+        id: device-release
+        if: ${{ inputs.WRT_PROFILE != '' && !inputs.WRT_TEST }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{env.WRT_RELEASE_TAG}}
+          target_commitish: ${{github.sha}}
+          draft: true
+          fail_on_unmatched_files: true
+          body_path: ./build-reports/release-notes.md
+          files: ./wrt/upload/*
+
+      - name: Publish Complete Device Release
+        if: ${{ inputs.WRT_PROFILE != '' && !inputs.WRT_TEST }}
+        env:
+          GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
+          RELEASE_ID: ${{steps.device-release.outputs.id}}
+        run: |
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -F draft=false
+
       - name: Release Firmware
-        uses: softprops/action-gh-release@master
+        if: ${{ inputs.WRT_PROFILE == '' }}
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{env.WRT_CONFIG}}-${{env.WRT_INFO}}-${{env.WRT_BRANCH}}-${{env.WRT_DATE}}
           files: ./wrt/upload/*.*
@@ -309,10 +469,28 @@ jobs:
             内核版本：${{env.WRT_KVER}}
             插件列表：${{env.WRT_LIST}}
 
+  device-cache-rollover:
+    name: Retain device cache generations
+    needs: core
+    if: ${{ !inputs.WRT_TEST && inputs.WRT_PROFILE != '' && needs.core.result == 'success' }}
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: device-cache-${{github.ref}}-${{inputs.WRT_PROFILE}}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
+      DEVICE_CACHE_PREFIX: ${{needs.core.outputs.device_cache_prefix}}
+      DEVICE_DL_KEY: ${{needs.core.outputs.device_dl_key}}
+      DEVICE_CCACHE_KEY: ${{needs.core.outputs.device_ccache_key}}
+      DEVICE_STAGING_KEY: ${{needs.core.outputs.device_staging_key}}
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 .github/scripts/roll-device-cache.py
+
   cache-rollover:
     name: Roll cache generations
     needs: core
-    if: ${{ !inputs.WRT_TEST && needs.core.result == 'success' }}
+    if: ${{ !inputs.WRT_TEST && inputs.WRT_PROFILE == '' && needs.core.result == 'success' }}
     runs-on: ubuntu-latest
     concurrency:
       group: wrt-cache-rollover-${{github.ref}}-${{needs.core.outputs.cache_prefix}}

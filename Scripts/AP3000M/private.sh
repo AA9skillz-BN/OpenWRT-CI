@@ -2,65 +2,18 @@
 # SPDX-License-Identifier: MIT
 # AirPi AP3000M 专属扩展（2026-10-25 从 Scripts/PRIVATE.sh 拆出）
 #
-# 由 Scripts/PRIVATE.sh 的目录扫描自动 source：
-#   for _ext in "$GITHUB_WORKSPACE"/Scripts/*/private.sh; do source "$_ext"; done
-# 每个 private.sh 自己判断 WRT_CONFIG，不属于自己的直接 return，互不干扰。
+# 由公共核心通过独立 bash 进程执行，必需文件投放失败即终止。
 #
-# 为什么需要它：
-#   luci-app-fm350 的 Makefile 不走 OpenWrt 的 rust-package.mk，而是直接调用编译机上的
-#   `cargo build --release --target aarch64-unknown-linux-musl` 生成静态后端 fm350d。
-#   GitHub 托管的 ubuntu runner 自带 Rust 稳定版，但默认只装了宿主 target，
-#   必须补 aarch64-unknown-linux-musl 的 std，否则 fm350 编译必然失败。
-#   （luci-app-airpi-fancontrol 走 feeds/packages 的 rust-package.mk，不需要这里干预。）
-
-set +e
+set -euo pipefail
 
 # 仅 AP3000M 配置生效（WRT_CONFIG 为空时也跳过）
-if [[ "${WRT_CONFIG,,}" != *"ap3000m"* ]]; then
+if [[ "${WRT_CONFIG:-}" != "AP3000M" ]]; then
 	return 0 2>/dev/null || exit 0
 fi
 
 _ap3000m_log() { echo "==> [AP3000M] $*"; }
 
-RUST_TARGET="aarch64-unknown-linux-musl"
-
-# 1) rustup 不在 PATH 但已安装的情况（$HOME/.cargo/bin 未导出）
-if ! command -v rustup >/dev/null 2>&1 && [ -x "$HOME/.cargo/bin/rustup" ]; then
-	export PATH="$HOME/.cargo/bin:$PATH"
-fi
-
-# 2) 极端情况：runner 完全没有 Rust，装一个最小化工具链
-if ! command -v rustup >/dev/null 2>&1; then
-	_ap3000m_log "未检测到 rustup，安装最小化 Rust 工具链"
-	curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
-		sh -s -- -y --profile minimal --default-toolchain stable >/dev/null 2>&1
-	export PATH="$HOME/.cargo/bin:$PATH"
-fi
-
-# 3) 把 cargo 目录写进后续步骤的 PATH（GITHUB_PATH 跨步骤生效）
-if [ -n "${GITHUB_PATH:-}" ] && [ -d "$HOME/.cargo/bin" ]; then
-	echo "$HOME/.cargo/bin" >>"$GITHUB_PATH"
-fi
-
-# 4) 补齐 aarch64 musl 目标
-if command -v rustup >/dev/null 2>&1; then
-	_ap3000m_log "rustup target add $RUST_TARGET"
-	rustup target add "$RUST_TARGET" ||
-		_ap3000m_log "rustup target add 失败，若编译机 cargo 来自 feeds/packages 的 rust 主机包可忽略"
-fi
-
-# 5) 打印工具链信息 + 预检两个插件是否已由 Packages.sh 克隆到位
-command -v cargo >/dev/null 2>&1 && _ap3000m_log "cargo: $(cargo --version 2>/dev/null)"
-command -v rustc >/dev/null 2>&1 && _ap3000m_log "rustc: $(rustc --version 2>/dev/null)"
-command -v rustup >/dev/null 2>&1 && _ap3000m_log "已装 target: $(rustup target list --installed 2>/dev/null | tr '\n' ' ')"
-
-for _dir in package/luci-app-fm350 package/luci-app-airpi3000m-fancontrol; do
-	if [ -d "$_dir" ]; then
-		_ap3000m_log "插件已就绪: $_dir"
-	else
-		_ap3000m_log "插件缺失: $_dir（请检查 Scripts/Packages.sh 的 UPDATE_PACKAGE 列表）"
-	fi
-done
+# Rust and locked plugin installation are handled by the common build stages.
 
 # 6) 投放 AP3000M 专属的首次开机配置（FM350 的 AT 口 / APN / CID 自动纠正）
 #    真机实测：插件默认 at_port=/dev/ttyUSB1 在本机是哑口（真 AT 口是 USB 接口 :1.6
@@ -73,7 +26,8 @@ if [ -f "$_ap3000m_uci" ]; then
 	chmod 0755 "$_ap3000m_dst"
 	_ap3000m_log "已投放开机自动配置: $_ap3000m_dst"
 else
-	_ap3000m_log "缺少 $_ap3000m_uci，FM350 将沿用插件默认值（AT 口可能不对）"
+	echo "Missing required FM350 first-boot defaults" >&2
+	exit 1
 fi
 
 # 7) 一键 OTA：CLI 脚本 + 构建标签 + 升级结果回写
@@ -82,7 +36,8 @@ fi
 _ap3000m_ota_dir="$GITHUB_WORKSPACE/Scripts/AP3000M/ota"
 _ap3000m_bf="package/base-files/files"
 if [ -d "$_ap3000m_ota_dir" ]; then
-	mkdir -p "$_ap3000m_bf/usr/sbin" "$_ap3000m_bf/etc/config"
+	mkdir -p "$_ap3000m_bf/usr/sbin" "$_ap3000m_bf/etc/config" \
+		"$_ap3000m_bf/etc/init.d" "$_ap3000m_bf/etc/uci-defaults"
 
 	cp -f "$_ap3000m_ota_dir/ap3000m-ota" "$_ap3000m_bf/usr/sbin/ap3000m-ota"
 	chmod 0755 "$_ap3000m_bf/usr/sbin/ap3000m-ota"
@@ -94,7 +49,7 @@ if [ -d "$_ap3000m_ota_dir" ]; then
 	cp -f "$_ap3000m_ota_dir/99-ap3000m-ota-cron" "$_ap3000m_bf/etc/uci-defaults/99-ap3000m-ota-cron"
 	chmod 0755 "$_ap3000m_bf/etc/uci-defaults/99-ap3000m-ota-cron"
 
-	_ap3000m_tag="$WRT_CONFIG-$WRT_INFO-$WRT_BRANCH-$WRT_DATE"
+	_ap3000m_tag="${WRT_RELEASE_TAG:?missing release tag}"
 	printf '%s\n' "$_ap3000m_tag" >"$_ap3000m_bf/etc/ap3000m-build.tag"
 	chmod 0644 "$_ap3000m_bf/etc/ap3000m-build.tag"
 
@@ -111,7 +66,8 @@ if [ -d "$_ap3000m_ota_dir" ]; then
 
 	_ap3000m_log "已投放 OTA：ap3000m-ota（构建标签 $_ap3000m_tag）"
 else
-	_ap3000m_log "缺少 $_ap3000m_ota_dir，跳过 OTA 集成"
+	echo "Missing required OTA files" >&2
+	exit 1
 fi
 
 # 8) 开机 RNDIS 卡死自愈
@@ -134,7 +90,8 @@ if [ -d "$_ap3000m_guard_dir" ]; then
 
 	_ap3000m_log "已投放 RNDIS 自愈（开机自检 + 每 5 分钟运行期巡检，两级恢复）"
 else
-	_ap3000m_log "缺少 $_ap3000m_guard_dir，跳过 RNDIS 自愈"
+	echo "Missing required RNDIS guard" >&2
+	exit 1
 fi
 
 # 9) LuCI OTA 页面（luci-app-ap3000m-ota：JS 视图 + rpcd ucode 后端）
@@ -144,7 +101,8 @@ if [ -d "$_ap3000m_luci" ]; then
 	cp -rf "$_ap3000m_luci" package/luci-app-ap3000m-ota
 	_ap3000m_log "已投放 LuCI OTA 页面（package/luci-app-ap3000m-ota）"
 else
-	_ap3000m_log "缺少 $_ap3000m_luci，跳过 LuCI OTA 页面"
+	echo "Missing required LuCI OTA package" >&2
+	exit 1
 fi
 
 # 10) RNDIS 数据面调优（RPS/XPS + txqueuelen + MTU 实测 + BBR sysctl + flow offload）
@@ -165,42 +123,25 @@ if [ -d "$_ap3000m_tune" ]; then
 
 	_ap3000m_log "已投放 RNDIS 调优（hotplug + sysctl + flow offload）"
 else
-	_ap3000m_log "缺少 $_ap3000m_tune，跳过 RNDIS 调优"
+	echo "Missing required network tuning" >&2
+	exit 1
 fi
 
-# 11) fullcone 补丁容错（上游漂移专用）
-#     immortalwrt 自带的 package/network/config/firewall4/patches/001-...fullcone-nat.patch
-#     最后修改于 2024-08，遇到上游 firewall4 大版本更新就会打不上而让整条构建失败
-#     （2026-10-26 实测：firewall4 升到 bac1d656 后 hunk #8 失败，构建整体红）。
-#
-#     判定条件只看「补丁内容是否还是 2024 那个老版本」（sha256 比对）：
-#       · 补丁没更新 → 无论 firewall4 版本怎么变，都跳过（老补丁对新源码必挂）
-#       · 补丁被上游更新 → 立刻改为按上游原样编译（fullcone 自动回来）
-#     也就是说：只要上游把补丁修好，我们自动跟随；上游只升版本不修，我们也不会被拖挂。
+# 11) Disable fullcone only for the exact upstream combination known to fail.
 _ap3000m_fw4_mk="package/network/config/firewall4/Makefile"
 _ap3000m_fw4_patch="package/network/config/firewall4/patches/001-firewall4-add-support-for-fullcone-nat.patch"
-_ap3000m_fw4_bad_sum="e043a5f7d07d7569f32df8af4b70f11b809611dfa5bc8cf8c33f6ee4478fefd9"
 if [ -f "$_ap3000m_fw4_mk" ] && [ -f "$_ap3000m_fw4_patch" ]; then
-	_ap3000m_fw4_ver=$(sed -n 's/^PKG_SOURCE_VERSION:=//p' "$_ap3000m_fw4_mk" | head -n1)
-	_ap3000m_fw4_sum=$(sha256sum "$_ap3000m_fw4_patch" 2>/dev/null | cut -d' ' -f1)
-	if [ "$_ap3000m_fw4_sum" = "$_ap3000m_fw4_bad_sum" ]; then
-		# 注意：OpenWrt 的 quilt 会把 patches/ 目录下**所有文件**当补丁应用，
-		# 只改扩展名没用（2026-10-27 实测：改名成 .disabled 后依然被 apply 并失败），
-		# 必须把文件挪出 patches/ 目录。
-		mv -f "$_ap3000m_fw4_patch" /tmp/ap3000m-fw4-fullcone.patch.stashed
-		_ap3000m_log "⚠ fullcone 补丁仍是 2024 老版本（不兼容 firewall4=$_ap3000m_fw4_ver），已把它移出 patches/ 目录（本版无 fullcone NAT，普通 NAT 不受影响）"
-		_ap3000m_log "  patches/ 目录现在只剩：$(ls -1 "$(dirname "$_ap3000m_fw4_patch")" 2>/dev/null | tr '\n' ' ')"
-	else
-		_ap3000m_log "fullcone 补丁检查通过（firewall4=$_ap3000m_fw4_ver，补丁前缀 $(echo "$_ap3000m_fw4_sum" | cut -c1-8)…），按上游原样编译"
-	fi
-else
-	_ap3000m_log "未找到 firewall4 Makefile 或 fullcone 补丁，跳过检查"
+    _version=$(sed -n 's/^PKG_SOURCE_VERSION:=//p' "$_ap3000m_fw4_mk")
+    _sum=$(sha256sum "$_ap3000m_fw4_patch" | cut -d' ' -f1)
+    if [ "$_version" = "bac1d656e09b48e542f860844fe91cbba82abae2" ] &&
+       [ "$_sum" = "e043a5f7d07d7569f32df8af4b70f11b809611dfa5bc8cf8c33f6ee4478fefd9" ]; then
+        mkdir -p "$GITHUB_WORKSPACE/build-reports"
+        mv "$_ap3000m_fw4_patch" "$GITHUB_WORKSPACE/build-reports/firewall4-fullcone.patch.disabled"
+        printf '%s\n' 'AP3000M: disabled incompatible fullcone patch for firewall4 bac1d656; ordinary NAT remains available.' \
+            >> "$GITHUB_WORKSPACE/build-reports/compatibility.txt"
+    else
+        _ap3000m_log "firewall4 combination not in compatibility exceptions; build upstream patches normally"
+    fi
 fi
 
 _ap3000m_log "扩展准备完成"
-
-# 按 Scripts/README.md 规则 3：收尾复位 shell 选项，不依赖分发器
-# （本脚本只开了 set +e，没开 -u/pipefail；显式复位更稳妥）
-set +eu
-set +o pipefail
-return 0 2>/dev/null || exit 0

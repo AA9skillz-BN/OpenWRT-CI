@@ -1,0 +1,8 @@
+# Shared single-device feature fragment. Selected explicitly by Profiles/*.json.
+CONFIG_PACKAGE_kmod-inet-diag=y
+CONFIG_PACKAGE_kmod-inet-mptcp-diag=y
+CONFIG_PACKAGE_kmod-netlink-diag=y
+CONFIG_PACKAGE_coremark=y
+CONFIG_PACKAGE_dmesg=y
+CONFIG_PACKAGE_htop=y
+CONFIG_PACKAGE_iperf3=y

@@ -1,0 +1,39 @@
+{
+  "title": "Cudy TR3000 512MB",
+  "image_device": "cudy_tr3000-v1",
+  "supported_device": "cudy,tr3000-v1",
+  "required_packages": [
+    "luci-app-ttyd",
+    "ttyd",
+    "luci-theme-aurora",
+    "luci-app-aurora-config",
+    "kmod-usb-net-rndis",
+    "kmod-usb-net-cdc-ncm",
+    "kmod-usb-net-cdc-ether",
+    "kmod-nft-offload",
+    "kmod-tcp-bbr",
+    "luci-app-openclash",
+    "luci-app-turboacc"
+  ],
+  "packages": [
+    "mini-diskmanager",
+    "viking",
+    "partexp",
+    "natmapt",
+    "stuntman",
+    "luci-natmapt",
+    "aurora",
+    "aurora-config",
+    "openclash",
+    "turboacc"
+  ],
+  "release_note": "仅适用于已核对 512MB 硬改分区布局的机器。内置 F50 USB WAN、Aurora、BBR。",
+  "device_symbol": "CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_cudy_tr3000-v1",
+  "config_fragments": [
+    "Config/BASE.txt",
+    "Config/Features/services.txt",
+    "Config/Features/usb.txt",
+    "Config/Features/storage.txt",
+    "Config/Features/diagnostics.txt"
+  ]
+}

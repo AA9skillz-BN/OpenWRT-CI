@@ -1,0 +1,44 @@
+{
+  "title": "AirPi AP3000M",
+  "image_device": "airpi_ap3000m",
+  "supported_device": "airpi,ap3000m",
+  "required_packages": [
+    "luci-app-ttyd",
+    "ttyd",
+    "luci-theme-aurora",
+    "luci-app-aurora-config",
+    "kmod-usb-net-rndis",
+    "kmod-usb-net-cdc-ncm",
+    "kmod-usb-net-cdc-ether",
+    "kmod-nft-offload",
+    "kmod-tcp-bbr",
+    "luci-app-fm350",
+    "luci-app-airpi-fancontrol",
+    "luci-app-ap3000m-ota",
+    "jq",
+    "kmod-airpi-gpio-fan",
+    "kmod-hwmon-pwmfan",
+    "kmod-usb-serial-option"
+  ],
+  "packages": [
+    "mini-diskmanager",
+    "viking",
+    "partexp",
+    "natmapt",
+    "stuntman",
+    "luci-natmapt",
+    "aurora",
+    "aurora-config",
+    "fm350",
+    "fancontrol"
+  ],
+  "release_note": "eMMC 机型 sysupgrade 固件；内置 FM350 首启配置、风扇管理、OTA 和 RNDIS 自愈。",
+  "device_symbol": "CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_airpi_ap3000m",
+  "config_fragments": [
+    "Config/BASE.txt",
+    "Config/Features/services.txt",
+    "Config/Features/usb.txt",
+    "Config/Features/storage.txt",
+    "Config/Features/diagnostics.txt"
+  ]
+}

@@ -3,20 +3,13 @@
 #
 # TR3000：开机把拥塞控制切到 BBR（必须排在 turboacc 之后）
 #
-# 为什么不能用 /etc/sysctl.d/ 或 /etc/sysctl.conf：
-#   TurboACC 的 /etc/rc.d/S90turboacc 会无条件执行
-#     [ ! -e /lib/modules/$(uname -r)/tcp_bbr.ko ] && bbr_cca="0"
-#     ... sysctl -w net.ipv4.tcp_congestion_control="cubic"
-#   它只认 .ko 模块文件，不认内核内置的 BBR（我们的 CONFIG_TCP_CONG_BBR=y
-#   是编进 vmlinux 的，没有 tcp_bbr.ko），于是判定不可用并强制设回 cubic。
-#   由于 S11sysctl 在 S90turboacc 之前，前面写好的 bbr 会被覆盖。
-#
-# 本脚本 START=99，在所有服务之后最后再把默认拥塞控制钉回 BBR。
+START=99，在所有服务之后最后再把默认拥塞控制钉回 BBR。
 
 START=99
 STOP=10
 
 start() {
+	modprobe tcp_bbr 2>/dev/null || true
 	[ -w /proc/sys/net/ipv4/tcp_congestion_control ] || return 0
 	grep -qw bbr /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null || return 0
 	echo bbr >/proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # AirPi AP3000M 单机型固件（基于主线 main line / kernel 6.18）
 #
-# 地基：本仓库公用核心 .github/workflows/WRT-CORE.yml（不改动任何原有文件）
+# 地基：本仓库公用核心 .github/workflows/WRT-CORE.yml
 # 新增：Config/AP3000M.txt、Scripts/PRIVATE.sh、docs/AP3000M.md、本工作流
 #
 # 集成插件（Scripts/Packages.sh 已内置克隆，此处只需 CONFIG 选中）：
@@ -39,7 +39,9 @@ on:
         type: boolean
 
 #CI权限
-permissions: write-all
+permissions:
+  contents: write
+  actions: write
 
 #同一时间只跑一个 AP3000M 构建，避免重复占用缓存与 Actions 额度
 concurrency:
@@ -56,11 +58,12 @@ jobs:
         # 只编 AP3000M 一款，变体在 Config/AP3000M.txt 内调整
         CONFIG: [AP3000M]
 
-    #调用公用编译核心 WRT-CORE.yml（原文件不做任何修改）
+    #调用公用编译核心 WRT-CORE.yml
     uses: ./.github/workflows/WRT-CORE.yml
     with:
       #编译配置
       WRT_CONFIG: ${{ matrix.CONFIG }}
+      WRT_PROFILE: AP3000M
       #默认主题
       WRT_THEME: aurora
       #默认主机名
@@ -83,126 +86,3 @@ jobs:
       WRT_PACKAGE: ${{ inputs.PACKAGE }}
       #仅输出配置文件
       WRT_TEST: ${{ inputs.TEST || false }}
-
-  # WRT-CORE 发布时会把 bin/targets 下的全部文件（含 mt798x-bl2 等引导件、manifest）
-  # 一并塞进 Release。这里只保留真正要用的两个：sysupgrade 固件 + 本次生效的配置。
-  trim-release:
-    name: Trim release assets
-    needs: ap3000m
-    if: ${{ needs.ap3000m.result == 'success' && !inputs.TEST }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      # 产物校验闸门：defconfig 对已删除/依赖不满足的包是「静默丢弃」，
-      # 构建照样全绿、刷进去才发现功能缺失（TR3000 就这样出过一次事故）。
-      # 这里在裁剪之前先下载镜像核对 manifest，缺关键包直接红。
-      - name: Verify image packages
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-
-          TAG=$(gh api "repos/$GH_REPO/releases?per_page=30" \
-            --jq '[.[] | select(.tag_name | startswith("AP3000M-"))][0].tag_name')
-          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
-            echo "no AP3000M release, skip"
-            exit 0
-          fi
-          echo "release: $TAG"
-
-          W=$(mktemp -d)
-          cd "$W"
-          gh release download "$TAG" --pattern '*sysupgrade*.bin' -D .
-          gh release download "$TAG" --pattern '*.manifest' -D . || true
-
-          IMG=$(ls *sysupgrade*.bin 2>/dev/null | head -n1)
-          [ -n "$IMG" ] || { echo "::error::release 里没有 sysupgrade 镜像"; exit 1; }
-          tar -tf "$IMG" >/dev/null || { echo "::error::$IMG 不是合法 tar"; exit 1; }
-          echo "image ok: $(du -h "$IMG" | cut -f1) $IMG"
-
-          MAN=$(ls *.manifest 2>/dev/null | head -n1 || true)
-          if [ -z "$MAN" ]; then
-            echo "::warning::没有 manifest，跳过包清单核对"
-            exit 0
-          fi
-
-          MISSING=0
-          for PKG in luci-app-fm350 luci-app-airpi-fancontrol luci-app-ap3000m-ota \
-                     luci-app-ttyd ttyd jq kmod-airpi-gpio-fan kmod-tcp-bbr \
-                     kmod-usb-serial-option; do
-            if grep -q "^${PKG} " "$MAN"; then
-              echo "  ok   $PKG"
-            else
-              echo "::error::manifest 缺少 $PKG"
-              MISSING=1
-            fi
-          done
-          [ "$MISSING" = 0 ]
-
-      - name: Keep only firmware + config
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-
-          TAG=$(gh api "repos/$GH_REPO/releases?per_page=30" \
-            --jq '[.[] | select(.tag_name | startswith("AP3000M-"))][0].tag_name')
-          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
-            echo "no AP3000M release found, skip"
-            exit 0
-          fi
-          echo "release: $TAG"
-
-          gh api "repos/$GH_REPO/releases/tags/$TAG" --jq '.assets[].name' |
-            while IFS= read -r ASSET; do
-              case "$ASSET" in
-                *sysupgrade*.bin|Config-*.txt)
-                  echo "  keep   $ASSET" ;;
-                *)
-                  echo "  delete $ASSET"
-                  gh release delete-asset "$TAG" "$ASSET" --yes || echo "  warn: delete failed" ;;
-              esac
-            done
-
-          echo "--- remaining assets ---"
-          gh api "repos/$GH_REPO/releases/tags/$TAG" --jq '.assets[] | "\(.name)  \(.size) bytes"'
-
-      - name: Rewrite release notes for single-device build
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-
-          TAG=$(gh api "repos/$GH_REPO/releases?per_page=30" \
-            --jq '[.[] | select(.tag_name | startswith("AP3000M-"))][0].tag_name')
-          [ -n "$TAG" ] && [ "$TAG" != "null" ] || exit 0
-
-          # 公用核心的通用文案（"平台固件包，内含多个设备"）对单机型构建是错的，去掉这几行
-          gh api "repos/$GH_REPO/releases/tags/$TAG" --jq '.body' |
-            grep -v -F -e '这是个平台固件包' \
-                      -e '请注意选择你需要的设备固件' \
-                      -e '不要问，刷就完事了' \
-                      -e '全系带开源硬件加速' > /tmp/body.txt || true
-
-          {
-            echo '**AirPi AP3000M 单机型固件**（`airpi,ap3000m` / MT7981B + MT7976 / eMMC）'
-            echo
-            echo '本 Release 只包含一款设备的固件，直接下载刷写，无需挑选：'
-            echo
-            echo '- `*sysupgrade*.bin` —— eMMC 机型 sysupgrade 包（kernel + squashfs）'
-            echo '- `Config-*.txt` —— 本次构建实际生效的配置，便于复现'
-            echo
-            echo '> 本版已内置首次开机自动配置（`/etc/uci-defaults/99-ap3000m-fm350`）：自动纠正 FM350 的 AT 口、APN、数据承载 CID。'
-            echo
-            cat /tmp/body.txt
-          } > /tmp/new-body.txt
-
-          # 注意：GitHub 没有 PATCH /releases/tags/{tag}，改正文必须先拿 release id，否则 404
-          RID=$(gh api "repos/$GH_REPO/releases/tags/$TAG" --jq '.id')
-          gh api -X PATCH "repos/$GH_REPO/releases/$RID" -F body=@/tmp/new-body.txt >/dev/null ||
-            echo "warning: release body patch failed (non-fatal)"
-          echo "release notes rewritten for $TAG"

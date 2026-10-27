@@ -1,0 +1,109 @@
+{
+  "mini-diskmanager": {
+    "url": "https://github.com/4IceG/luci-app-mini-diskmanager.git",
+    "commit": "4b2b7332896063ef888f34da2187c3cc6f366037",
+    "directory": "luci-app-mini-diskmanager",
+    "replaces": [
+      "luci-app-mini-diskmanager"
+    ]
+  },
+  "viking": {
+    "url": "https://github.com/VIKINGYFY/packages.git",
+    "commit": "56aa6b2b771e49c9ca5b57c85fcae012ddff7317",
+    "directory": "packages",
+    "replaces": [
+      "axonhub",
+      "gecoosac",
+      "sing-box",
+      "luci-app-homeproxy",
+      "luci-app-timewol",
+      "luci-app-wolplus",
+      "luci-app-wolultra",
+      "luci-app-gecoosac",
+      "luci-app-axonhub"
+    ]
+  },
+  "partexp": {
+    "url": "https://github.com/sirpdboy/luci-app-partexp.git",
+    "commit": "236187cfe4f1fab7f2dde5279ce378324c3e5f40",
+    "directory": "luci-app-partexp",
+    "replaces": [
+      "luci-app-partexp"
+    ]
+  },
+  "natmapt": {
+    "url": "https://github.com/muink/openwrt-natmapt.git",
+    "commit": "32ae7f63cb5690897d3e1ede1a94cce44c0521fb",
+    "directory": "openwrt-natmapt",
+    "replaces": [
+      "natmapt"
+    ]
+  },
+  "stuntman": {
+    "url": "https://github.com/muink/openwrt-stuntman.git",
+    "commit": "f915c1e45e8ab088abd479d60d0172f176485a38",
+    "directory": "openwrt-stuntman",
+    "replaces": [
+      "stuntman"
+    ]
+  },
+  "luci-natmapt": {
+    "url": "https://github.com/muink/luci-app-natmapt.git",
+    "commit": "c8eb57066da1e9612ea2b4057be63f015c954140",
+    "directory": "luci-app-natmapt",
+    "replaces": [
+      "luci-app-natmapt"
+    ]
+  },
+  "aurora": {
+    "url": "https://github.com/eamonxg/luci-theme-aurora.git",
+    "commit": "84c27b66952e6fc4be60128067a6b88bfd34afb5",
+    "directory": "luci-theme-aurora",
+    "replaces": [
+      "luci-theme-aurora"
+    ]
+  },
+  "aurora-config": {
+    "url": "https://github.com/eamonxg/luci-app-aurora-config.git",
+    "commit": "a5299ce0144859f47683ec3bc40805bf616f534f",
+    "directory": "luci-app-aurora-config",
+    "replaces": [
+      "luci-app-aurora-config"
+    ]
+  },
+  "openclash": {
+    "url": "https://github.com/vernesong/OpenClash.git",
+    "commit": "74ff5be54933881289ac383d457115dcdd93b135",
+    "directory": "OpenClash",
+    "replaces": [
+      "luci-app-openclash"
+    ],
+    "subdirectory": "luci-app-openclash"
+  },
+  "turboacc": {
+    "url": "https://github.com/chenmozhijin/turboacc.git",
+    "commit": "530092c532839efb96e9f328d34dbf3adff4b557",
+    "directory": "turboacc-source",
+    "replaces": [
+      "luci-app-turboacc"
+    ],
+    "subdirectory": "luci-app-turboacc"
+  },
+  "fm350": {
+    "url": "https://github.com/LianXia233/luci-app-fm350.git",
+    "commit": "3a101af3620e0f6cacf9fcf2baba785eec872999",
+    "directory": "luci-app-fm350",
+    "replaces": [
+      "luci-app-fm350"
+    ]
+  },
+  "fancontrol": {
+    "url": "https://github.com/LianXia233/luci-app-airpi3000m-fancontrol.git",
+    "commit": "f931c4681f7c401bd4702351fd4a3ba821105340",
+    "directory": "luci-app-airpi3000m-fancontrol",
+    "replaces": [
+      "luci-app-airpi-fancontrol",
+      "airpi-gpio-fan"
+    ]
+  }
+}
