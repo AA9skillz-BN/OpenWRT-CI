@@ -64,15 +64,16 @@ Samba、USB 网卡、存储工具等功能。可在每个 profile 的 `config_fr
 TR3000 改为标准 `kmod-tcp-bbr` 依赖，不再硬编码修改 config-6.18；启动脚本仍
 在 TurboACC 之后启用 BBR。512MB 分区补丁保留原始布局断言，上游变化时失败退出。
 
-AP3000M 仅对已知的 firewall4 bac1d656 完整提交与旧 fullcone 补丁 hash 组合
-移除该补丁，并将处理记录写入 Release。其他组合按上游补丁正常编译，失败会红，
-不会把未知组合当成兼容。该例外中的固件不含 firewall4 fullcone 支持。
+ImmortalWrt 于 2026-10-27 在提交
+`21ae803cc274b52f98f99f0f75864b114b11daab` 中修复 fullcone 补丁。
+已核对：旧补丁 SHA-256 `e043a5f7...` 对 firewall4 `bac1d656...` 应用失败，
+修复后的补丁 SHA-256 `2b419dae...` 可正常应用。AP3000M 和 C8-688 不再
+删除该补丁；未来遇到不兼容会构建失败，不以静默关闭功能换取绿灯。
 
-C8-688 保留 `source-pin.txt` 的 auto / 跟随分支 / 完整 SHA 三种策略。
-auto 继续按原策略移除 firewall4 fullcone 补丁，并在构建报告及 Release 中记录；
-跟随分支模式不移除补丁。指定 SHA 时如果拉取失败，直接失败退出，不再偷偷回退到
-另一个版本。DTS、第二系统布局、LAN/WAN、MAC、风扇和覆盖层继续由机型钩子负责。
-MT5700M 固定为原 v3.0.7 对应提交，通过插件清单只安装一次。
+C8-688 保留 `source-pin.txt` 的 auto / 跟随分支 / 完整 SHA 三种输入。
+auto 现在与跟随分支相同，保留上游补丁。指定 SHA 时如果拉取失败，直接失败退出，
+不再偷偷回退到另一个版本。DTS、第二系统布局、LAN/WAN、MAC、风扇和覆盖层
+继续由机型钩子负责。MT5700M 固定为原 v3.0.7 对应提交，通过插件清单只安装一次。
 
 ## 同步 CI 模板与更新源码
 

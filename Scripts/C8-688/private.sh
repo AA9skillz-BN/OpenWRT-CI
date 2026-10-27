@@ -26,15 +26,8 @@ _c8_dst="./target/linux/mediatek"
 
 _c8_die() { echo "::error::C8-688 注入失败：$*" >&2; exit 1; }
 
-# ---- Source strategy: SHA selection already happened before feeds/cache. ----
-_c8_mode=$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' -e 's/[[:space:]]//g' "$_c8_src/source-pin.txt" | head -n1)
-_c8_fw4_patch="package/network/config/firewall4/patches/001-firewall4-add-support-for-fullcone-nat.patch"
-if [ "$_c8_mode" = auto ] && [ -f "$_c8_fw4_patch" ]; then
-    mkdir -p "$GITHUB_WORKSPACE/build-reports"
-    mv "$_c8_fw4_patch" "$GITHUB_WORKSPACE/build-reports/c8-fullcone.patch.disabled"
-    printf '%s\n' 'C8-688 source mode auto: firewall4 fullcone patch removed as configured; ordinary NAT remains available.' \
-        >> "$GITHUB_WORKSPACE/build-reports/compatibility.txt"
-fi
+# Source selection is complete. Keep upstream firewall4 patches intact.
+# auto follows the branch; fullcone was repaired upstream in 21ae803c.
 
 # ---- A. DTS ---------------------------------------------------------------
 _c8_dts="$_c8_dst/dts/mt7981b-nradio-c8-688.dts"

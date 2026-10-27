@@ -127,21 +127,6 @@ else
 	exit 1
 fi
 
-# 11) Disable fullcone only for the exact upstream combination known to fail.
-_ap3000m_fw4_mk="package/network/config/firewall4/Makefile"
-_ap3000m_fw4_patch="package/network/config/firewall4/patches/001-firewall4-add-support-for-fullcone-nat.patch"
-if [ -f "$_ap3000m_fw4_mk" ] && [ -f "$_ap3000m_fw4_patch" ]; then
-    _version=$(sed -n 's/^PKG_SOURCE_VERSION:=//p' "$_ap3000m_fw4_mk")
-    _sum=$(sha256sum "$_ap3000m_fw4_patch" | cut -d' ' -f1)
-    if [ "$_version" = "bac1d656e09b48e542f860844fe91cbba82abae2" ] &&
-       [ "$_sum" = "e043a5f7d07d7569f32df8af4b70f11b809611dfa5bc8cf8c33f6ee4478fefd9" ]; then
-        mkdir -p "$GITHUB_WORKSPACE/build-reports"
-        mv "$_ap3000m_fw4_patch" "$GITHUB_WORKSPACE/build-reports/firewall4-fullcone.patch.disabled"
-        printf '%s\n' 'AP3000M: disabled incompatible fullcone patch for firewall4 bac1d656; ordinary NAT remains available.' \
-            >> "$GITHUB_WORKSPACE/build-reports/compatibility.txt"
-    else
-        _ap3000m_log "firewall4 combination not in compatibility exceptions; build upstream patches normally"
-    fi
-fi
-
+# Upstream refreshed fullcone in 21ae803c. Preserve its patches.
+# Future patch incompatibilities must fail the build instead of losing features.
 _ap3000m_log "扩展准备完成"
