@@ -78,3 +78,6 @@ CONFIG_PACKAGE_odhcp6c=y
 CONFIG_PACKAGE_kmod-usb-serial=y
 CONFIG_PACKAGE_kmod-usb-serial-option=y
 CONFIG_PACKAGE_kmod-usb-net-cdc-ncm=y
+
+# Required by sound-core and USB audio on current upstream.
+CONFIG_PACKAGE_audio-support=y

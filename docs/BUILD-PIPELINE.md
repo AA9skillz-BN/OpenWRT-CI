@@ -36,6 +36,12 @@ Samba、USB 网卡、存储工具等功能。可在每个 profile 的 `config_fr
 机型配置最后生效。`required_packages` 是不能通过手动 PACKAGE 关闭的关键功能；
 确实需要移除关键功能时，必须同步修改此清单。
 
+三款机型补齐 `audio-support`，否则当前上游会在 defconfig 中静默取消
+`kmod-sound-core` 和 `kmod-usb-audio`；这三个包加入关键功能校验。
+`config-resolution.json` 记录请求的包与 defconfig 实际结果的差异，并在日志中警告。
+例如上游隐藏的 EHCI 选项、仅特定源码提供的 `fullconenat-sonic` 都不能仅凭
+配置文件的一行 `=y` 判断生效；关键包丢失仍会直接失败。
+
 `excluded_feed_packages` 仅去掉当前未选用、但存在上游 Kconfig 递归依赖的
 `luci-app-fwknopd` 和 `squeezelite` 的安装入口，保留 feeds 源文件。即使包没选中，
 它们的菜单依赖也会影响 defconfig。如果手动配置请求这些包，会明确报错；

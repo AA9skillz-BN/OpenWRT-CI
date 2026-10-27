@@ -45,7 +45,10 @@
     "ttyd",
     "jq",
     "uboot-envtools",
-    "kmod-usb-net-qmi-wwan"
+    "kmod-usb-net-qmi-wwan",
+    "audio-support",
+    "kmod-sound-core",
+    "kmod-usb-audio"
   ],
   "release_note": "仅写 eMMC 的 kernel_2nd / rootfs_2nd 第二系统槽。原厂 NROS 后台烧录第二系统前先关闭存储扩展。保留现有风扇、Wi-Fi MAC、双系统切换及 MT5700M 管理功能；不含原厂 NR-OS APP 与多卡切换界面。"
 }

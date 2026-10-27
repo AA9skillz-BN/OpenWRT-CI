@@ -18,7 +18,10 @@
     "jq",
     "kmod-airpi-gpio-fan",
     "kmod-hwmon-pwmfan",
-    "kmod-usb-serial-option"
+    "kmod-usb-serial-option",
+    "audio-support",
+    "kmod-sound-core",
+    "kmod-usb-audio"
   ],
   "packages": [
     "mini-diskmanager",

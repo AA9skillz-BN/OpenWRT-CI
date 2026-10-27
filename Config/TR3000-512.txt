@@ -51,3 +51,6 @@ CONFIG_DEVEL=y
 CONFIG_CCACHE=y
 # BBR is built through OpenWrt package dependencies, not a hard-coded kernel fragment.
 CONFIG_PACKAGE_kmod-tcp-bbr=y
+
+# Required by sound-core and USB audio on current upstream.
+CONFIG_PACKAGE_audio-support=y

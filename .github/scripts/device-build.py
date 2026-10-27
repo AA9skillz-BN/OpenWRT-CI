@@ -122,12 +122,21 @@ def check_kconfig_output(output):
 
 
 def defconfig(tree, data, reports):
+    requested = read_config(tree / ".config")
     result = subprocess.run(["make", "defconfig"], cwd=tree, text=True, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, check=False)
     write(reports / "defconfig.log", result.stdout)
     print(result.stdout, end="", flush=True)
     result.check_returncode()
     check_kconfig_output(result.stdout)
+    actual = read_config(tree / ".config")
+    changes = {key: {"requested": value, "resolved": actual.get(key, "unavailable")}
+               for key, value in requested.items()
+               if key.startswith("CONFIG_PACKAGE_") and value in ("y", "m")
+               and actual.get(key) != value}
+    write(reports / "config-resolution.json", json.dumps(changes, indent=2) + "\n")
+    for key, change in sorted(changes.items()):
+        print(f"::warning::{key}: requested {change['requested']}, resolved {change['resolved']}")
     check_config(tree, data)
 
 
@@ -197,7 +206,8 @@ def package(tree, repo, name, data, reports):
     shutil.copy2(manifest, upload / manifest.name)
     for file in reports.iterdir():
         if file.is_file() and file.name in ("source-commit.txt", "feeds.buildinfo", "packages.lock.json",
-                                             "build-inputs.json", "image-metadata.json", "compatibility.txt", "ci-commit.txt"):
+                                             "build-inputs.json", "image-metadata.json", "compatibility.txt", "ci-commit.txt",
+                                             "config-resolution.json"):
             shutil.copy2(file, upload / file.name)
     # Do not discard evidence needed to reproduce or diagnose this release.
     checksums = []

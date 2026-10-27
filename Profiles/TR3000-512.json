@@ -13,7 +13,10 @@
     "kmod-nft-offload",
     "kmod-tcp-bbr",
     "luci-app-openclash",
-    "luci-app-turboacc"
+    "luci-app-turboacc",
+    "audio-support",
+    "kmod-sound-core",
+    "kmod-usb-audio"
   ],
   "packages": [
     "mini-diskmanager",

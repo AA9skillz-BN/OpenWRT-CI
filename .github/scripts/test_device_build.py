@@ -84,6 +84,18 @@ class DeviceContractTests(unittest.TestCase):
     def test_clean_defconfig_output_is_allowed(self):
         build.check_kconfig_output("# configuration written to .config\nWARNING: optional unselected package missing\n")
 
+    def test_defconfig_reports_silently_dropped_package(self):
+        with (self.tree / ".config").open("a") as stream:
+            stream.write("CONFIG_PACKAGE_unavailable-example=y\n")
+        def resolve(*args, **kwargs):
+            self.valid_config()
+            return build.subprocess.CompletedProcess(["make", "defconfig"], 0, stdout="configuration written\n")
+        with patch.object(build.subprocess, "run", side_effect=resolve):
+            build.defconfig(self.tree, self.data, self.reports)
+        changes = json.loads((self.reports / "config-resolution.json").read_text())
+        self.assertEqual(changes, {"CONFIG_PACKAGE_unavailable-example": {
+            "requested": "y", "resolved": "unavailable"}})
+
     def test_excluded_broken_packages_cannot_be_requested_silently(self):
         with patch.dict(os.environ, {"WRT_PACKAGE": "CONFIG_PACKAGE_squeezelite-custom=y"}), \
              self.assertRaisesRegex(ValueError, "excluded due to upstream Kconfig"):
