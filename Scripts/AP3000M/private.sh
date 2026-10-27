@@ -185,8 +185,12 @@ if [ -f "$_ap3000m_fw4_mk" ] && [ -f "$_ap3000m_fw4_patch" ]; then
 	_ap3000m_fw4_ver=$(sed -n 's/^PKG_SOURCE_VERSION:=//p' "$_ap3000m_fw4_mk" | head -n1)
 	_ap3000m_fw4_sum=$(sha256sum "$_ap3000m_fw4_patch" 2>/dev/null | cut -d' ' -f1)
 	if [ "$_ap3000m_fw4_ver" = "$_ap3000m_fw4_bad_ver" ] && [ "$_ap3000m_fw4_sum" = "$_ap3000m_fw4_bad_sum" ]; then
-		mv -f "$_ap3000m_fw4_patch" "$_ap3000m_fw4_patch.disabled-ap3000m"
-		_ap3000m_log "⚠ firewall4=$_ap3000m_fw4_ver 且 fullcone 补丁未更新，临时跳过该补丁（本版无 fullcone NAT，普通 NAT 不受影响）"
+		# 注意：OpenWrt 的 quilt 会把 patches/ 目录下**所有文件**当补丁应用，
+		# 只改扩展名没用（2026-10-27 实测：改名成 .disabled 后依然被 apply 并失败），
+		# 必须把文件挪出 patches/ 目录。
+		mv -f "$_ap3000m_fw4_patch" /tmp/ap3000m-fw4-fullcone.patch.stashed
+		_ap3000m_log "⚠ firewall4=$_ap3000m_fw4_ver 且 fullcone 补丁未更新，已把它移出 patches/ 目录（本版无 fullcone NAT，普通 NAT 不受影响）"
+		_ap3000m_log "  patches/ 目录现在只剩：$(ls -1 "$(dirname "$_ap3000m_fw4_patch")" 2>/dev/null | tr '\n' ' ')"
 	else
 		_ap3000m_log "fullcone 补丁检查通过（firewall4=$_ap3000m_fw4_ver，补丁前缀 $(echo "$_ap3000m_fw4_sum" | cut -c1-8)…），按上游原样编译"
 	fi
