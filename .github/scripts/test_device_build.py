@@ -13,6 +13,9 @@ SPEC = importlib.util.spec_from_file_location("device_build", Path(__file__).wit
 build = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(build)
 REPO = Path(__file__).resolve().parents[2]
+ROLL_SPEC = importlib.util.spec_from_file_location("roll_device_cache", Path(__file__).with_name("roll-device-cache.py"))
+roll = importlib.util.module_from_spec(ROLL_SPEC)
+ROLL_SPEC.loader.exec_module(roll)
 
 
 class DeviceContractTests(unittest.TestCase):
@@ -182,6 +185,32 @@ class DeviceContractTests(unittest.TestCase):
         changed_rust = key()
         self.assertNotEqual(changed_feed["staging"], changed_rust["staging"])
         self.assertNotEqual(changed_feed["ccache"], changed_rust["ccache"])
+
+
+class CacheRetentionTests(unittest.TestCase):
+    def plan(self, entries):
+        env = {"DEVICE_CACHE_PREFIX": "wrt-v2-ap3000m-linux-x64", "GITHUB_REPOSITORY": "owner/repo",
+               "GITHUB_REF": "refs/heads/test", "DEVICE_DL_KEY": "wrt-v2-ap3000m-linux-x64-dl-current",
+               "DEVICE_CCACHE_KEY": "wrt-v2-ap3000m-linux-x64-ccache-current",
+               "DEVICE_STAGING_KEY": "wrt-v2-ap3000m-linux-x64-staging-current"}
+        with patch.dict(os.environ, env), patch.object(roll.subprocess, "check_output", return_value=json.dumps(entries)) as listing, \
+             patch.object(roll.subprocess, "run") as deleting:
+            roll.main()
+        self.assertIn("refs/heads/test", listing.call_args.args[0])
+        return [call.args[0][3] for call in deleting.call_args_list]
+
+    def test_unrelated_model_cache_is_never_deleted(self):
+        entries = [{"id": 1, "key": "wrt-v2-tr3000-512-linux-x64-dl-old", "createdAt": "1"}]
+        self.assertEqual(self.plan(entries), [])
+
+    def test_missing_current_cache_keeps_fallback(self):
+        entries = [{"id": i, "key": f"wrt-v2-ap3000m-linux-x64-dl-old{i}", "createdAt": str(i)} for i in (1, 2)]
+        self.assertEqual(self.plan(entries), [])
+
+    def test_current_and_newer_cache_survive_rollover(self):
+        entries = [{"id": i, "key": f"wrt-v2-ap3000m-linux-x64-dl-{suffix}", "createdAt": str(i)}
+                   for i, suffix in ((1, "old"), (2, "current"), (3, "newer"))]
+        self.assertEqual(self.plan(entries), ["1"])
 
 
 if __name__ == "__main__":

@@ -75,6 +75,7 @@ jobs:
   core:
     name: ${{inputs.WRT_SOURCE}}
     runs-on: ${{ inputs.WRT_PROFILE != '' && 'ubuntu-24.04' || 'ubuntu-latest' }}
+    timeout-minutes: ${{ inputs.WRT_TEST && 30 || 360 }}
     outputs:
       cache_prefix: ${{steps.initialize-values.outputs.cache_prefix}}
       cache_key: ${{steps.clone-code.outputs.cache_key}}
@@ -88,6 +89,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Initialization Environment
+        timeout-minutes: 15
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
@@ -288,19 +290,12 @@ jobs:
           path: |
             ./wrt/staging_dir/host*
             ./wrt/staging_dir/tool*
+            ./wrt/staging_dir/target-*/host
 
       - name: Refresh Runner Tool Links
         if: ${{ !inputs.WRT_TEST && inputs.WRT_PROFILE != '' }}
         working-directory: ./wrt
-        run: |
-          mkdir -p staging_dir/host/bin
-          for tool in cargo rustc rustdoc; do
-            test -x "$CI_RUST_ROOT/bin/$tool"
-            ln -sfn "$CI_RUST_ROOT/bin/$tool" "staging_dir/host/bin/$tool"
-          done
-          export CCACHE_DIR="$PWD/.ccache"
-          ccache --max-size=1G
-          ccache --zero-stats
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/refresh-rust-links.sh"
 
       - name: Download Packages
         id: download
@@ -348,6 +343,7 @@ jobs:
           path: |
             ./wrt/staging_dir/host*
             ./wrt/staging_dir/tool*
+            ./wrt/staging_dir/target-*/host
 
       - name: Collect Build Reports
         if: ${{ !inputs.WRT_TEST && always() }}
