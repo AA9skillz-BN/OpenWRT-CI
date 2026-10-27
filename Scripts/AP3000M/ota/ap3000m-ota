@@ -71,8 +71,10 @@ fetch_api() {
 parse_tag() {
 	# $1 = 空 -> 最新；否则为指定 tag
 	jq -r --arg p "$(tag_prefix)" --arg want "${1:-}" '
-		[ .[] | select(.draft == false) | select(.tag_name | startswith($p)) ] as $all
-		| (if $want == "" then ($all | sort_by(.tag_name) | last) else ($all | map(select(.tag_name == $want)) | first) end) as $r
+		[ .[] | select(.draft == false and .prerelease != true)
+		  | select(.tag_name | startswith($p))
+		  | select([.assets[] | select((.name | endswith(".bin")) and (.name | contains("sysupgrade")))] | length == 1) ] as $all
+		| (if $want == "" then ($all | sort_by([(.published_at // .created_at // ""), .id]) | last) else ($all | map(select(.tag_name == $want)) | first) end) as $r
 		| if $r == null then "" else
 			($r.assets | map(select((.name | endswith(".bin")) and (.name | contains("sysupgrade"))))[0]) as $a
 			| [ $r.tag_name, $a.name, ($a.size // 0 | tostring), (($a.digest // "") | ltrimstr("sha256:")) ] | @tsv
@@ -81,8 +83,8 @@ parse_tag() {
 
 list_tags() {
 	jq -r --arg p "$(tag_prefix)" '
-		[ .[] | select(.draft == false) | select(.tag_name | startswith($p)) ]
-		| sort_by(.tag_name) | reverse | .[] | .tag_name'
+		[ .[] | select(.draft == false and .prerelease != true) | select(.tag_name | startswith($p)) ]
+		| sort_by([(.published_at // .created_at // ""), .id]) | reverse | .[] | .tag_name'
 }
 
 asset_url() {
@@ -144,7 +146,7 @@ cmd_check() {
 			log "当前版本 : $CUR"
 			log "最新版本 : $LATEST_TAG"
 			log "固件文件 : $LATEST_NAME（$(human_mb "$LATEST_SIZE")）"
-			log "sha256   : ${LATEST_SHA:-（该 Release 未提供，跳过校验）}"
+			log "sha256   : ${LATEST_SHA:-（该 Release 未提供，拒绝自动下载升级）}"
 			log "状态     : $state"
 			[ "$CUR" = "$LATEST_TAG" ] || log "升级命令 : ap3000m-ota upgrade"
 			;;
@@ -181,6 +183,13 @@ cmd_download() {
 	NAME=$(printf '%s' "$line" | cut -f2)
 	SIZE=$(printf '%s' "$line" | cut -f3)
 	SHA=$(printf '%s' "$line" | cut -f4)
+	# Never allow missing metadata to downgrade an authenticated download to a
+	# size-only check. Older releases without a digest require manual validation.
+	case "$TAG" in ''|*[!A-Za-z0-9._-]*) die "版本标签包含不支持的路径字符" ;; esac
+	case "$SIZE" in ''|*[!0-9]*) die "固件大小元数据无效" ;; esac
+	[ "$SIZE" -gt 0 ] || die "固件大小必须大于零"
+	case "$SHA" in ''|*[!a-fA-F0-9]*) die "Release 缺少有效 SHA-256，拒绝下载升级" ;; esac
+	[ "${#SHA}" = 64 ] || die "Release SHA-256 长度无效"
 	IMG="$(work_dir)/$TAG.bin"
 
 	# 给 LuCI 页面用的进度状态（字节数由页面自己 stat .part 文件获得）
@@ -189,8 +198,8 @@ cmd_download() {
 
 	if [ -f "$IMG" ] && [ "${SIZE:-0}" -gt 0 ]; then
 		now=$(wc -c < "$IMG" | tr -d ' ')
-		if [ "$now" = "$SIZE" ]; then
-			log "已存在完整镜像：$IMG"
+		if [ "$now" = "$SIZE" ] && printf '%s  %s\n' "$SHA" "$IMG" | sha256sum -c - >/dev/null 2>&1; then
+			log "已存在且 SHA-256 验证通过：$IMG"
 			rm -f "$DL_TAG_FILE"
 			printf 'ok 已存在 %s\n' "$TAG" > "$DL_RESULT_FILE"
 			echo "$IMG"
@@ -237,16 +246,12 @@ cmd_download() {
 		fi
 	fi
 
-	if [ -n "$SHA" ]; then
-		if ! printf '%s  %s\n' "$SHA" "$PART" | sha256sum -c - >/dev/null 2>&1; then
-			rm -f "$PART" "$DL_TAG_FILE"
-			printf 'failed sha256 校验失败\n' > "$DL_RESULT_FILE"
-			die "sha256 校验失败（镜像可能被篡改或下载不完整）"
-		fi
-		log "sha256 校验通过"
-	else
-		warn "该 Release 无 digest，跳过完整性校验"
+	if ! printf '%s  %s\n' "$SHA" "$PART" | sha256sum -c - >/dev/null 2>&1; then
+		rm -f "$PART" "$DL_TAG_FILE"
+		printf 'failed sha256 校验失败\n' > "$DL_RESULT_FILE"
+		die "sha256 校验失败（镜像可能被篡改或下载不完整）"
 	fi
+	log "sha256 校验通过"
 
 	if ! mv -f "$PART" "$IMG"; then
 		rm -f "$DL_TAG_FILE"
@@ -292,6 +297,9 @@ cmd_upgrade() {
 		case "$ans" in y|Y|yes|YES) ;; *) die "已取消" ;; esac
 	fi
 
+	# Validate device compatibility before recording a pending upgrade.
+	sysupgrade -T "$IMG" || die "镜像校验失败，未提交升级"
+
 	# 升级前备份当前配置（万一要手工恢复）
 	bk="$(work_dir)/config-$(current_tag)-$(date +%Y%m%d-%H%M%S).tar.gz"
 	sysupgrade -b "$bk" >/dev/null 2>&1 && log "已备份配置：$bk" || warn "配置备份失败（不影响升级）"
@@ -301,10 +309,10 @@ cmd_upgrade() {
 
 	if [ "$keep" = 1 ]; then
 		log "开始升级（保留配置）→ $TAG"
-		sysupgrade "$IMG"
+		sysupgrade "$IMG" || { rm -f "$PENDING_FILE"; die "sysupgrade 执行失败"; }
 	else
 		log "开始升级（不保留配置）→ $TAG"
-		sysupgrade -n "$IMG"
+		sysupgrade -n "$IMG" || { rm -f "$PENDING_FILE"; die "sysupgrade 执行失败"; }
 	fi
 	log "已提交升级，设备将在数秒内重启（请勿断电）"
 }

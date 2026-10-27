@@ -36,11 +36,14 @@ jobs:
           python-version: '3.12'
       - name: Test configuration and publication gates
         run: python3 .github/scripts/test_device_build.py -v
+      - name: Test OTA selection and integrity checks
+        run: python3 .github/scripts/test_ota.py -v
       - name: Check shell syntax
         run: |
           find .github/scripts Scripts/TR3000-512 Scripts/AP3000M Scripts/C8-688 -name '*.sh' -print0 |
             xargs -0 -n1 bash -n
           bash -n Files/TR3000-512/etc/init.d/tr3000-bbr
+          sh -n Scripts/AP3000M/ota/ap3000m-ota
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26.1'
