@@ -48,5 +48,45 @@
       "squeezelite-dynamic",
       "squeezelite-custom"
     ]
-  }
+  },
+  "build_tag_file": "/etc/tr3000-build.tag",
+  "required_files": [
+    {
+      "path": "/etc/init.d/tr3000-bbr",
+      "source": "Files/TR3000-512/etc/init.d/tr3000-bbr",
+      "executable": true
+    },
+    {
+      "path": "/etc/init.d/tr3000-usbwan",
+      "source": "Files/TR3000-512/etc/init.d/tr3000-usbwan",
+      "executable": true
+    },
+    {
+      "path": "/etc/tr3000-usbwan.sh",
+      "source": "Files/TR3000-512/etc/tr3000-usbwan.sh",
+      "executable": true
+    },
+    {
+      "path": "/etc/uci-defaults/99-tr3000-usbwan",
+      "executable": true,
+      "source": "Files/TR3000-512/etc/uci-defaults/99-tr3000-usbwan"
+    },
+    {
+      "path": "/etc/hotplug.d/net/20-tr3000-usbwan",
+      "executable": true,
+      "source": "Files/TR3000-512/etc/hotplug.d/net/20-tr3000-usbwan"
+    },
+    {
+      "path": "/etc/rc.d/S99tr3000-bbr",
+      "executable": true
+    },
+    {
+      "path": "/etc/rc.d/S99tr3000-usbwan",
+      "executable": true
+    }
+  ],
+  "ubi_reg": [
+    6029312,
+    497287168
+  ]
 }

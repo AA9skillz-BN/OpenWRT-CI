@@ -55,8 +55,8 @@ class DeviceContractTests(unittest.TestCase):
         build.write(Path(command[2]), json.dumps(self.metadata))
 
     def verify(self):
-        with patch.object(build.subprocess, "run", side_effect=self.fwtool):
-            return build.verify_image(self.tree, self.data, self.reports)
+        with patch.object(build.subprocess, "run", side_effect=self.fwtool), patch.object(build, "verify_payload"):
+            return build.verify_image(self.tree, self.data, self.reports, REPO)
 
     def test_feature_fragments_preserve_existing_general_choices(self):
         for name in ("AP3000M", "TR3000-512", "C8-688"):
@@ -171,7 +171,7 @@ class DeviceContractTests(unittest.TestCase):
         for file in ("source-commit.txt", "feeds.buildinfo", "packages.lock.json", "build-inputs.json"):
             build.write(self.reports / file, "test\n")
         with patch.dict(os.environ, env), patch.object(build, "run", return_value="a" * 40), \
-             patch.object(build.subprocess, "run", side_effect=self.fwtool):
+             patch.object(build.subprocess, "run", side_effect=self.fwtool), patch.object(build, "verify_payload"):
             build.package(self.tree, REPO, "AP3000M", self.data, self.reports)
         assets = {f.name for f in (self.tree / "upload").iterdir()}
         self.assertIn("sha256sums", assets)

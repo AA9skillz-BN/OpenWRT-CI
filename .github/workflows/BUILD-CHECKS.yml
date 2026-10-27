@@ -34,6 +34,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Install workflow test dependency
+        run: python3 -m pip install PyYAML==6.0.2
+      - name: Test pipeline isolation and final image contracts
+        run: python3 .github/scripts/test_pipeline_contracts.py -v
       - name: Test configuration and publication gates
         run: python3 .github/scripts/test_device_build.py -v
       - name: Test OTA selection and integrity checks
@@ -51,5 +55,5 @@ jobs:
       - name: Validate workflow syntax and expressions
         run: |
           go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -shellcheck= \
-            .github/workflows/WRT-CORE.yml .github/workflows/TR3000.yml \
+            .github/workflows/WRT-CORE.yml .github/workflows/DEVICE-CORE.yml .github/workflows/TR3000.yml \
             .github/workflows/AP3000M.yml .github/workflows/C8-688.yml .github/workflows/BUILD-CHECKS.yml

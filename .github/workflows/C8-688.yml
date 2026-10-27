@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # NRadio / 鲲鹏无限 C8-688 单机型固件（mainline immortalwrt / OpenWrt 25.x 线，内核 6.18）
 #
-# 地基：.github/workflows/WRT-CORE.yml
+# 地基：.github/workflows/DEVICE-CORE.yml
 # 专属文件：
 #   Config/C8-688.txt                    单机型配置
 #   Scripts/C8-688/private.sh            注入 DTS / 设备定义 / 02_network / 覆盖层
@@ -33,6 +33,11 @@ on:
         description: '手动追加插件包，多个请用\n符号隔开。'
         required: false
         type: string
+      SOURCE_MODE:
+        description: 'locked 使用版本锁；latest 显式跟随源码和 feeds 上游。'
+        type: choice
+        options: [locked, latest]
+        default: locked
       BUILD_ONLY:
         description: '编译并校验固件，只上传 Artifact，不发布 Release。'
         default: false
@@ -60,10 +65,11 @@ jobs:
       matrix:
         CONFIG: [C8-688]
 
-    uses: ./.github/workflows/WRT-CORE.yml
+    uses: ./.github/workflows/DEVICE-CORE.yml
     with:
       WRT_CONFIG: ${{ matrix.CONFIG }}
       WRT_PROFILE: C8-688
+      WRT_SOURCE_MODE: ${{ inputs.SOURCE_MODE || 'locked' }}
       WRT_PUBLISH: ${{ !inputs.BUILD_ONLY }}
       WRT_THEME: argon
       WRT_NAME: C8-688

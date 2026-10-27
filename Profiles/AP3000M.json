@@ -53,5 +53,46 @@
       "squeezelite-dynamic",
       "squeezelite-custom"
     ]
-  }
+  },
+  "build_tag_file": "/etc/ap3000m-build.tag",
+  "required_files": [
+    {
+      "path": "/usr/sbin/ap3000m-ota",
+      "source": "Scripts/AP3000M/ota/ap3000m-ota",
+      "executable": true
+    },
+    {
+      "path": "/usr/sbin/ap3000m-rdnis-guard",
+      "source": "Scripts/AP3000M/rdnis-guard/ap3000m-rdnis-guard",
+      "executable": true
+    },
+    {
+      "path": "/usr/sbin/ap3000m-net-tune",
+      "source": "Scripts/AP3000M/net-tune/ap3000m-net-tune",
+      "executable": true
+    },
+    {
+      "path": "/etc/uci-defaults/99-ap3000m-fm350",
+      "source": "Scripts/AP3000M/fm350-ap3000m",
+      "executable": true
+    },
+    {
+      "path": "/etc/init.d/ap3000m-ota-boot",
+      "executable": true,
+      "source": "Scripts/AP3000M/ota/ap3000m-ota-boot"
+    },
+    {
+      "path": "/etc/init.d/ap3000m-rdnis-guard",
+      "executable": true,
+      "source": "Scripts/AP3000M/rdnis-guard/ap3000m-rdnis-guard-boot"
+    },
+    {
+      "path": "/etc/rc.d/S99ap3000m-ota-boot",
+      "executable": true
+    },
+    {
+      "path": "/etc/rc.d/S98ap3000m-rdnis-guard",
+      "executable": true
+    }
+  ]
 }

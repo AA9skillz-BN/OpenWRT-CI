@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
-# Cudy TR3000 512MB 单机型固件（与 AP3000M 同构：复用公用核心 WRT-CORE.yml）
+# Cudy TR3000 512MB 单机型固件（与 AP3000M 同构：复用公用核心 DEVICE-CORE.yml）
 #
-# 地基：.github/workflows/WRT-CORE.yml
+# 地基：.github/workflows/DEVICE-CORE.yml
 # 专属文件：
 #   Config/TR3000-512.txt                     单机型配置
 #   Scripts/TR3000-512/patch-layout.sh        512MB 硬改机 UBI 布局
@@ -34,6 +34,11 @@ on:
         description: '手动追加插件包，多个请用\n符号隔开。'
         required: false
         type: string
+      SOURCE_MODE:
+        description: 'locked 使用版本锁；latest 显式跟随源码和 feeds 上游。'
+        type: choice
+        options: [locked, latest]
+        default: locked
       BUILD_ONLY:
         description: '编译并校验固件，只上传 Artifact，不发布 Release。'
         default: false
@@ -65,11 +70,12 @@ jobs:
         # 只编 TR3000 一款，变体在 Config/TR3000-512.txt 内调整
         CONFIG: [TR3000-512]
 
-    #调用公用编译核心 WRT-CORE.yml
-    uses: ./.github/workflows/WRT-CORE.yml
+    #调用公用编译核心 DEVICE-CORE.yml
+    uses: ./.github/workflows/DEVICE-CORE.yml
     with:
       #编译配置
       WRT_CONFIG: ${{ matrix.CONFIG }}
+      WRT_SOURCE_MODE: ${{ inputs.SOURCE_MODE || 'locked' }}
       WRT_PUBLISH: ${{ !inputs.BUILD_ONLY }}
       WRT_PROFILE: TR3000-512
       #默认主题

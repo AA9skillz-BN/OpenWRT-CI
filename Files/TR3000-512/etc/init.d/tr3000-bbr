@@ -3,12 +3,13 @@
 #
 # TR3000：开机把拥塞控制切到 BBR（必须排在 turboacc 之后）
 #
-START=99，在所有服务之后最后再把默认拥塞控制钉回 BBR。
+# START=99: apply after TurboACC, respecting its saved BBR setting.
 
 START=99
 STOP=10
 
 start() {
+	[ "$(uci -q get turboacc.config.bbr_cca)" = '1' ] || return 0
 	modprobe tcp_bbr 2>/dev/null || true
 	[ -w /proc/sys/net/ipv4/tcp_congestion_control ] || return 0
 	grep -qw bbr /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null || return 0

@@ -47,6 +47,7 @@ fi
 
 # BBR is selected as kmod-tcp-bbr in the device config.
 # Locked plugins are installed once by device-build.py before this hook.
+python3 "$WRT_REPO_ROOT/.github/scripts/tr3000-defaults.py"
 
 # ------------------------------------------------- 3. 首启配置 + F50 即插即用
 log "投放 Files/TR3000-512 到源码 files/"

@@ -1,13 +1,15 @@
 # TR3000 / AP3000M / C8-688 构建流程
 
-这三个入口继续调用 `WRT-CORE.yml`，通过 `WRT_PROFILE` 显式启用单设备流程。
-其他入口不传此参数，继续走原有通用流程。README 不作为构建配置来源。
+这三个入口调用独立的 `DEVICE-CORE.yml`。其他入口继续使用 `WRT-CORE.yml`
+的原有通用流程；通用核心只保留凭据清理与稳定 action 版本等必要调整。
+README 不作为构建配置来源。
 
 ## 阶段和失败条件
 
 1. 固定使用 Ubuntu 24.04，安装依赖；不执行整机 full-upgrade。
-2. 拉取所选上游分支；C8-688 若指定完整 SHA，先切换源码，再更新 feeds 和
-   计算源码版本；在 feeds 更新前排除未启用的 video、PON feeds。
+2. 默认 `SOURCE_MODE=locked`，按 `Profiles/sources.lock.json` 拉取源码和
+   feeds 的完整提交 SHA。拉取失败、URL 不一致或版本不一致直接失败。
+   在 feeds 更新前排除未启用的 video、PON feeds。
 3. 根据 `Profiles/<机型>.json` 只拉需要的第三方仓库，使用
    `Profiles/packages.lock.json` 中的完整提交 SHA。插件只安装一次。
 4. 通过独立 bash 进程执行机型 `private.sh`，投放补丁、首启脚本等。
@@ -18,9 +20,20 @@
 6. 非 TEST 模式下，使用 feeds 声明的 Rust 版本及 runner Go/LLVM，恢复缓存、
    下载、并行编译；失败时保留串行重试日志。
 7. 发布前要求唯一 sysupgrade、与设备对应的 manifest、全部必需包、非空
-   kernel/root 以及 fwtool 提取的设备和平台标识全部正确。
-8. 只整理需要的固件与证据文件，先上传 draft Release，附件上传成功后公开。
+   kernel/root 以及 fwtool 提取的设备和平台标识全部正确。进一步从 sysupgrade
+   的实际 FIT kernel 提取默认 DTB：核对 compatible、TR3000 的 UBI reg、
+   C8-688 的第二系统 rootfs bootargs。解开实际 squashfs 检查关键脚本、执行权限、
+   启动链接、脚本内容和本次 build tag；证据保存为 `verified-payload.json`。
+8. 编译 job 只有 `contents: read`，无全局 GitHub token，checkout 不持久化凭据。
+   固件与说明通过本次运行的 Artifact 交给独立发布 job；发布 job 不 checkout 或
+   执行构建代码，只复核校验和并发布。仅发布 job 拥有 `contents: write`。
+   先上传 draft Release，附件上传成功后公开。
    不再查找“最新 Release”、下载固件、事后裁剪或修改说明。
+
+非 main 分支发布始终标记 prerelease，不标记为 latest。AP3000M OTA 排除
+prerelease，默认只接受 `AP3000M-immortalwrt-master-` 渠道；旧配置中的
+`AP3000M-` 宽前缀也会收窄。自定义 OTA 渠道可以显式配置其他前缀。
+缓存清理在另一个仅有 contents/read、actions/write 的 job 中执行，不拿发布权限。
 
 TEST 只生成经过 defconfig 检查的配置 Artifact，不创建 Release、不恢复和保存编译缓存。
 同时执行工具链准备和缓存输入计算，以便在预览阶段发现工具链版本和指纹错误。
@@ -49,8 +62,15 @@ Samba、USB 网卡、存储工具等功能。可在每个 profile 的 `config_fr
 
 增加或更新插件时，修改 lock 中的提交及精确替换目录，必要时更新 profile。
 保留 TR3000 原来审阅过的 Aurora/OpenClash/TurboACC 提交；其余插件在迁移时
-锁定当前提交。插件锁定不会自动锁定主源码和 feeds：每次构建仍跟随所选分支，
-实际版本通过 Release 附件和 build-reports 留存。
+锁定当前提交。主源码和 feeds 独立锁定在 `Profiles/sources.lock.json`。
+锁模式下修改 SOURCE/BRANCH 而不更新对应锁会失败；要试验其他源码，显式选择
+`SOURCE_MODE=latest`，此时才跟随所选上游。无论哪种模式都保存实际版本。
+
+更新上游时先在试验分支使用 latest 验证；将该次构建的 `source-lock.json`
+对应机型条目更新到 `Profiles/sources.lock.json`，再用 locked 跑 TEST 和 BUILD_ONLY。
+三款都通过后再合入 main。复查旧 Release 时可取其 `source-lock.json` 条目恢复
+源码/feeds 锁，并一并恢复当时的 CI 提交、插件锁及实际配置。日期和 runner 等
+环境仍会变化，因此相同源码版本不代表固件字节必然一致。
 
 ## 缓存
 
@@ -68,7 +88,9 @@ Samba、USB 网卡、存储工具等功能。可在每个 profile 的 `config_fr
 ## 已知兼容处理
 
 TR3000 改为标准 `kmod-tcp-bbr` 依赖，不再硬编码修改 config-6.18；启动脚本仍
-在 TurboACC 之后启用 BBR。512MB 分区补丁保留原始布局断言，上游变化时失败退出。
+在 TurboACC 之后按用户保存的 `bbr_cca` 开关启用 BBR。TurboACC 默认值在构建时
+写入包配置，移除会重设 LAN IP、主题和加速选项的首启脚本；保留配置升级时不再
+由这些脚本覆盖用户选择。512MB 分区补丁保留原始布局断言，上游变化时失败退出。
 
 ImmortalWrt 于 2026-10-27 在提交
 `21ae803cc274b52f98f99f0f75864b114b11daab` 中修复 fullcone 补丁。
@@ -77,18 +99,19 @@ ImmortalWrt 于 2026-10-27 在提交
 删除该补丁；未来遇到不兼容会构建失败，不以静默关闭功能换取绿灯。
 
 C8-688 保留 `source-pin.txt` 的 auto / 跟随分支 / 完整 SHA 三种输入。
-auto 现在与跟随分支相同，保留上游补丁。指定 SHA 时如果拉取失败，直接失败退出，
+auto 服从 SOURCE_MODE；locked 下跟随版本锁，latest 下跟随分支。旧 SHA 如果
+与版本锁冲突会失败，必须统一修改版本锁或显式选择 latest。拉取失败直接退出，
 不再偷偷回退到另一个版本。DTS、第二系统布局、LAN/WAN、MAC、风扇和覆盖层
 继续由机型钩子负责。MT5700M 固定为原 v3.0.7 对应提交，通过插件清单只安装一次。
 
 ## 同步 CI 模板与更新源码
 
-从 CI 模板上游同步时，应保留本仓库的机型清单和公共核心扩展，正常合并双方修改，
-不要用上游文件覆盖已修改的 `WRT-CORE.yml`、Rust 准备脚本等文件。新增文件降低了
-冲突范围，但不能消除公共文件的合并冲突。同步后先跑 Build logic checks，再跑
+从 CI 模板上游同步时，保留本仓库的 `DEVICE-CORE.yml`、机型清单和版本锁。
+通用 `WRT-CORE.yml` 已撤出机型专属分支；Rust 准备脚本等仍有共用扩展，
+正常合并双方修改，不应整文件覆盖。同步后先跑 Build logic checks，再跑
 三个机型的 TEST；公共构建逻辑变化时应再跑 BUILD_ONLY。
 
-OpenWrt/ImmortalWrt 源码和 feeds 则在每次构建时跟随所选分支，工具链缓存会随
+OpenWrt/ImmortalWrt 源码和 feeds 默认不会自动漂移；更新版本锁后，工具链缓存随
 构建输入变化失效，设备与包清单校验可以阻止不完整镜像发布。上游接口发生变化时
 仍然需要适配，检查通过也不等同于真机验证通过。
 

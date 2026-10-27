@@ -31,7 +31,12 @@ cfg() { uci -q get "$CONF.$1" 2>/dev/null; }
 cfg_or() { v=$(cfg "$1"); [ -n "$v" ] && printf '%s' "$v" || printf '%s' "$2"; }
 
 repo()         { cfg_or repo "AA9skillz-BN/OpenWRT-CI"; }
-tag_prefix()   { cfg_or tag_prefix "AP3000M-"; }
+tag_prefix() {
+	prefix=$(cfg_or tag_prefix "AP3000M-immortalwrt-master-")
+	# Migrate the original broad default even when sysupgrade restored old UCI.
+	[ "$prefix" != "AP3000M-" ] || prefix="AP3000M-immortalwrt-master-"
+	printf '%s' "$prefix"
+}
 work_dir()     { cfg_or dir "$DIR_DEFAULT"; }
 use_mirror()   { cfg_or use_mirror 1; }
 keep_default() { cfg_or keep_config 1; }

@@ -10,6 +10,7 @@ import shutil
 import stat
 import subprocess
 import tarfile
+from device_image import verify_payload
 
 
 def run(*args, cwd=None):
@@ -154,7 +155,7 @@ def check_config(tree, data):
         raise ValueError("defconfig dropped required options: " + ", ".join(missing))
 
 
-def verify_image(tree, data, reports):
+def verify_image(tree, data, reports, repo=None):
     target = tree / "bin/targets/mediatek/filogic"
     # The matching manifest must belong to the same device/image prefix.
     images = list(target.glob(f"*{data['image_device']}*-sysupgrade.bin"))
@@ -178,6 +179,8 @@ def verify_image(tree, data, reports):
             raise ValueError("sysupgrade must contain a nonempty kernel and root filesystem")
         if kernels[0].name.rsplit("/", 1)[0] != roots[0].name.rsplit("/", 1)[0]:
             raise ValueError("kernel/root belong to different sysupgrade directories")
+        verify_payload(archive, kernels[0], roots[0], data,
+                       repo or Path(os.environ["GITHUB_WORKSPACE"]), reports)
     # fwtool validates the actual embedded metadata, not the archive filename.
     fwtool = tree / "staging_dir/host/bin/fwtool"
     metadata = reports / "image-metadata.json"
@@ -195,7 +198,7 @@ def verify_image(tree, data, reports):
 
 def package(tree, repo, name, data, reports):
     check_config(tree, data)
-    image, manifest = verify_image(tree, data, reports)
+    image, manifest = verify_image(tree, data, reports, repo)
     upload = tree / "upload"
     upload.mkdir(exist_ok=True)
     tag = os.environ["WRT_RELEASE_TAG"]
@@ -207,7 +210,7 @@ def package(tree, repo, name, data, reports):
     for file in reports.iterdir():
         if file.is_file() and file.name in ("source-commit.txt", "feeds.buildinfo", "packages.lock.json",
                                              "build-inputs.json", "image-metadata.json", "compatibility.txt", "ci-commit.txt",
-                                             "config-resolution.json"):
+                                             "config-resolution.json", "source-lock.json", "verified-payload.json"):
             shutil.copy2(file, upload / file.name)
     # Do not discard evidence needed to reproduce or diagnose this release.
     checksums = []

@@ -50,5 +50,39 @@
     "kmod-sound-core",
     "kmod-usb-audio"
   ],
-  "release_note": "仅写 eMMC 的 kernel_2nd / rootfs_2nd 第二系统槽。原厂 NROS 后台烧录第二系统前先关闭存储扩展。保留现有风扇、Wi-Fi MAC、双系统切换及 MT5700M 管理功能；不含原厂 NR-OS APP 与多卡切换界面。"
+  "release_note": "仅写 eMMC 的 kernel_2nd / rootfs_2nd 第二系统槽。原厂 NROS 后台烧录第二系统前先关闭存储扩展。保留现有风扇、Wi-Fi MAC、双系统切换及 MT5700M 管理功能；不含原厂 NR-OS APP 与多卡切换界面。",
+  "build_tag_file": "/etc/c8-688-build.tag",
+  "required_files": [
+    {
+      "path": "/usr/sbin/c8-fan",
+      "source": "Files/C8-688/usr/sbin/c8-fan",
+      "executable": true
+    },
+    {
+      "path": "/usr/sbin/c8-env-detect",
+      "source": "Files/C8-688/usr/sbin/c8-env-detect",
+      "executable": true
+    },
+    {
+      "path": "/usr/sbin/c8-boot-official",
+      "source": "Files/C8-688/usr/sbin/c8-boot-official",
+      "executable": true
+    },
+    {
+      "path": "/etc/init.d/c8-wifi-mac",
+      "source": "Files/C8-688/etc/init.d/c8-wifi-mac",
+      "executable": true
+    },
+    {
+      "path": "/etc/init.d/c8-fan",
+      "executable": true,
+      "source": "Files/C8-688/etc/init.d/c8-fan"
+    },
+    {
+      "path": "/etc/uci-defaults/99-c8-688",
+      "executable": true,
+      "source": "Files/C8-688/etc/uci-defaults/99-c8-688"
+    }
+  ],
+  "root_partition": "rootfs_2nd"
 }

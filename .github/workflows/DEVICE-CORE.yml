@@ -1,0 +1,350 @@
+# SPDX-License-Identifier: MIT
+# Device build and publication use separate runners and permissions.
+name: DEVICE-CORE
+'on':
+  workflow_call:
+    inputs:
+      WRT_PROFILE:
+        description: Required device profile in Profiles/
+        required: true
+        type: string
+      WRT_PUBLISH:
+        description: Publish a validated release; false uploads firmware artifacts only
+        required: false
+        default: true
+        type: boolean
+      WRT_CONFIG:
+        required: true
+        type: string
+      WRT_THEME:
+        required: true
+        type: string
+      WRT_NAME:
+        required: true
+        type: string
+      WRT_SSID:
+        required: true
+        type: string
+      WRT_WORD:
+        required: true
+        type: string
+      WRT_IP:
+        required: true
+        type: string
+      WRT_PW:
+        required: true
+        type: string
+      WRT_REPO:
+        required: true
+        type: string
+      WRT_BRANCH:
+        required: true
+        type: string
+      WRT_SOURCE:
+        required: true
+        type: string
+      WRT_PACKAGE:
+        required: false
+        type: string
+      WRT_TEST:
+        required: false
+        default: false
+        type: boolean
+      WRT_SOURCE_MODE:
+        description: Use locked source/feed revisions, or explicitly follow upstream
+        default: locked
+        required: false
+        type: string
+env:
+  WRT_PROFILE: ${{inputs.WRT_PROFILE}}
+  WRT_CONFIG: ${{inputs.WRT_CONFIG}}
+  WRT_THEME: ${{inputs.WRT_THEME}}
+  WRT_NAME: ${{inputs.WRT_NAME}}
+  WRT_SSID: ${{inputs.WRT_SSID}}
+  WRT_WORD: ${{inputs.WRT_WORD}}
+  WRT_IP: ${{inputs.WRT_IP}}
+  WRT_PW: ${{inputs.WRT_PW}}
+  WRT_REPO: ${{inputs.WRT_REPO}}
+  WRT_BRANCH: ${{inputs.WRT_BRANCH}}
+  WRT_SOURCE: ${{inputs.WRT_SOURCE}}
+  WRT_PACKAGE: ${{inputs.WRT_PACKAGE}}
+  WRT_TEST: ${{inputs.WRT_TEST}}
+  WRT_SOURCE_MODE: ${{inputs.WRT_SOURCE_MODE}}
+jobs:
+  core:
+    name: ${{inputs.WRT_SOURCE}}
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ inputs.WRT_TEST && 30 || 360 }}
+    outputs:
+      device_cache_prefix: ${{steps.device-cache.outputs.prefix}}
+      device_dl_key: ${{steps.device-cache.outputs.dl}}${{github.run_id}}-${{github.run_attempt}}
+      device_ccache_key: ${{steps.device-cache.outputs.ccache}}${{github.run_id}}-${{github.run_attempt}}
+      device_staging_key: ${{steps.device-cache.outputs.staging}}
+      release_tag: ${{steps.initialize-values.outputs.release_tag}}
+    steps:
+    - name: Checkout Projects
+      uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+    - name: Initialization Environment
+      timeout-minutes: 15
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo apt-get -yqq update
+
+        sudo apt-get install -y --no-install-recommends \
+          bc bison build-essential bzip2 ca-certificates ccache clang \
+          cmake cpio curl device-tree-compiler dos2unix file flex \
+          g++-multilib gawk gcc-multilib genisoimage gettext git jq \
+          libbpf-dev libclang-dev libdw-dev libelf-dev libncurses-dev libssl-dev lld \
+          llvm ninja-build patch perl pkgconf python3 python3-cryptography \
+          python3-dev python3-packaging python3-pyelftools python3-setuptools qemu-utils rsync swig \
+          unzip wget xz-utils zlib1g-dev zstd squashfs-tools u-boot-tools
+
+        sudo timedatectl set-timezone "Asia/Shanghai"
+
+        sudo mkdir -p /mnt/build_wrt
+        sudo chown $USER:$USER /mnt/build_wrt
+        sudo ln -s /mnt/build_wrt $GITHUB_WORKSPACE/wrt
+    - name: Initialization Values
+      id: initialize-values
+      run: |
+        WRT_TARGET=$(grep -m 1 -oP '^CONFIG_TARGET_\K[^=_]+(?=\=y)' "./Config/$WRT_CONFIG.txt")
+        WRT_SUBTARGET=$(grep -m 1 -oP "^CONFIG_TARGET_${WRT_TARGET}_\K[^=_]+(?=\=y)" "./Config/$WRT_CONFIG.txt")
+        WRT_DATE=$(TZ=UTC-8 date +"%y.%m.%d-%H.%M.%S")
+        WRT_WIFI=$(grep -oE 'WIFI-(YES|NO)$' <<< "${WRT_CONFIG^^}" || true); WRT_WIFI=${WRT_WIFI:-none}
+
+        {
+          echo "WRT_INFO=${WRT_SOURCE%%/*}"
+          echo "WRT_MARK=${GITHUB_REPOSITORY%%/*}"
+          echo "WRT_DATE=$WRT_DATE"
+          echo "WRT_SUBTARGET=$WRT_SUBTARGET"
+          echo "WRT_TARGET=$WRT_TARGET"
+          echo "WRT_WIFI=$WRT_WIFI"
+          echo "WRT_KVER=none"
+          echo "WRT_LIST=none"
+        } >> "$GITHUB_ENV"
+        # Reuse the same tag for device labels, packaging and publication.
+        WRT_SAFE_BRANCH=${WRT_BRANCH//\//-}
+        WRT_RELEASE_TAG="$WRT_CONFIG-${WRT_SOURCE%%/*}-$WRT_SAFE_BRANCH-$WRT_DATE-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+        echo "WRT_RELEASE_TAG=$WRT_RELEASE_TAG" >> "$GITHUB_ENV"
+        echo "release_tag=$WRT_RELEASE_TAG" >> "$GITHUB_OUTPUT"
+        test "$WRT_PROFILE" = "$WRT_CONFIG"
+        test -f "Profiles/$WRT_PROFILE.json"
+    - name: Clone Code
+      id: clone-code
+      run: |
+        python3 "$GITHUB_WORKSPACE/.github/scripts/device-sources.py" source
+    - name: Check Scripts
+      run: |
+        find ./ -maxdepth 3 -type f -iregex ".*\(txt\|sh\)$" -exec dos2unix {} \; -exec chmod +x {} \;
+    - name: Update Feeds
+      run: |
+        cd ./wrt/
+        python3 "$GITHUB_WORKSPACE/.github/scripts/device-sources.py" feeds
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+        python3 "$GITHUB_WORKSPACE/.github/scripts/device-sources.py" verify
+    - name: Custom Packages
+      run: |
+        cd ./wrt/
+        python3 "$GITHUB_WORKSPACE/.github/scripts/device-build.py" packages
+        bash "$GITHUB_WORKSPACE/Scripts/Handles.sh"
+        bash "$GITHUB_WORKSPACE/.github/scripts/prepare-i2c-tools.sh"
+    - name: Apply Device Source and Files
+      working-directory: ./wrt
+      run: bash "$GITHUB_WORKSPACE/Scripts/$WRT_PROFILE/private.sh"
+    - name: Custom Settings
+      run: |
+        cd ./wrt/
+        python3 "$GITHUB_WORKSPACE/.github/scripts/device-build.py" merge
+        bash "$GITHUB_WORKSPACE/Scripts/Settings.sh"
+        bash "$GITHUB_WORKSPACE/.github/scripts/prepare-build-host.sh"
+        python3 "$GITHUB_WORKSPACE/.github/scripts/device-build.py" defconfig
+    - name: Prepare Rust Toolchain
+      run: |
+        cd ./wrt/
+
+        $GITHUB_WORKSPACE/.github/scripts/prepare-rust.sh
+    - name: Compute Device Cache Keys
+      id: device-cache
+      working-directory: ./wrt
+      run: python3 "$GITHUB_WORKSPACE/.github/scripts/device-build.py" cache
+    - name: Restore Downloads
+      if: ${{ !inputs.WRT_TEST }}
+      uses: actions/cache/restore@v4
+      with:
+        key: ${{steps.device-cache.outputs.dl}}${{github.run_id}}-${{github.run_attempt}}
+        restore-keys: ${{steps.device-cache.outputs.dl}}
+        path: ./wrt/dl
+    - name: Restore Compiler Cache
+      if: ${{ !inputs.WRT_TEST }}
+      uses: actions/cache/restore@v4
+      with:
+        key: ${{steps.device-cache.outputs.ccache}}${{github.run_id}}-${{github.run_attempt}}
+        restore-keys: ${{steps.device-cache.outputs.ccache}}
+        path: ./wrt/.ccache
+    - name: Restore Exact Toolchain Cache
+      id: device-staging
+      if: ${{ !inputs.WRT_TEST }}
+      uses: actions/cache/restore@v4
+      with:
+        key: ${{steps.device-cache.outputs.staging}}
+        path: |
+          ./wrt/staging_dir/host*
+          ./wrt/staging_dir/tool*
+          ./wrt/staging_dir/target-*/host
+    - name: Refresh Runner Tool Links
+      working-directory: ./wrt
+      run: bash "$GITHUB_WORKSPACE/.github/scripts/refresh-rust-links.sh"
+    - name: Download Packages
+      id: download
+      if: ${{ !inputs.WRT_TEST }}
+      run: |
+        cd ./wrt/
+
+        make download -j$(nproc)
+    - name: Compile Firmware
+      id: compile
+      if: ${{ !inputs.WRT_TEST }}
+      run: |
+        cd ./wrt/
+
+        mkdir -p $GITHUB_WORKSPACE/build-reports
+        make -j$(nproc) BUILD_TIME_LOG="$GITHUB_WORKSPACE/build-reports/parallel.tsv" || \
+          make -j1 V=s BUILD_TIME_LOG="$GITHUB_WORKSPACE/build-reports/serial.tsv"
+    - name: Verify and Package Device Firmware
+      id: device-package
+      if: ${{ !inputs.WRT_TEST }}
+      working-directory: ./wrt
+      run: python3 "$GITHUB_WORKSPACE/.github/scripts/device-build.py" package
+    - name: Save Downloads
+      if: ${{ !cancelled() && steps.download.outcome == 'success' }}
+      uses: actions/cache/save@v4
+      with:
+        key: ${{steps.device-cache.outputs.dl}}${{github.run_id}}-${{github.run_attempt}}
+        path: ./wrt/dl
+    - name: Save Compiler Cache
+      if: ${{ !cancelled() && (steps.compile.outcome == 'success' || steps.compile.outcome == 'failure') }}
+      uses: actions/cache/save@v4
+      with:
+        key: ${{steps.device-cache.outputs.ccache}}${{github.run_id}}-${{github.run_attempt}}
+        path: ./wrt/.ccache
+    - name: Save Exact Toolchain Cache
+      if: ${{ !cancelled() && steps.device-package.outcome == 'success' && steps.device-staging.outputs.cache-hit != 'true' }}
+      uses: actions/cache/save@v4
+      with:
+        key: ${{steps.device-cache.outputs.staging}}
+        path: |
+          ./wrt/staging_dir/host*
+          ./wrt/staging_dir/tool*
+          ./wrt/staging_dir/target-*/host
+    - name: Collect Build Reports
+      if: ${{ !inputs.WRT_TEST && always() }}
+      continue-on-error: true
+      run: |
+        cd ./wrt/
+
+        $GITHUB_WORKSPACE/.github/scripts/collect-build-reports.sh
+    - name: Upload Build Reports
+      if: ${{ !inputs.WRT_TEST && always() }}
+      continue-on-error: true
+      uses: actions/upload-artifact@v7
+      with:
+        name: build-reports-${{env.WRT_CONFIG}}-${{env.WRT_INFO}}-${{github.run_attempt}}
+        path: ./build-reports/
+        retention-days: 7
+    - name: Machine Information
+      run: |
+        cd ./wrt/
+
+        echo "======================="
+        lscpu | grep -E "name|Core|Thread"
+        echo "======================="
+        df -h
+        echo "======================="
+        du -h --max-depth=1
+        echo "======================="
+    - name: Prepare Configuration Preview
+      if: ${{ inputs.WRT_TEST }}
+      run: |
+        mkdir -p ./wrt/upload
+        cp ./wrt/.config "./wrt/upload/Config-$WRT_RELEASE_TAG.txt"
+    - name: Upload Configuration Preview
+      if: ${{ inputs.WRT_TEST }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: config-${{inputs.WRT_PROFILE}}-${{github.run_id}}-${{github.run_attempt}}
+        path: ./wrt/upload/Config-*.txt
+        if-no-files-found: error
+    - name: Upload Validated Firmware
+      if: ${{ !inputs.WRT_TEST }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: firmware-${{inputs.WRT_PROFILE}}-${{github.run_id}}-${{github.run_attempt}}
+        path: |
+          ./wrt/upload/*
+          ./build-reports/release-notes.md
+        if-no-files-found: error
+        retention-days: 7
+    permissions:
+      contents: read
+  device-cache-rollover:
+    name: Retain device cache generations
+    needs: core
+    if: ${{ !inputs.WRT_TEST && needs.core.result == 'success' }}
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: device-cache-${{github.ref}}-${{inputs.WRT_PROFILE}}
+      cancel-in-progress: false
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+    - run: python3 .github/scripts/roll-device-cache.py
+      env:
+        GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
+        DEVICE_CACHE_PREFIX: ${{needs.core.outputs.device_cache_prefix}}
+        DEVICE_DL_KEY: ${{needs.core.outputs.device_dl_key}}
+        DEVICE_CCACHE_KEY: ${{needs.core.outputs.device_ccache_key}}
+        DEVICE_STAGING_KEY: ${{needs.core.outputs.device_staging_key}}
+    permissions:
+      contents: read
+      actions: write
+  publish:
+    name: Publish verified device artifact
+    needs: core
+    if: ${{ !inputs.WRT_TEST && inputs.WRT_PUBLISH && needs.core.result == 'success' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+    - name: Download this run artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: firmware-${{inputs.WRT_PROFILE}}-${{github.run_id}}-${{github.run_attempt}}
+        path: ./release
+    - name: Verify transferred checksums
+      working-directory: ./release/wrt/upload
+      run: |
+        sha256sum --check --strict sha256sums
+    - name: Create validated draft
+      id: release
+      uses: softprops/action-gh-release@v2
+      with:
+        token: ${{secrets.GITHUB_TOKEN}}
+        tag_name: ${{needs.core.outputs.release_tag}}
+        target_commitish: ${{github.sha}}
+        draft: true
+        prerelease: ${{ github.ref != 'refs/heads/main' }}
+        make_latest: ${{ github.ref == 'refs/heads/main' && 'true' || 'false' }}
+        fail_on_unmatched_files: true
+        body_path: ./release/build-reports/release-notes.md
+        files: ./release/wrt/upload/*
+    - name: Publish complete release
+      env:
+        GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
+        RELEASE_ID: ${{steps.release.outputs.id}}
+      run: |
+        gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -F draft=false

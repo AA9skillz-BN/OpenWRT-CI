@@ -2,9 +2,12 @@
 
 `source-pin.txt` supports:
 
-- `auto`, `master`, `main`, `HEAD` or empty: follow the workflow branch.
+- `auto`, `master`, `main`, `HEAD` or empty: use `SOURCE_MODE`; default `locked`
+  selects the source and feeds in `Profiles/sources.lock.json`. Only `latest`
+  follows the workflow branch.
 - A complete 40-character commit SHA: fetch and check out that revision before
-  feeds, source patches and cache identity are prepared. Fetch failure stops the build.
+  feeds, source patches and cache identity are prepared. It must agree with the
+  source lock in locked mode. A conflict or fetch failure stops the build.
 
 The old automatic removal of the firewall4 fullcone patch is retired. ImmortalWrt
 fixed the upstream patch in commit 21ae803cc274b52f98f99f0f75864b114b11daab on

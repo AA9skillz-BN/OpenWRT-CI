@@ -16,6 +16,14 @@ JQ = os.environ.get("OTA_TEST_JQ") or shutil.which("jq")
 
 @unittest.skipUnless(BASH and JQ, "bash and jq are required")
 class OtaTests(unittest.TestCase):
+    def test_legacy_broad_prefix_is_migrated_to_the_official_source(self):
+        script = self.root / "prefix.sh"
+        script.write_text(SOURCE + '\ncfg() { printf "AP3000M-"; }\ntag_prefix\n', encoding="utf-8", newline="\n")
+        result = subprocess.run([BASH, script.as_posix()],
+                                text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "AP3000M-immortalwrt-master-")
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

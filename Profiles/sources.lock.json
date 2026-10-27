@@ -1,0 +1,71 @@
+{
+  "TR3000-512": {
+    "url": "https://github.com/VIKINGYFY/immortalwrt.git",
+    "branch": "owrt",
+    "commit": "de149751183f3c10cff427b7efb1ed5cbcb4b761",
+    "feeds": {
+      "packages": {
+        "url": "https://github.com/immortalwrt/packages.git",
+        "commit": "aeccc22b5cb176d6c8b138ffd5931872e5ff88d1"
+      },
+      "luci": {
+        "url": "https://github.com/immortalwrt/luci.git",
+        "commit": "aa264224846b057ebb42e8441d71f5344f5775b1"
+      },
+      "routing": {
+        "url": "https://github.com/openwrt/routing.git",
+        "commit": "4b9891b9136259f93294a424507ed24c5e8c1cbd"
+      },
+      "telephony": {
+        "url": "https://github.com/openwrt/telephony.git",
+        "commit": "67281dfcb4f2beee48af0cbf689a71d96f3ce339"
+      }
+    }
+  },
+  "AP3000M": {
+    "url": "https://github.com/immortalwrt/immortalwrt.git",
+    "branch": "master",
+    "commit": "13376a7112809b19d3413a1689a4244c45165003",
+    "feeds": {
+      "packages": {
+        "url": "https://github.com/immortalwrt/packages.git",
+        "commit": "aeccc22b5cb176d6c8b138ffd5931872e5ff88d1"
+      },
+      "luci": {
+        "url": "https://github.com/immortalwrt/luci.git",
+        "commit": "aa264224846b057ebb42e8441d71f5344f5775b1"
+      },
+      "routing": {
+        "url": "https://github.com/openwrt/routing.git",
+        "commit": "4b9891b9136259f93294a424507ed24c5e8c1cbd"
+      },
+      "telephony": {
+        "url": "https://github.com/openwrt/telephony.git",
+        "commit": "67281dfcb4f2beee48af0cbf689a71d96f3ce339"
+      }
+    }
+  },
+  "C8-688": {
+    "url": "https://github.com/immortalwrt/immortalwrt.git",
+    "branch": "master",
+    "commit": "13376a7112809b19d3413a1689a4244c45165003",
+    "feeds": {
+      "packages": {
+        "url": "https://github.com/immortalwrt/packages.git",
+        "commit": "aeccc22b5cb176d6c8b138ffd5931872e5ff88d1"
+      },
+      "luci": {
+        "url": "https://github.com/immortalwrt/luci.git",
+        "commit": "aa264224846b057ebb42e8441d71f5344f5775b1"
+      },
+      "routing": {
+        "url": "https://github.com/openwrt/routing.git",
+        "commit": "4b9891b9136259f93294a424507ed24c5e8c1cbd"
+      },
+      "telephony": {
+        "url": "https://github.com/openwrt/telephony.git",
+        "commit": "67281dfcb4f2beee48af0cbf689a71d96f3ce339"
+      }
+    }
+  }
+}
