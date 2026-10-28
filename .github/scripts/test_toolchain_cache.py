@@ -216,6 +216,94 @@ class ToolchainCacheTests(unittest.TestCase):
             cache.seal(self.tree, self.reports)
 
     @unittest.skipIf(os.name == "nt", "POSIX links")
+    def test_known_absent_manual_alias_survives_copy_and_preserves_stamps(self):
+        self.setup_installed()
+        manual = self.tree / "staging_dir/host/share/man/man3"
+        manual.mkdir(parents=True)
+        alias = manual / "bn_add_words.3"
+        alias.symlink_to("bn_dump.3")
+        cache.seal(self.tree, self.reports)
+        saved = json.loads((self.tree / cache.MANIFEST).read_text())
+        self.assertEqual(saved["files"][alias.relative_to(self.tree).as_posix()],
+                         {"type": "link", "target": "bn_dump.3", "dangling": True})
+        completed = cache.stamps(self.tree, cache.expected(self.reports)["inputs"])
+        times = [p.stat().st_mtime_ns for p in completed]
+        host = self.tree / "staging_dir/host"
+        with tempfile.TemporaryDirectory() as directory:
+            shutil.copytree(host, Path(directory) / "host", symlinks=True)
+            shutil.rmtree(host)
+            shutil.copytree(Path(directory) / "host", host, symlinks=True)
+        cache.restore(self.tree, self.reports, True)
+        self.assertTrue(json.loads((self.reports / cache.STATE).read_text())["validated"])
+        self.assertEqual(times, [p.stat().st_mtime_ns for p in completed])
+        self.assertEqual(os.readlink(alias), "bn_dump.3")
+        self.assertFalse(alias.exists())
+
+    @unittest.skipIf(os.name == "nt", "POSIX links")
+    def test_manual_exception_does_not_hide_cache_changes(self):
+        for change in ("removed", "retargeted", "target appeared", "normal target removed"):
+            with self.subTest(change=change):
+                self.setup_installed()
+                manual = self.tree / "staging_dir/host/share/man/man3"
+                manual.mkdir(parents=True, exist_ok=True)
+                alias = manual / "bn_add_words.3"
+                alias.unlink(missing_ok=True)
+                alias.symlink_to("bn_dump.3")
+                target = manual / "bn_dump.3"
+                if change == "normal target removed":
+                    target.write_text("present at seal")
+                cache.seal(self.tree, self.reports)
+                if change == "removed":
+                    alias.unlink()
+                elif change == "retargeted":
+                    alias.unlink()
+                    alias.symlink_to("different.3")
+                elif change == "target appeared":
+                    target.write_text("unexpected content")
+                else:
+                    target.unlink()
+                cache.restore(self.tree, self.reports, True)
+                self.assertEqual(json.loads((self.reports / cache.STATE).read_text())["fallback"], "cold")
+
+    @unittest.skipIf(os.name == "nt", "POSIX links")
+    def test_all_unsafe_links_are_reported_without_broad_manual_exception(self):
+        self.setup_installed()
+        manual = "staging_dir/host/share/man/man3/"
+        unsafe = {
+            manual + "unknown.3": "bn_dump.3",
+            manual + "bn_add_words.3": "../../../../../../build_dir/bn_dump.3",
+            manual + "bn_div_words.3": "/missing/bn_dump.3",
+            "staging_dir/host/bin/bn_expand.3": "bn_dump.3",
+            "staging_dir/toolchain-aarch64/share/man/man3/bn_mul_words.3": "bn_dump.3",
+        }
+        for name, target in unsafe.items():
+            path = self.tree / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.symlink_to(target)
+        with self.assertRaises(cache.InstalledLinksError):
+            cache.seal(self.tree, self.reports)
+        rejected = json.loads((self.reports / "toolchain-links-rejected.json").read_text())
+        self.assertEqual({item["path"]: item["target"] for item in rejected["links"]}, unsafe)
+
+    @unittest.skipIf(os.name == "nt", "POSIX links")
+    def test_manual_directory_escape_and_missing_target_chain_are_rejected(self):
+        self.setup_installed()
+        outside = self.tree / "build_dir/manual"
+        outside.mkdir(parents=True)
+        (outside / "bn_add_words.3").symlink_to("bn_dump.3")
+        share = self.tree / "staging_dir/host/share/man"
+        share.mkdir(parents=True)
+        (share / "man3").symlink_to(outside, target_is_directory=True)
+        with self.assertRaises(cache.InstalledLinksError):
+            cache.seal(self.tree, self.reports)
+        (share / "man3").unlink()
+        (share / "man3").mkdir()
+        (share / "man3/bn_add_words.3").symlink_to("bn_dump.3")
+        (share / "man3/bn_dump.3").symlink_to("missing.3")
+        with self.assertRaises(cache.InstalledLinksError):
+            cache.seal(self.tree, self.reports)
+
+    @unittest.skipIf(os.name == "nt", "POSIX links")
     def test_changed_runner_link_target_is_rejected(self):
         self.setup_installed()
         with tempfile.TemporaryDirectory() as directory:

@@ -1,5 +1,6 @@
 """Exercise real locked upstream stamp rules without compiling a toolchain."""
 import io
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -32,6 +33,48 @@ CONFIG_CCACHE=y
 
 @unittest.skipUnless(os.name != "nt" and shutil.which("make"), "real Linux Make rules required")
 class UpstreamCacheTests(unittest.TestCase):
+    def test_libressl_original_manual_install_and_archive_round_trip(self):
+        # Exercise the real install hook, not a link fixture copied from the
+        # cache's own allowlist. No LibreSSL binary or toolchain is compiled.
+        data = urllib.request.urlopen(
+            "https://ftp.openbsd.org/pub/OpenBSD/LibreSSL/libressl-4.2.1.tar.gz", timeout=90).read()
+        self.assertEqual(hashlib.sha256(data).hexdigest(),
+                         "6d5c2f58583588ea791f4c8645004071d00dfa554a5bf788a006ca1eb5abd70b")
+        with tempfile.TemporaryDirectory() as directory:
+            tree = Path(directory).resolve()
+            source = tree / "source"
+            with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
+                for member in archive:
+                    relative = Path(*Path(member.name).parts[1:])
+                    if not relative.parts or ".." in relative.parts or not member.isfile():
+                        continue
+                    path = source / relative
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(archive.extractfile(member).read())
+                    path.chmod(member.mode & 0o777)
+            host = tree / "staging_dir/host"
+            cache.capture("./configure", f"--prefix={host}", "--disable-tests", cwd=source)
+            cache.capture("make", "-C", "man", "install", cwd=source)
+            toolchain = tree / "staging_dir/toolchain-test"
+            toolchain.mkdir()
+            inputs = {"effective": {"STAGING_DIR_HOST": str(host), "TOOLCHAIN_DIR": str(toolchain)},
+                      "source_files": {}}
+            files, external = cache.snapshot(tree, inputs)
+            absent = {name: item["target"] for name, item in files.items() if item.get("dangling")}
+            self.assertEqual(len(absent), 13)
+            self.assertEqual(set(absent.values()), {"bn_dump.3"})
+            self.assertTrue(all(name.startswith("staging_dir/host/share/man/man3/bn_") for name in absent))
+            self.assertFalse(external)
+            # The cache transport must retain these original dangling links.
+            packed = io.BytesIO()
+            with tarfile.open(fileobj=packed, mode="w") as archive:
+                archive.add(host, arcname="staging_dir/host")
+            shutil.rmtree(host)
+            packed.seek(0)
+            with tarfile.open(fileobj=packed) as archive:
+                archive.extractall(tree, filter="data")
+            self.assertEqual((files, external), cache.snapshot(tree, inputs))
+
     def world_make(self, tree, goal):
         # Enter via the real outer Makefile so its exports, then the actual
         # target/package/tools/toolchain include order, define the stamps.

@@ -19,6 +19,15 @@ BOOTSTRAP = ".ci-toolchain-bootstrap"
 INPUTS = "toolchain-inputs.json"
 STATE = "toolchain-cache.json"
 CONFIG_SYMBOL = re.compile(r"\bCONFIG_[A-Za-z0-9_][A-Za-z0-9_-]*")
+# LibreSSL 4.2.1's install-data-hook installs these aliases, although its
+# verified source archive omits bn_dump.3. Accept only these exact, local
+# documentation links; never extend this exception to binaries or libraries.
+LIBRESSL_ABSENT_MAN_ALIASES = frozenset((
+    "bn_add_words.3", "bn_div_words.3", "bn_expand.3", "bn_mul_add_words.3",
+    "bn_mul_comba4.3", "bn_mul_comba8.3", "bn_mul_normal.3", "bn_mul_words.3",
+    "bn_sqr_comba4.3", "bn_sqr_comba8.3", "bn_sqr_words.3", "bn_sub_words.3",
+    "bn_wexpand.3",
+))
 # Expanded by OpenWrt itself, including the selected host tools and stamp name.
 VARIABLES = (
     "ARCH", "ARCH_SUFFIX", "BOARD", "SUBTARGET", "CPU_TYPE", "CPU_SUBTYPE",
@@ -271,25 +280,52 @@ def roots(tree, inputs, allow_links=False):
     return result
 
 
+class InstalledLinksError(ValueError):
+    def __init__(self, issues):
+        self.issues = issues
+        super().__init__("invalid installed cache links: " + "; ".join(
+            f"{item['path']} -> {item['target']}: {item['error']}" for item in issues))
+
+
+def known_absent_manual(path, inputs):
+    manual = Path(inputs["effective"]["STAGING_DIR_HOST"]) / "share/man/man3"
+    target = manual / "bn_dump.3"
+    return (path.parent == manual and path.name in LIBRESSL_ABSENT_MAN_ALIASES and
+            os.readlink(path) == "bn_dump.3" and manual.resolve(strict=True) == manual and
+            not os.path.lexists(target))
+
+
 def snapshot(tree, inputs):
-    entries, external = {}, {}
-    for root in roots(tree, inputs):
+    entries, external, issues = {}, {}, []
+    installed = roots(tree, inputs)
+    for root in installed:
         if not root.is_dir():
             raise ValueError(f"missing installed cache directory: {root}")
         for path in [root, *sorted(root.rglob("*"))]:
             relative = path.relative_to(tree).as_posix()
             entries[relative] = record(path)
             if path.is_symlink():
-                resolved = path.resolve(strict=True)
-                if resolved.is_relative_to(tree):
-                    if not any(resolved.is_relative_to(item) for item in roots(tree, inputs)):
-                        source = inputs["source_files"].get(resolved.relative_to(tree).as_posix(), {})
-                        if not resolved.is_file() or source.get("sha256") != digest(resolved):
-                            raise ValueError(f"installed link depends on uncached build files: {relative}")
-                elif resolved.is_file():
-                    external[str(resolved)] = digest(resolved)
-                else:
-                    raise ValueError(f"external directory link cannot be verified: {relative}")
+                try:
+                    try:
+                        resolved = path.resolve(strict=True)
+                    except FileNotFoundError:
+                        if not known_absent_manual(path, inputs):
+                            raise
+                        entries[relative]["dangling"] = True
+                        continue
+                    if resolved.is_relative_to(tree):
+                        if not any(resolved.is_relative_to(item) for item in installed):
+                            source = inputs["source_files"].get(resolved.relative_to(tree).as_posix(), {})
+                            if not resolved.is_file() or source.get("sha256") != digest(resolved):
+                                raise ValueError("installed link depends on uncached build files")
+                    elif resolved.is_file():
+                        external[str(resolved)] = digest(resolved)
+                    else:
+                        raise ValueError("external directory link cannot be verified")
+                except (OSError, RuntimeError, ValueError) as error:
+                    issues.append({"path": relative, "target": os.readlink(path), "error": str(error)})
+    if issues:
+        raise InstalledLinksError(issues)
     return entries, external
 
 
@@ -421,7 +457,11 @@ def validate(tree, reports, key, inputs, original_times, state):
 def seal(tree, reports):
     key, inputs = check_inputs(tree, reports)
     stamps(tree, inputs)
-    entries, external = snapshot(tree, inputs)
+    try:
+        entries, external = snapshot(tree, inputs)
+    except InstalledLinksError as error:
+        write(reports / "toolchain-links-rejected.json", {"key": key, "links": error.issues})
+        raise
     write(tree / MANIFEST, {"schema": SCHEMA, "key": key, "files": entries, "external_files": external})
     print(f"Sealed {len(entries)} installed entries for {key}")
 
