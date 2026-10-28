@@ -57,8 +57,8 @@ class UpstreamCacheTests(unittest.TestCase):
                 reports = tree / "reports"
                 cache.write(reports / cache.INPUTS, {"key": key, "inputs": inputs})
                 for root in cache.roots(tree, inputs):
-                    (root / "bin").mkdir(parents=True)
-                    (root / "stamp").mkdir()
+                    (root / "bin").mkdir(parents=True, exist_ok=True)
+                    (root / "stamp").mkdir(exist_ok=True)
                     (root / "bin/example").write_text("installed artifact fixture")
                 completed = [Path(values["tools/stamp-compile"]), Path(values["toolchain/stamp-compile"]),
                              Path(values["TOOLCHAIN_DIR"]) / "stamp/.gcc_final_installed"]
