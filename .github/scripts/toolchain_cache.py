@@ -61,7 +61,7 @@ def config(path):
             key, value = line.split("=", 1)
             values[key] = value
         elif line.startswith("# CONFIG_") and line.endswith(" is not set"):
-            values[line[2:-11]] = "n"
+            values[line[2:-11]] = ""  # Undefined in Make; literal '=n' is different.
     return values
 
 
@@ -74,8 +74,13 @@ def probe(tree):
         *[f"$(info CI_CACHE:{name}=$({name}))" for name in VARIABLES],
         ".PHONY: ci-cache-inputs", "ci-cache-inputs:", "\t@:", "",
     ])
-    result = capture("make", "--no-print-directory", "-s", "-f", "-",
-                     f"TOPDIR={tree}", "ci-cache-inputs", cwd=tree, input=makefile)
+    # GNU Make materializes stdin as /tmp/GmXXXXXX and includes that random path
+    # in MAKEFILE_LIST. Use our own known, generated file within the source tree.
+    generated = tree / "tmp/.ci-toolchain-probe.mk"
+    generated.parent.mkdir(parents=True, exist_ok=True)
+    generated.write_text(makefile, encoding="utf-8")
+    result = capture("make", "--no-print-directory", "-s", "-f", str(generated),
+                     f"TOPDIR={tree}", "ci-cache-inputs", cwd=tree)
     values = dict(line.removeprefix("CI_CACHE:").split("=", 1)
                   for line in result.splitlines() if line.startswith("CI_CACHE:"))
     if set(values) != set(VARIABLES):
@@ -151,9 +156,9 @@ def fingerprint(tree, environment=None, values=None):
     for symbol in ("CONFIG_EXTERNAL_TOOLCHAIN", "CONFIG_NATIVE_TOOLCHAIN"):
         if cfg.get(symbol) == "y":
             raise ValueError(f"installed cache does not support {symbol}")
-    if cfg.get("CONFIG_EXTERNAL_KERNEL_TREE", '""') not in ('""', "n"):
+    if cfg.get("CONFIG_EXTERNAL_KERNEL_TREE", "") not in ('""', ""):
         raise ValueError("external kernel tree cannot use installed cache")
-    if cfg.get("CONFIG_KERNEL_GIT_CLONE_URI", '""') not in ('""', "n"):
+    if cfg.get("CONFIG_KERNEL_GIT_CLONE_URI", "") not in ('""', ""):
         raise ValueError("custom kernel Git sources require cache dependency review")
     files, referenced = {}, set()
     for relative in input_paths(tree, values):
@@ -172,7 +177,7 @@ def fingerprint(tree, environment=None, values=None):
                 raise ValueError(f"dynamic config dependency requires review: {relative}")
     # Read referenced CONFIG symbols rather than a hand-maintained whitelist.
     # Includes PACKAGE_kmod-b43, GDB/NASM, CPU/ABI and hardening dependencies.
-    selected = {key: cfg.get(key, "n") for key in sorted(referenced) if not key.endswith("_")}
+    selected = {key: cfg.get(key, "") for key in sorted(referenced) if not key.endswith("_")}
     effective = {key: value for key, value in values.items() if key != "MAKEFILE_LIST"}
     target = f"{values['BOARD']}-{values['SUBTARGET']}"
     if not re.fullmatch(r"[a-z0-9_-]+-[a-z0-9_-]+", target):

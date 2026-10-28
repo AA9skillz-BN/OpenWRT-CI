@@ -91,6 +91,15 @@ class ToolchainCacheTests(unittest.TestCase):
                 self.assertNotEqual(first, self.key())
         self.put(".config", original)
 
+    def test_make_unset_and_literal_n_are_not_equivalent(self):
+        first = self.key()
+        with (self.tree / ".config").open("a") as stream:
+            stream.write("# CONFIG_GDB is not set\n")
+        self.assertEqual(first, self.key())
+        with (self.tree / ".config").open("a") as stream:
+            stream.write("CONFIG_GDB=n\n")
+        self.assertNotEqual(first, self.key())
+
     def test_rules_headers_patches_new_inputs_and_runner_invalidate(self):
         first = self.key()
         for filename in ("target/linux/generic/kernel-6.18", "target/linux/generic/pending-6.18/001.patch",
