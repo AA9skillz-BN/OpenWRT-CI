@@ -26,6 +26,18 @@ defaults = module("tr3000-defaults")
 
 
 class PipelineTests(unittest.TestCase):
+    def test_cache_maintenance_cannot_gate_verified_firmware_publication(self):
+        data = yaml.safe_load((REPO / ".github/workflows/DEVICE-CORE.yml").read_text(encoding="utf-8"))
+        steps = {step.get("name"): step for step in data["jobs"]["core"]["steps"]}
+        for name in ("Seal Installed Toolchain Cache", "Save Exact Toolchain Cache", "Save Downloads",
+                     "Save Compiler Cache", "Report Toolchain Cache Reuse", "Restore Exact Toolchain Cache"):
+            self.assertTrue(steps[name]["continue-on-error"], name)
+        self.assertNotIn("continue-on-error", steps["Verify and Package Device Firmware"])
+        self.assertIn("steps.device-dl.outputs.cache-hit != 'true'", steps["Save Downloads"]["if"])
+        self.assertEqual(steps["Restore Downloads"]["with"]["key"], "${{steps.device-cache.outputs.dl}}")
+        self.assertEqual(steps["Save Downloads"]["with"]["key"], "${{steps.device-cache.outputs.dl}}")
+        self.assertIn("bad_toolchain_key", data["jobs"]["device-cache-rollover"]["if"])
+
     def test_builder_has_no_publication_credentials(self):
         data = yaml.safe_load((REPO / ".github/workflows/DEVICE-CORE.yml").read_text(encoding="utf-8"))
         builder = data["jobs"]["core"]

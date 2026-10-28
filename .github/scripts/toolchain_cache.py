@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Content-addressed installed tools/toolchain cache; never manufacture stamps."""
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -14,6 +15,7 @@ import subprocess
 SCHEMA = 3
 EPOCH = 946684800  # Older than every supported build, independent of commit dates.
 MANIFEST = ".ci-toolchain-cache.json"
+BOOTSTRAP = ".ci-toolchain-bootstrap"
 INPUTS = "toolchain-inputs.json"
 STATE = "toolchain-cache.json"
 CONFIG_SYMBOL = re.compile(r"\bCONFIG_[A-Za-z0-9_][A-Za-z0-9_-]*")
@@ -88,25 +90,51 @@ def probe(tree):
     return values
 
 
+def package_versions(inventory, seeds):
+    """Installed direct build dependencies and their Depends/Pre-Depends closure."""
+    packages, by_name = {}, {}
+    for line in inventory.splitlines():
+        name, version, dependencies, predependencies = (line.split("\t") + [""]*4)[:4]
+        packages[name] = (version, dependencies + "," + predependencies)
+        by_name.setdefault(name.split(":")[0], []).append(name)
+    pending, selected = list(seeds), {}
+    while pending:
+        name = pending.pop()
+        for binary in by_name.get(name.split(":")[0], []):
+            if binary in selected:
+                continue
+            version, dependencies = packages[binary]
+            selected[binary] = version
+            # Include every installed alternative; missing virtual providers are
+            # covered by their concrete installed parent and executable hashes.
+            for dependency in re.split(r"[,|]", dependencies):
+                match = re.match(r"\s*([a-zA-Z0-9.+-]+)(?::[a-zA-Z0-9-]+)?", dependency)
+                if match:
+                    pending.append(match[1])
+    missing = [name for name in seeds if name.split(":")[0] not in by_name]
+    if missing:
+        raise ValueError("missing build host packages: " + ", ".join(sorted(missing)))
+    return selected
+
+
 def host_environment():
-    # Conservative system package inventory covers linked libraries AND headers.
-    # Hosted Rust/Go and their paths are package-build inputs, not this cache.
     tools = {}
     for name in ("gcc", "g++", "ld", "as", "make", "bash", "perl", "python3",
                  "patch", "tar", "cmake", "ninja", "pkg-config"):
         binary = Path(shutil.which(name) or "missing").resolve(strict=True)
         tools[name] = {"path": str(binary), "sha256": digest(binary)}
-    cpu = Path("/proc/cpuinfo").read_text()
-    cpu = sorted({line for line in cpu.splitlines() if line.startswith(("flags\t", "Features\t"))})
-    return {"machine": capture("uname", "-m"), "cpu_features": cpu,
+    seeds = Path(__file__).with_name("build-host-packages.txt").read_text().split()
+    inventory = capture("dpkg-query", "-W", "-f=${binary:Package}\t${Version}\t${Depends}\t${Pre-Depends}\n")
+    return {"machine": capture("uname", "-m"),
             "os": Path("/etc/os-release").read_text(),
-            "packages": sorted(capture("dpkg-query", "-W", "-f=${binary:Package}=${Version}\n").splitlines()),
+            "packages": package_versions(inventory, [*seeds, "libc6", "libstdc++6"]),
             "gcc": capture("gcc", "-dumpfullversion"),
             "libc": capture("ldd", "--version").splitlines()[0], "tools": tools,
             "environment": {key: os.environ[key] for key in (
                 "CC", "CXX", "CFLAGS", "CXXFLAGS", "CPPFLAGS", "LDFLAGS",
                 "HOSTCC", "HOSTCXX", "SOURCE_DATE_EPOCH", "GIT_SRC_CHECKOUT_DIR",
-                "GIT_TREE_OVERRIDE_DIR") if key in os.environ}}
+                "GIT_TREE_OVERRIDE_DIR", "LD_LIBRARY_PATH", "LIBRARY_PATH", "CPATH",
+                "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH", "PKG_CONFIG_PATH", "PYTHONPATH") if key in os.environ}}
 
 
 def record(path):
@@ -160,7 +188,7 @@ def fingerprint(tree, environment=None, values=None):
         raise ValueError("external kernel tree cannot use installed cache")
     if cfg.get("CONFIG_KERNEL_GIT_CLONE_URI", "") not in ('""', ""):
         raise ValueError("custom kernel Git sources require cache dependency review")
-    files, referenced = {}, set()
+    files, referenced, native = {}, set(), False
     for relative in input_paths(tree, values):
         path = tree / relative
         if path.is_symlink() and not path.resolve().is_relative_to(tree):
@@ -172,6 +200,7 @@ def fingerprint(tree, environment=None, values=None):
             files[relative]["resolved_sha256"] = digest(path.resolve())
         if path.is_file():
             text = path.read_bytes().decode("utf-8", errors="replace")
+            native |= bool(re.search(r"-(?:march|mtune|mcpu)=native\b", text))
             referenced.update(CONFIG_SYMBOL.findall(text))
             if relative.startswith(("tools/", "toolchain/")) and re.search(r"CONFIG_[\w-]*\$[({]", text):
                 raise ValueError(f"dynamic config dependency requires review: {relative}")
@@ -185,15 +214,22 @@ def fingerprint(tree, environment=None, values=None):
     inputs = {"schema": SCHEMA, "implementation": digest(Path(__file__)), "root": str(tree),
               "source_files": files, "config": selected, "effective": effective,
               "host": host_environment() if environment is None else environment}
+    flags = " ".join([*selected.values(), *effective.values(), *inputs["host"].get("environment", {}).values()])
+    if native or re.search(r"-(?:march|mtune|mcpu)=native\b", flags):
+        cpu = Path("/proc/cpuinfo").read_text()
+        inputs["host"]["native_cpu_features"] = sorted({line for line in cpu.splitlines()
+            if line.startswith(("flags\t", "Features\t"))})
     key = f"wrt-v3-toolchain-{target}-{json_digest(inputs)}"
     return key, inputs
 
 
-def roots(tree, inputs):
+def roots(tree, inputs, allow_links=False):
+    if (tree / "staging_dir").is_symlink():
+        raise ValueError("cache staging parent must not be a symlink")
     result = []
     for name, prefix in (("STAGING_DIR_HOST", "host"), ("TOOLCHAIN_DIR", "toolchain-")):
         path = Path(inputs["effective"][name])
-        if path.parent != tree / "staging_dir" or not path.name.startswith(prefix) or path.is_symlink():
+        if path.parent != tree / "staging_dir" or not path.name.startswith(prefix) or (path.is_symlink() and not allow_links):
             raise ValueError(f"unsafe installed cache root: {path}")
         if name == "STAGING_DIR_HOST" and path.name != "host":
             raise ValueError("hostpkg is not an installed tools cache")
@@ -213,7 +249,9 @@ def snapshot(tree, inputs):
                 resolved = path.resolve(strict=True)
                 if resolved.is_relative_to(tree):
                     if not any(resolved.is_relative_to(item) for item in roots(tree, inputs)):
-                        raise ValueError(f"installed link depends on uncached build files: {relative}")
+                        source = inputs["source_files"].get(resolved.relative_to(tree).as_posix(), {})
+                        if not resolved.is_file() or source.get("sha256") != digest(resolved):
+                            raise ValueError(f"installed link depends on uncached build files: {relative}")
                 elif resolved.is_file():
                     external[str(resolved)] = digest(resolved)
                 else:
@@ -245,23 +283,95 @@ def check_inputs(tree, reports):
     return key, inputs
 
 
-def restore(tree, reports, hit):
+def output(**values):
+    if os.environ.get("GITHUB_OUTPUT"):
+        with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as stream:
+            for name, value in values.items():
+                stream.write(f"{name}={value}\n")
+
+
+def prepare(tree, reports):
     key, inputs = check_inputs(tree, reports)
+    backup = tree / BOOTSTRAP
+    if backup.exists():
+        raise ValueError("bootstrap backup already exists; refusing to overwrite pristine state")
+    backup.mkdir()
+    for root in roots(tree, inputs):
+        if root.exists():
+            shutil.copytree(root, backup / root.name, symlinks=True)
+    write(backup / "identity.json", {"key": key})
+
+
+def cold_reset(tree, reports, inputs):
+    backup = tree / BOOTSTRAP
+    if json.loads((backup / "identity.json").read_text())["key"] != expected(reports)["key"]:
+        raise ValueError("cannot restore pristine host prerequisites for this build")
+    paths = roots(tree, inputs, allow_links=True)
+    paths += [p for p in (tree / "staging_dir").glob("toolchain-*") if p not in paths]
+    # All deletion targets are direct children of the verified staging directory.
+    for path in paths:
+        if path.parent != tree / "staging_dir":
+            raise ValueError(f"unsafe cold-build cleanup path: {path}")
+        if path.is_symlink() or path.is_file():
+            path.unlink()
+        elif path.exists():
+            shutil.rmtree(path)
+    manifest = tree / MANIFEST
+    if manifest.is_dir() and not manifest.is_symlink():
+        shutil.rmtree(manifest)
+    else:
+        manifest.unlink(missing_ok=True)
+    for root in roots(tree, inputs):
+        if (backup / root.name).is_dir():
+            shutil.copytree(backup / root.name, root, symlinks=True)
+    # Re-run the original key check against pristine prerequisites, not restored
+    # info.mk. Actual source/config changes still fail this build contract.
+    check_inputs(tree, reports)
+
+
+def restore(tree, reports, hit, restore_failed=False):
+    original = expected(reports)
+    key, inputs = original["key"], original["inputs"]
     state = {"key": key, "exact_hit": hit, "validated": False}
     write(reports / STATE, state)
-    if not hit:
+    if not hit and not restore_failed:
+        check_inputs(tree, reports)
+        output(effective_hit="false", bad_key="", bad_detected_at="")
         print("Installed tools/toolchain cache miss; normal source build")
         return
+    original_times = {}
+    try:
+        if restore_failed:
+            raise ValueError("cache service restore failed or left partial files")
+        validate(tree, reports, key, inputs, original_times, state)
+    except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as error:
+        for filename, times in original_times.items():
+            os.utime(filename, ns=times, follow_symlinks=False)
+        cold_reset(tree, reports, inputs)
+        detected = datetime.now(timezone.utc).isoformat() if hit else ""
+        state.update({"fallback": "cold", "reason": str(error), "bad_key": key if hit else "",
+                      "bad_detected_at": detected})
+        write(reports / STATE, state)
+        output(effective_hit="false", bad_key=state["bad_key"], bad_detected_at=detected)
+        print("::warning::Installed toolchain cache rejected; pristine host prerequisites restored for a cold build: " +
+              str(error).replace("\n", " ").replace("\r", " "))
+        return
+    output(effective_hit="true", bad_key="", bad_detected_at="")
+
+
+def validate(tree, reports, key, inputs, original_times, state):
     saved = json.loads((tree / MANIFEST).read_text())
-    if saved.get("key") != key or saved.get("schema") != SCHEMA:
+    if not isinstance(saved, dict) or saved.get("key") != key or saved.get("schema") != SCHEMA:
         raise ValueError("installed cache manifest does not match the exact key")
     entries, external = snapshot(tree, inputs)
     if saved.get("files") != entries or saved.get("external_files") != external:
         raise ValueError("installed cache is incomplete, changed, or links to a different runner tool")
     completed = stamps(tree, inputs)
+    check_inputs(tree, reports)
     # Only verified content is normalized. No stamp is created or refreshed.
     for folder in (tree / "tools", tree / "toolchain"):
         for path in [*sorted(folder.rglob("*"), reverse=True), folder]:
+            original_times[path] = (path.lstat().st_atime_ns, path.lstat().st_mtime_ns)
             os.utime(path, (EPOCH, EPOCH), follow_symlinks=False)
     for stamp, source, dependencies in ((completed[0], "tools", []),
                                         (completed[1], "toolchain", [str(completed[2])])):
@@ -318,14 +428,17 @@ def report(tree, reports):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("restore", "seal", "report"))
+    parser.add_argument("command", choices=("prepare", "restore", "seal", "report"))
     parser.add_argument("--tree", type=Path, default=Path.cwd())
     parser.add_argument("--reports", type=Path)
     args = parser.parse_args()
     tree = args.tree.resolve()
     reports = args.reports or Path(os.environ["GITHUB_WORKSPACE"]) / "build-reports"
-    if args.command == "restore":
-        restore(tree, reports, os.environ.get("TOOLCHAIN_CACHE_HIT") == "true")
+    if args.command == "prepare":
+        prepare(tree, reports)
+    elif args.command == "restore":
+        restore(tree, reports, os.environ.get("TOOLCHAIN_CACHE_HIT") == "true",
+                os.environ.get("TOOLCHAIN_RESTORE_OUTCOME") == "failure")
     elif args.command == "seal":
         seal(tree, reports)
     else:

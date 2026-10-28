@@ -40,6 +40,21 @@ def main():
         "--key", shared + "-", "--limit", "100", "--json", "id,key,createdAt"], text=True))
     shared_entries = sorted((e for e in shared_entries if re.fullmatch(
         re.escape(shared) + r"-[a-f0-9]{64}", e["key"])), key=lambda e: e["createdAt"], reverse=True)
+    bad = os.environ.get("BAD_TOOLCHAIN_KEY", "")
+    if bad:
+        if bad != key:
+            raise ValueError("bad cache key is not this build's exact toolchain key")
+        observed = datetime.fromisoformat(os.environ["BAD_TOOLCHAIN_DETECTED_AT"].replace("Z", "+00:00"))
+        for entry in list(shared_entries):
+            created = datetime.fromisoformat(entry["createdAt"].replace("Z", "+00:00"))
+            # A concurrent run may already have removed/replaced this key.
+            # Never delete a replacement created after corruption was observed.
+            if entry["key"] == bad and created <= observed:
+                result = subprocess.run(["gh", "cache", "delete", str(entry["id"]), "--repo", repo],
+                                        text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                if result.returncode and "404" not in result.stderr:
+                    raise RuntimeError(result.stderr)
+                shared_entries.remove(entry)
     if not any(e["key"] == key for e in shared_entries):
         return  # A failed/racing save must not remove any fallback cache.
     # Shared consumers may have different fingerprints. Keep the current key,

@@ -252,6 +252,22 @@ class DeviceContractTests(unittest.TestCase):
         self.assertEqual(changed_feed["staging"], changed_rust["staging"])
         self.assertNotEqual(changed_feed["ccache"], changed_rust["ccache"])
 
+    def test_download_identity_tracks_effective_snapshots_config_and_patched_recipes(self):
+        prefix = "wrt-v2-ap3000m-linux-x64"
+        build.write(self.tree / "feeds/packages/lang/tool/Makefile", "PKG_VERSION:=1\n")
+        def key(source="a", feeds=None, packages=None, config="CONFIG_PACKAGE_luci=y"):
+            return build.download_key(self.tree, prefix, source, feeds or {"packages": "b"},
+                                      packages or {"plugin": "c"}, config)
+        first = key()
+        build.write(self.tree / "files/etc/build.tag", "new date")
+        self.assertEqual(first, key())
+        self.assertNotEqual(first, key(source="new latest commit"))
+        self.assertNotEqual(first, key(feeds={"packages": "new feed commit"}))
+        self.assertNotEqual(first, key(packages={"plugin": "new plugin commit"}))
+        self.assertNotEqual(first, key(config="CONFIG_PACKAGE_extra=y"))
+        build.write(self.tree / "feeds/packages/lang/tool/Makefile", "PKG_VERSION:=2\n")
+        self.assertNotEqual(first, key())
+
 
 class CacheRetentionTests(unittest.TestCase):
     def plan(self, entries):

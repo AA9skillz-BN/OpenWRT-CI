@@ -9,6 +9,7 @@ import tarfile
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 import urllib.request
 
 import toolchain_cache as cache
@@ -33,7 +34,8 @@ class UpstreamCacheTests(unittest.TestCase):
     def test_both_locked_sources_reuse_original_stamps_without_build_dir(self):
         locks = json.loads((REPO / "Profiles/sources.lock.json").read_text())
         for name in ("AP3000M", "TR3000-512"):
-            with self.subTest(source=name), tempfile.TemporaryDirectory() as directory:
+            with self.subTest(source=name), tempfile.TemporaryDirectory() as directory, \
+                 patch.object(cache, "host_environment", return_value={"machine": "test-host"}):
                 tree = Path(directory).resolve()
                 item = locks[name]
                 repository = item["url"].removesuffix(".git").removeprefix("https://github.com/")
@@ -56,6 +58,10 @@ class UpstreamCacheTests(unittest.TestCase):
                 key, inputs = cache.fingerprint(tree, values=values)
                 reports = tree / "reports"
                 cache.write(reports / cache.INPUTS, {"key": key, "inputs": inputs})
+                bootstrap = Path(values["STAGING_DIR_HOST"]) / "bin/prerequisite-fixture"
+                bootstrap.parent.mkdir(parents=True, exist_ok=True)
+                bootstrap.write_text("pristine prerequisite")
+                cache.prepare(tree, reports)
                 for root in cache.roots(tree, inputs):
                     (root / "bin").mkdir(parents=True, exist_ok=True)
                     (root / "stamp").mkdir(exist_ok=True)
@@ -93,6 +99,15 @@ class UpstreamCacheTests(unittest.TestCase):
                 # Device/package selection changes must remain shareable.
                 (tree / ".config").write_text(CONFIG + "CONFIG_TARGET_DEVICE_other=y\nCONFIG_PACKAGE_luci=y\n")
                 self.assertEqual(key, cache.fingerprint(tree)[0])
+                # Reset package additions, then reject actual corrupted staging
+                # and recover the prerequisite state captured before restore.
+                (tree / ".config").write_text(CONFIG)
+                (Path(values["STAGING_DIR_HOST"]) / "bin/example").write_text("corrupt")
+                cache.restore(tree, reports, True)
+                self.assertEqual(bootstrap.read_text(), "pristine prerequisite")
+                self.assertFalse(completed[2].exists())
+                self.assertFalse((tree / cache.MANIFEST).exists())
+                self.assertEqual(json.loads((reports / cache.STATE).read_text())["fallback"], "cold")
 
 
 if __name__ == "__main__":

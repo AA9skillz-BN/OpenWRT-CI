@@ -61,6 +61,9 @@ class ToolchainCacheTests(unittest.TestCase):
     def setup_installed(self):
         key, inputs = cache.fingerprint(self.tree)
         cache.write(self.reports / cache.INPUTS, {"key": key, "inputs": inputs})
+        if not (self.tree / cache.BOOTSTRAP).exists():
+            self.put("staging_dir/host/bin/bootstrap", "pristine host prerequisite")
+            cache.prepare(self.tree, self.reports)
         self.put("staging_dir/host/bin/example", "installed host tool")
         self.put("staging_dir/toolchain-aarch64/bin/example-gcc", "installed compiler")
         for name in ("tools/stamp-compile", "toolchain/stamp-compile"):
@@ -138,24 +141,30 @@ class ToolchainCacheTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "inputs changed"):
             cache.restore(self.tree, self.reports, True)
 
-    def test_corruption_missing_files_and_wrong_manifest_fail_before_touch(self):
-        self.setup_installed()
-        source = self.tree / "tools/Makefile"
-        before = source.stat().st_mtime_ns
-        binary = self.tree / "staging_dir/host/bin/example"
-        binary.write_text("damaged")
-        with self.assertRaisesRegex(ValueError, "incomplete, changed"):
-            cache.restore(self.tree, self.reports, True)
-        self.assertEqual(source.stat().st_mtime_ns, before)
-        binary.unlink()
-        with self.assertRaisesRegex(ValueError, "incomplete, changed"):
-            cache.restore(self.tree, self.reports, True)
-        self.put("staging_dir/host/bin/example", "installed host tool")
-        manifest = json.loads((self.tree / cache.MANIFEST).read_text())
-        manifest["key"] = "wrong"
-        cache.write(self.tree / cache.MANIFEST, manifest)
-        with self.assertRaisesRegex(ValueError, "exact key"):
-            cache.restore(self.tree, self.reports, True)
+    def test_corruption_missing_files_and_wrong_manifest_fall_back_before_touch(self):
+        for corruption in ("damaged", "missing", "wrong manifest"):
+            with self.subTest(corruption=corruption):
+                self.setup_installed()
+                source = self.tree / "tools/Makefile"
+                before = source.stat().st_mtime_ns
+                binary = self.tree / "staging_dir/host/bin/example"
+                if corruption == "damaged":
+                    binary.write_text("damaged")
+                elif corruption == "missing":
+                    binary.unlink()
+                else:
+                    manifest = json.loads((self.tree / cache.MANIFEST).read_text())
+                    manifest["key"] = "wrong"
+                    cache.write(self.tree / cache.MANIFEST, manifest)
+                cache.restore(self.tree, self.reports, True)
+                state = json.loads((self.reports / cache.STATE).read_text())
+                self.assertEqual(state["fallback"], "cold")
+                self.assertEqual(state["bad_key"], cache.expected(self.reports)["key"])
+                self.assertEqual(source.stat().st_mtime_ns, before)
+                self.assertEqual((self.tree / "staging_dir/host/bin/bootstrap").read_text(), "pristine host prerequisite")
+                self.assertFalse(binary.exists())
+                self.assertFalse((self.tree / cache.MANIFEST).exists())
+                self.assertFalse((self.tree / "staging_dir/toolchain-aarch64/stamp/.gcc_final_installed").exists())
 
     @unittest.skipIf(os.name == "nt", "POSIX source timestamps and links")
     def test_hit_preserves_stamps_and_only_normalizes_tools_sources(self):
@@ -187,8 +196,8 @@ class ToolchainCacheTests(unittest.TestCase):
             (self.tree / "staging_dir/host/bin/runner-tool").symlink_to(binary)
             cache.seal(self.tree, self.reports)
             binary.write_text("version two")
-            with self.assertRaisesRegex(ValueError, "incomplete, changed"):
-                cache.restore(self.tree, self.reports, True)
+            cache.restore(self.tree, self.reports, True)
+            self.assertEqual(json.loads((self.reports / cache.STATE).read_text())["fallback"], "cold")
 
     def test_miss_leaves_source_timestamps_alone(self):
         key, inputs = cache.fingerprint(self.tree)
@@ -197,6 +206,37 @@ class ToolchainCacheTests(unittest.TestCase):
         before = path.stat().st_mtime_ns
         cache.restore(self.tree, self.reports, False)
         self.assertEqual(before, path.stat().st_mtime_ns)
+
+    def test_partial_restore_service_error_restores_prerequisites_without_deleting_key(self):
+        self.setup_installed()
+        cache.restore(self.tree, self.reports, False, restore_failed=True)
+        state = json.loads((self.reports / cache.STATE).read_text())
+        self.assertEqual(state["fallback"], "cold")
+        self.assertEqual(state["bad_key"], "")
+        self.assertTrue((self.tree / "staging_dir/host/bin/bootstrap").is_file())
+
+    @unittest.skipIf(os.name == "nt", "POSIX links")
+    def test_links_to_key_covered_source_scripts_are_valid(self):
+        self.setup_installed()
+        (self.tree / "staging_dir/host/bin/source-tool").symlink_to(self.tree / "scripts/timestamp.pl")
+        cache.seal(self.tree, self.reports)
+        cache.restore(self.tree, self.reports, True)
+        self.assertTrue(json.loads((self.reports / cache.STATE).read_text())["validated"])
+
+    def test_host_package_closure_ignores_unrelated_runner_software(self):
+        first = "gcc\t13\tlibc6 (>= 2.38), libgcc | alternate\t\nlibc6\t2.39\t\t\nlibgcc\t13\t\t\nazure-cli\t1\t\t"
+        expected = {"gcc": "13", "libc6": "2.39", "libgcc": "13"}
+        self.assertEqual(cache.package_versions(first, ["gcc"]), expected)
+        self.assertEqual(cache.package_versions(first.replace("azure-cli\t1", "azure-cli\t2"), ["gcc"]), expected)
+        self.assertNotEqual(cache.package_versions(first.replace("libc6\t2.39", "libc6\t2.40"), ["gcc"]), expected)
+        with self.assertRaisesRegex(ValueError, "missing build host packages"):
+            cache.package_versions(first, ["missing"])
+
+    @unittest.skipIf(os.name == "nt", "Linux CPU feature source")
+    def test_cpu_flags_are_only_required_for_native_compilation(self):
+        self.assertNotIn("native_cpu_features", cache.fingerprint(self.tree)[1]["host"])
+        self.put(".config", 'CONFIG_TARGET_OPTIMIZATION="-O2 -march=native"\n')
+        self.assertIn("native_cpu_features", cache.fingerprint(self.tree)[1]["host"])
 
     def test_timing_warning_and_overlapping_activity(self):
         cache.write(self.reports / cache.STATE, {"exact_hit": True, "validated": True})
@@ -212,6 +252,27 @@ class ToolchainCacheTests(unittest.TestCase):
 
 
 class SharedRetentionTests(unittest.TestCase):
+    def test_bad_exact_key_is_removed_even_without_a_successful_new_save(self):
+        self.bad_key_plan("2020-01-01T00:00:00Z", ["99"])
+
+    def test_newer_replacement_of_bad_key_is_preserved(self):
+        self.bad_key_plan("2099-01-01T00:00:00Z", [])
+
+    def bad_key_plan(self, created, expected):
+        prefix = "wrt-v3-toolchain-mediatek-filogic"
+        key = prefix + "-" + "a"*64
+        env = {"TOOLCHAIN_CACHE_PREFIX": prefix, "DEVICE_STAGING_KEY": key,
+               "BAD_TOOLCHAIN_KEY": key, "BAD_TOOLCHAIN_DETECTED_AT": "2026-10-28T12:00:00+00:00",
+               "DEVICE_CACHE_PREFIX": "wrt-v2-ap3000m-linux-x64", "DEVICE_DL_KEY": "dl-current",
+               "DEVICE_CCACHE_KEY": "ccache-current", "GITHUB_REPOSITORY": "owner/repo",
+               "GITHUB_REF": "refs/heads/main"}
+        entries = [{"id": 99, "key": key, "createdAt": created}]
+        with patch.dict(os.environ, env), patch.object(roll.subprocess, "check_output", side_effect=["[]", json.dumps(entries)]), \
+             patch.object(roll.subprocess, "run") as remove:
+            remove.return_value.returncode = 0
+            roll.main()
+        self.assertEqual([call.args[0][3] for call in remove.call_args_list], expected)
+
     def test_shared_cleanup_preserves_recent_newest_current_and_other_targets(self):
         prefix = "wrt-v3-toolchain-mediatek-filogic"
         def entry(number, date):

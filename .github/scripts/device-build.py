@@ -261,6 +261,21 @@ def package(tree, repo, name, data, reports):
     write(reports / "release-notes.md", text)
 
 
+def download_key(tree, prefix, source, feeds, packages, config):
+    # Locks alone do not describe latest mode, user package choices or patched
+    # source URLs/versions. Read the actual post-patch recipes as well.
+    recipes = {}
+    for folder in ("tools", "toolchain", "include", "package", "feeds"):
+        for file in sorted((tree / folder).rglob("*")):
+            if ".git" in file.parts or not file.is_file():
+                continue
+            if file.name == "Makefile" or file.suffix == ".mk":
+                recipes[file.relative_to(tree).as_posix()] = hashlib.sha256(file.read_bytes()).hexdigest()
+    inputs = {"schema": 1, "source": source, "feeds": feeds, "packages": packages,
+              "config": config, "recipes": recipes}
+    return prefix + "-dl-" + toolchain_cache.json_digest(inputs)
+
+
 def cache_keys(repo, tree, name, reports):
     feeds = {p.name: run("git", "rev-parse", "HEAD", cwd=p)
              for p in sorted((tree / "feeds").iterdir()) if (p / ".git").exists()}
@@ -290,12 +305,13 @@ def cache_keys(repo, tree, name, reports):
     staging, tool_inputs = toolchain_cache.fingerprint(tree)
     toolchain_cache.write(reports / toolchain_cache.INPUTS, {"key": staging, "inputs": tool_inputs})
     prefix = f"wrt-v2-{name.lower()}-linux-x64"
+    downloads = download_key(tree, prefix, inputs["source"], feeds, inputs["packages"], config)
     # ccache validates compiler/content itself; toolchain staging never falls back.
     ccache = hashlib.sha256((compiler + inputs["rust"] + inputs["os"]).encode()).hexdigest()[:16]
     with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as stream:
         stream.write(f"prefix={prefix}\nstaging={staging}\n"
                      f"toolchain_prefix={staging.rsplit('-', 1)[0]}\n"
-                     f"ccache={prefix}-ccache-{ccache}-\ndl={prefix}-dl-\n")
+                     f"ccache={prefix}-ccache-{ccache}-\ndl={downloads}\n")
 
 
 def main():
