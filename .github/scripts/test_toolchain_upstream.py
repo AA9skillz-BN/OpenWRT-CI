@@ -50,7 +50,7 @@ class UpstreamCacheTests(unittest.TestCase):
             "endif", "",
         ]), encoding="utf-8")
         return cache.capture("make", "--no-print-directory", "-s", "-f", "Makefile", "-f", str(wrapper),
-                             goal, cwd=tree)
+                             "V=s", goal, cwd=tree)
 
     def test_both_locked_sources_reuse_original_stamps_without_build_dir(self):
         locks = json.loads((REPO / "Profiles/sources.lock.json").read_text())
