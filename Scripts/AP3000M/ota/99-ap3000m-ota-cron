@@ -4,21 +4,19 @@
 #
 # 为什么需要：LuCI 页面能读 /tmp 里的检查缓存秒出结果，但缓存得有东西去填。
 # 这里每天 04:15 跑一次 `ap3000m-ota check --cache`（静默、只写缓存）。
-# 关掉的办法：uci set ap3000m_ota.main.auto_check='0' 后重启（下一轮不再添加）。
-
-[ "$(uci -q get ap3000m_ota.main.auto_check)" = "1" ] || exit 0
+# 开关每次执行时检查；定时项保持一份以支持即时重新启用。
 
 CRON=/etc/crontabs/root
 mkdir -p /etc/crontabs
 
-if grep -q 'ap3000m-ota check --cache' "$CRON" 2>/dev/null; then
-	exit 0
-fi
-
+touch "$CRON"
+sed -i '\|/usr/sbin/ap3000m-ota check --cache|d' "$CRON"
+# Keep one lightweight scheduler entry so re-enabling UCI also takes effect.
+# The command checks its UCI switch on every invocation; no boot/reinstall needed.
 printf '15 4 * * * /usr/sbin/ap3000m-ota check --cache >/dev/null 2>&1\n' >>"$CRON"
 
 /etc/init.d/cron enable 2>/dev/null
 /etc/init.d/cron restart 2>/dev/null
-logger -t ap3000m-ota "已启用每日自动检查（04:15）"
+logger -t ap3000m-ota "已同步自动检查开关（04:15）"
 
 exit 0

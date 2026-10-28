@@ -40,6 +40,11 @@ ensure_dir() { :; }
 DL_TAG_FILE="$TASK_TMP/dl.tag"
 DL_RESULT_FILE="$TASK_TMP/dl.result"
 PENDING_FILE="$TASK_TMP/pending"
+CACHE_FILE="$TASK_TMP/check.json"
+OP_FILE="$TASK_TMP/operation.json"
+OP_LOG="$TASK_TMP/operation.log"
+LOCK="$TASK_TMP/ota.lock"
+current_tag() { printf 'AP3000M-current'; }
 fetch_api() { printf '%s' "$API_JSON"; }
 free_kb() { printf '999999'; }
 mirror_list() { :; }
@@ -113,6 +118,125 @@ cmd_upgrade
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((self.root / "pending").exists())
         self.assertFalse((self.root / "flashed").exists())
+
+    def seed_local_image(self):
+        result = self.shell('cmd_download\n', API_JSON=json.dumps([self.release()]))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.root / "AP3000M-test.bin.json").is_file())
+        (self.root / "network-used").unlink()
+
+    def test_offline_rollback_rechecks_saved_metadata_before_flashing(self):
+        self.seed_local_image()
+        result = self.shell('''
+fetch_api() { touch "$TASK_TMP/api-used"; return 1; }
+sysupgrade() {
+    case "$1" in -T|-b) return 0;; *) printf '%s' "$*" > "$TASK_TMP/flashed";; esac
+}
+cmd_upgrade --keep --yes --tag AP3000M-test
+''', API_JSON="[]")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.root / "api-used").exists())
+        self.assertTrue((self.root / "flashed").exists())
+
+    def test_corrupt_offline_image_cannot_flash_or_create_pending(self):
+        self.seed_local_image()
+        (self.root / "AP3000M-test.bin").write_bytes(b"evil")
+        result = self.shell('''
+fetch_api() { touch "$TASK_TMP/api-used"; return 1; }
+sysupgrade() { touch "$TASK_TMP/flashed"; }
+cmd_upgrade --keep --yes --tag AP3000M-test
+''', API_JSON="[]")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.root / "api-used").exists())
+        self.assertFalse((self.root / "pending").exists())
+        self.assertFalse((self.root / "flashed").exists())
+
+    def test_local_metadata_from_another_repository_is_not_trusted(self):
+        self.seed_local_image()
+        metadata = self.root / "AP3000M-test.bin.json"
+        data = json.loads(metadata.read_text())
+        data["repo"] = "other/repository"
+        metadata.write_text(json.dumps(data))
+        result = self.shell('verified_local AP3000M-test\n', API_JSON="[]")
+        self.assertEqual(result.returncode, 2, result.stderr)
+
+    def test_legacy_local_image_requires_remote_metadata_before_use(self):
+        (self.root / "AP3000M-test.bin").write_bytes(b"good")
+        result = self.shell('''
+fetch_api() { touch "$TASK_TMP/api-used"; return 1; }
+sysupgrade() { touch "$TASK_TMP/flashed"; }
+cmd_upgrade --keep --yes --tag AP3000M-test
+''', API_JSON="[]")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue((self.root / "api-used").exists())
+        self.assertFalse((self.root / "flashed").exists())
+
+    def test_auto_check_switches_prevent_network_but_allow_manual_checks(self):
+        for off in ("enabled", "auto_check"):
+            (self.root / "api-used").unlink(missing_ok=True)
+            result = self.shell('''
+cfg() { [ "$1" != ''' + off + ''' ]; }
+cfg_or() { if [ "$1" = ''' + off + ''' ]; then echo 0; else echo 1; fi; }
+fetch_api() { touch "$TASK_TMP/api-used"; printf '%s' "$API_JSON"; }
+cmd_check --cache
+[ ! -f "$TASK_TMP/api-used" ] || exit 90
+cmd_check --json
+''', API_JSON=json.dumps([self.release()]))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout)["latest"], "AP3000M-test")
+
+    def test_requested_release_uses_tag_endpoint_and_latest_reads_all_pages(self):
+        # Exercise fetch_api itself, overriding only curl to return API fixtures.
+        actual = SOURCE[SOURCE.index("fetch_api() ("):SOURCE.index("\nvalidate_metadata()")]
+        self.root.joinpath("page1.json").write_text(json.dumps([self.release("AP3000M-old")] * 100))
+        self.root.joinpath("page2.json").write_text(json.dumps([self.release("AP3000M-new")]))
+        result = self.shell(actual + '''
+curl() {
+    for url do :; done
+    printf '%s\n' "$url" >> "$TASK_TMP/api-urls"
+    case "$url" in
+        */tags/*) printf '%s' "$API_JSON";;
+        *page=1) cat "$TASK_TMP/page1.json";;
+        *page=2) cat "$TASK_TMP/page2.json";;
+        *) return 1;;
+    esac
+}
+fetch_api AP3000M-test | parse_tag AP3000M-test
+fetch_api | jq length
+''', API_JSON=json.dumps(self.release()))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines()[-1], "101")
+        self.assertIn("/releases/tags/AP3000M-test", (self.root / "api-urls").read_text())
+
+    @unittest.skipIf(os.name == "nt" or not shutil.which("flock"), "Linux flock required")
+    def test_background_upgrade_returns_promptly_and_exposes_validation_failure(self):
+        image = self.root / "AP3000M-test.bin"
+        image.write_bytes(b"good")
+        result = self.shell('''
+sysupgrade() { return 1; }
+background_operation upgrade --image "$TASK_TMP/AP3000M-test.bin" --keep --yes
+wait
+cat "$OP_FILE"
+''', API_JSON="[]")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines()[0], "started")
+        state = json.loads(result.stdout[result.stdout.index("{"):])
+        self.assertEqual(state["state"], "failed")
+        self.assertIn("未提交升级", state["detail"])
+        self.assertFalse((self.root / "pending").exists())
+
+    @unittest.skipIf(os.name == "nt" or not shutil.which("flock"), "Linux flock required")
+    def test_background_download_and_upgrade_cannot_overlap(self):
+        result = self.shell('''
+cmd_download() { while [ ! -f "$TASK_TMP/finish" ]; do sleep .1; done; }
+background_operation download
+( background_operation upgrade --keep --yes ) && exit 90
+touch "$TASK_TMP/finish"
+wait
+''', API_JSON="[]")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "started")
+        self.assertIn("已有下载或升级任务在运行", result.stderr)
 
 
 if __name__ == "__main__":

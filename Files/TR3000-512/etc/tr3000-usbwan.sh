@@ -7,11 +7,9 @@
 # 旧固件的问题：network.F50 把网卡写死成 eth2，而 eth2 这个编号是上一次
 # 枚举顺序的产物。换线、换口、换设备、或者 USB 重新枚举后设备号一变，
 # 接口就变成「网络设备不存在」，DHCP 永远起不来，WiFi 客户端自然没网。
-# 本脚本改成按 USB 总线实时探测，探测到谁就用谁，并且：
-#   - 写 network.f50（DHCP 客户端，metric 10，优先于有线 wan）
-#   - 不用 F50 自带 DNS，改用公共 DNS（见下方注释，这是「没有下载速度」的元凶）
-#   - 并入 wan 防火墙区（wan 区自带 masquerade / mtu_fix；LAN→WAN 转发已存在）
-#   - 清理旧固件遗留的 network.F50
+# 按 USB 总线实时探测，只更新设备绑定；首次创建时填 DHCP、metric 和 DNS。
+# 已有协议、DNS、路由优先级、停用开关及防火墙区域保留。
+# 旧 network.F50 改名为 f50，同时迁移区域引用，不丢弃用户设置。
 #
 # 触发点：
 #   /etc/hotplug.d/net/20-tr3000-usbwan    插拔时
@@ -58,14 +56,7 @@ find_usb_netdev() {
 
 main() {
 	local ifc="$1"
-	local zone sec
-
-	# 旧固件把 F50 写死成 eth2，先清掉，避免同名意图的两个接口并存
-	if uci -q get network.F50 >/dev/null 2>&1; then
-		uci -q delete network.F50
-		uci -q commit network
-		log "已清理遗留 network.F50"
-	fi
+	local zone sec candidate initial=0 network_changed=0 firewall_changed=0 masq migrated=0
 
 	if [ -z "$ifc" ]; then
 		ifc=$(find_usb_netdev) || {
@@ -85,41 +76,80 @@ main() {
 		return 0
 	fi
 
-	uci -q set network.f50=interface
-	uci -q set network.f50.proto='dhcp'
-	uci -q set network.f50.device="$ifc"
-	uci -q set network.f50.metric='10'
-	# 关键：不用 F50 自带的 DNS。实测 192.168.0.1 连测 5 次会失败 1 次，
-	# 而且对 CNAME 链（如 mirrors.aliyun.com → w.alikunlun.com）经常只回 CNAME
-	# 不回 A 记录，客户端拿到「Could not resolve host」，表现为「没有下载速度」。
-	# 换成三个公共 DNS 后：解析 10/10 成功，镜像站下载 5.2 MB/s。
-	uci -q set network.f50.peerdns='0'
-	uci -q delete network.f50.dns
-	uci -q add_list network.f50.dns='114.114.114.114'
-	uci -q add_list network.f50.dns='223.5.5.5'
-	uci -q add_list network.f50.dns='119.29.29.29'
-	uci -q commit network
-	log "network.f50 -> $ifc (dhcp, metric 10, 公共 DNS)"
+	# Migrate the old name without discarding user protocol/DNS/route settings.
+	if ! uci -q get network.f50 >/dev/null 2>&1; then
+		if uci -q get network.F50 >/dev/null 2>&1; then
+			uci -q rename network.F50=f50 || return 1
+			migrated=1
+			uci -q delete network.f50.ifname
+		else
+			initial=1
+			uci -q set network.f50=interface
+			uci -q set network.f50.proto=dhcp
+			uci -q set network.f50.metric=10
+			# Default DNS avoids unreliable modem DNS; only set on creation.
+			uci -q set network.f50.peerdns=0
+			uci -q add_list network.f50.dns=114.114.114.114
+			uci -q add_list network.f50.dns=223.5.5.5
+			uci -q add_list network.f50.dns=119.29.29.29
+		fi
+		network_changed=1
+	fi
+	if [ "$migrated" = 1 ]; then
+		for candidate in $(uci -q show firewall | sed -n 's/^\(firewall\.[^.]*\)\.network=.*/\1/p'); do
+			if uci -q get "$candidate.network" | tr ' ' '\n' | grep -qx F50; then
+				uci -q del_list "$candidate.network=F50"
+				uci -q get "$candidate.network" | tr ' ' '\n' | grep -qx f50 || uci -q add_list "$candidate.network=f50"
+				firewall_changed=1
+			fi
+		done
+	fi
+	if [ "$(uci -q get network.f50.disabled)" = 1 ] ||
+	   [ "$(uci -q get network.f50.auto)" = 0 ] ||
+	   [ "$(uci -q get network.f50.proto)" = none ]; then
+		[ "$network_changed" = 1 ] && uci -q commit network
+		[ "$firewall_changed" = 1 ] && uci -q commit firewall
+		log 'f50 自动启动已关闭，保留用户配置'
+		return 0
+	fi
+	if [ "$(uci -q get network.f50.device)" != "$ifc" ]; then
+		uci -q set network.f50.device="$ifc"
+		network_changed=1
+	fi
+	[ "$network_changed" = 1 ] && uci -q commit network
+	log "network.f50 -> $ifc（初始化=$initial，保留已有协议/DNS/metric）"
 
 	# 并入 wan 防火墙区
-	zone=$(uci -q show firewall | sed -n "s/^\(firewall\.[^.]*\)\.name='wan'$/\1/p" | head -n1)
+	# Respect an existing user-selected firewall zone.
+	zone=
+	for candidate in $(uci -q show firewall | sed -n 's/^\(firewall\.[^.]*\)\.network=.*/\1/p'); do
+		if uci -q get "$candidate.network" | tr ' ' '\n' | grep -qx f50; then zone=$candidate; break; fi
+	done
+	[ -n "$zone" ] || zone=$(uci -q show firewall | sed -n "s/^\(firewall\.[^.]*\)\.name='wan'$/\1/p" | head -n1)
 	if [ -n "$zone" ]; then
 		sec="${zone#firewall.}"
 		if ! uci -q get "firewall.$sec.network" 2>/dev/null | tr ' ' '\n' | grep -qx f50; then
 			# 注意：值里不要再套一层引号，否则 UCI 会存成带引号的字面量 'f50'，
 			# 既进不了区域匹配、又会随每次 hotplug 累积脏条目。
 			uci -q add_list "firewall.$sec.network=f50"
-			uci -q commit firewall
+			firewall_changed=1
 			log "f50 已并入 wan 防火墙区"
 		fi
 		# 兜底开启 masquerade：没有 SNAT 的话，LAN 侧（192.168.6.x）访问
 		# F50 内网（192.168.0.1）时源地址还是 192.168.6.x，F50 没有回程
 		# 路由，表现就是「后台打不开」。
-		if [ "$(uci -q get "firewall.$sec.masq")" != "1" ]; then
-			uci -q set "firewall.$sec.masq='1'"
-			uci -q commit firewall
-			log "已强制开启 wan 区 masquerade"
+		masq=$(uci -q get "firewall.$sec.masq")
+		if [ -z "$masq" ] && [ "$(uci -q get "firewall.$sec.name")" = wan ]; then
+			uci -q set "firewall.$sec.masq=1"
+			firewall_changed=1
 		fi
+		case "$masq" in
+			"'1'")
+				uci -q set "firewall.$sec.masq=1"
+				firewall_changed=1
+				;;
+		esac
+		[ "$firewall_changed" = 1 ] && uci -q commit firewall
 	else
 		log "警告：找不到 wan 防火墙区，NAT 可能不生效"
 	fi
@@ -147,9 +177,8 @@ main() {
 		log "已为 $ifc 启用双核 RPS（$(cat /sys/class/net/"$ifc"/queues/rx-0/rps_cpus 2>/dev/null)）"
 	fi
 
-	/etc/init.d/firewall reload >/dev/null 2>&1
-	/etc/init.d/dnsmasq reload >/dev/null 2>&1
-	log "已启动 f50 并重载防火墙/DNS"
+	[ "$firewall_changed" = 1 ] && /etc/init.d/firewall reload >/dev/null 2>&1
+	log "已启动 f50"
 }
 
 main "$@"

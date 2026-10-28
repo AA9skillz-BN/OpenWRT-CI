@@ -8,7 +8,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-ap3000m-ota
 PKG_VERSION:=1.0.0
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 
 PKG_LICENSE:=MIT
 PKG_MAINTAINER:=AA9skillz-BN
@@ -20,7 +20,7 @@ define Package/$(PKG_NAME)
   CATEGORY:=LuCI
   SUBMENU:=3. Applications
   TITLE:=AirPi AP3000M OTA 升级
-  DEPENDS:=+luci-base +rpcd-mod-ucode +jq +curl
+  DEPENDS:=+luci-base +rpcd-mod-ucode +jq +flock +curl
   PKGARCH:=all
 endef
 

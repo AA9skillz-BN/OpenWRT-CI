@@ -19,14 +19,18 @@ find_hwmon() {
 }
 
 temp_mc() {
+	local type hottest= t
 	for z in /sys/class/thermal/thermal_zone*; do
+		type=$(cat "$z/type" 2>/dev/null)
+		case "$type" in cpu*|soc*|*cpu*thermal*|*soc*thermal*) ;; *) continue ;; esac
 		[ -r "$z/temp" ] || continue
 		t=$(cat "$z/temp" 2>/dev/null) || continue
-		case "$t" in ''|*[!0-9-]*) continue ;; esac
-		echo "$t"
-		return 0
+		case "$t" in ''|*[!0-9]*) continue ;; esac
+		[ "$t" -le 150000 ] || continue
+		if [ -z "$hottest" ] || [ "$t" -gt "$hottest" ]; then hottest=$t; fi
 	done
-	return 1
+	[ -n "$hottest" ] || return 1
+	printf '%s\n' "$hottest"
 }
 
 # 毫摄氏度 -> 0..255
@@ -53,7 +57,7 @@ apply() {
 case "${1:-}" in
 	once)
 		find_hwmon || exit 1
-		t=$(temp_mc) || t=40000
+		t=$(temp_mc) || { t=80000; logger -t c8-fan 'temperature unavailable; fan at full speed'; }
 		apply "$t"
 		;;
 	*)
@@ -67,7 +71,7 @@ case "${1:-}" in
 		apply 80000 >/dev/null 2>&1
 		sleep 5
 		while :; do
-			t=$(temp_mc) || t=0
+			t=$(temp_mc) || { t=80000; logger -t c8-fan 'temperature unavailable; fan at full speed'; }
 			apply "$t"
 			sleep "$INTERVAL"
 		done

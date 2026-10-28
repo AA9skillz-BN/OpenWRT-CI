@@ -94,7 +94,10 @@ PY
 	echo "C8-688: 已加入 MAC 分支"
 fi
 
-# ---- D. 覆盖层（Files/C8-688 -> package/base-files/files） ----------------
+# ---- D. eMMC 第二系统升级（保留上游其它机型分派） -------------------------
+python3 "$_c8_src/patch-upgrade.py" "$_c8_dst/filogic/base-files/lib/upgrade/platform.sh"
+
+# ---- E. 覆盖层（Files/C8-688 -> package/base-files/files） ----------------
 _c8_files="${GITHUB_WORKSPACE:-/github/workspace}/Files/C8-688"
 if [ -d "$_c8_files" ]; then
 	cp -a "$_c8_files/." ./package/base-files/files/ ||

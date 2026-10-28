@@ -2,12 +2,11 @@
 'require view';
 'require poll';
 'require rpc';
-'require ui';
 
 var callStatus = rpc.declare({ object: 'luci.ap3000m_ota', method: 'status', expect: {} });
 var callCheck = rpc.declare({ object: 'luci.ap3000m_ota', method: 'check', expect: {} });
-var callDownload = rpc.declare({ object: 'luci.ap3000m_ota', method: 'download', expect: {} });
-var callUpgrade = rpc.declare({ object: 'luci.ap3000m_ota', method: 'upgrade', params: [ 'keep' ], expect: {} });
+var callDownload = rpc.declare({ object: 'luci.ap3000m_ota', method: 'download', params: [ 'tag' ], expect: {} });
+var callUpgrade = rpc.declare({ object: 'luci.ap3000m_ota', method: 'upgrade', params: [ 'keep', 'tag' ], expect: {} });
 var callUpgradeTag = rpc.declare({ object: 'luci.ap3000m_ota', method: 'upgrade_tag', params: [ 'tag', 'keep' ], expect: {} });
 var callSettings = rpc.declare({ object: 'luci.ap3000m_ota', method: 'set_settings', params: [ 'keep_config', 'use_mirror' ], expect: {} });
 
@@ -74,16 +73,18 @@ return view.extend({
 		}
 
 		function refreshButtons() {
-			var downloading = !!st.downloading;
+			var downloading = !!st.downloading || !!(st.operation && [ 'running', 'flashing' ].indexOf(st.operation.state) >= 0);
+			var disabled = st.enabled === false;
+			btnCheck.disabled = disabled || downloading;
 			var target = (latest && latest.latest) || st.downloading;
 			var ready = !downloading && !!target && (st.images || []).indexOf(target) >= 0;
 
-			btnDownload.disabled = downloading || !latest;
-			btnKeep.disabled = !ready;
-			btnWipe.disabled = !ready;
+			btnDownload.disabled = disabled || downloading || !latest;
+			btnKeep.disabled = disabled || !ready;
+			btnWipe.disabled = disabled || !ready;
 
 			var imgs = localImages();
-			btnRollback.disabled = imgs.length === 0 || downloading;
+			btnRollback.disabled = disabled || imgs.length === 0 || downloading;
 		}
 
 		function rebuildRollback() {
@@ -123,7 +124,7 @@ return view.extend({
 			}
 
 			/* 缓存命中：进页面就能看到上次检查结果，不用等网络 */
-			if (st.cached && st.cached.latest) {
+			if (st.enabled !== false && st.cached && st.cached.latest) {
 				latest = st.cached;
 				newVal.textContent = st.cached.latest;
 				sizeVal.textContent = mb(st.cached.size) + '  sha256 ' +
@@ -132,6 +133,18 @@ return view.extend({
 					(st.cached.update ? '（有新版本）' : '（已是最新）');
 			}
 
+			if (st.operation) {
+				var op = st.operation;
+				if (op.state === 'running' || op.state === 'flashing')
+					stateVal.textContent = op.state === 'flashing' ? '镜像校验通过，正在提交升级' : '后台校验/下载任务运行中';
+				if (op.state === 'failed')
+					setMsg(op.detail || '后台任务失败', true);
+			}
+			if (st.enabled === false) {
+				latest = null;
+				newVal.textContent = 'OTA 页面操作已关闭';
+				noteVal.textContent = '可通过 UCI enabled 开关重新启用；命令行手动操作仍可用。';
+			}
 			rebuildRollback();
 			refreshButtons();
 		}
@@ -159,47 +172,44 @@ return view.extend({
 		});
 
 		btnDownload.addEventListener('click', function() {
-			setMsg('已开始后台下载（走镜像，失败自动回落直连）…');
-			callDownload().then(refreshButtons);
+			if (!latest) return;
+			callDownload(latest.latest).then(function(r) { taskAccepted(r, 'download'); }).catch(taskFailed);
 		});
 
 		function confirmUpgrade(text) {
-			return confirm(text + '\n\n设备会立即重启，期间请勿断电。继续？');
+			return confirm(text + '\n\n校验通过后设备将重启，期间请勿断电。继续？');
 		}
 
-		btnKeep.addEventListener('click', function() {
-			if (!confirmUpgrade('将升级到 ' + (latest && latest.latest) + '，保留全部配置（WiFi/密码/FM350/风扇）。'))
-				return;
-			setMsg('正在提交升级，设备即将重启…');
-			callUpgrade(true).then(function() {
-				ui.addNotification(null, E('p', {}, '升级已提交，页面将失联约 3 分钟。'), 'info');
-			});
-		});
+		function taskFailed(e) {
+			setMsg('任务失败：' + e, true);
+			refreshButtons();
+		}
 
-		btnWipe.addEventListener('click', function() {
-			if (!confirmUpgrade('将升级到 ' + (latest && latest.latest) +
-				'，并清空所有配置（WiFi 恢复 AP3000M/12345678，登录密码重置）。'))
+		function taskAccepted(r, action) {
+			if (!r || r.error || !r.started) {
+				taskFailed((r && r.error) || '无有效响应');
 				return;
-			setMsg('正在提交升级（不保留配置），设备即将重启…');
-			callUpgrade(false).then(function() {
-				ui.addNotification(null, E('p', {}, '升级已提交，页面将失联约 3 分钟。'), 'info');
-			});
-		});
+			}
+			st.operation = { state: 'running', action: action || 'upgrade' };
+			setMsg(action === 'download' ? '后台下载任务已启动，完成后会校验镜像。' : '后台任务已启动，正在校验；通过后才会提交升级。');
+			refreshButtons();
+		}
+
+		function upgradeLatest(keep) {
+			var tag = latest && latest.latest;
+			if (!tag || !confirmUpgrade('将升级到 ' + tag + (keep ? '，保留当前配置。' : '，并清空所有配置。')))
+				return;
+			callUpgrade(keep, tag).then(taskAccepted).catch(taskFailed);
+		}
+		btnKeep.addEventListener('click', function() { upgradeLatest(true); });
+		btnWipe.addEventListener('click', function() { upgradeLatest(false); });
 
 		btnRollback.addEventListener('click', function() {
 			var tag = selRollback.value;
-			if (!tag)
-				return;
-			if (!confirmUpgrade('将回滚到 ' + shortTag(tag, prefix) + '（使用本地已下载的镜像），' +
+			if (!tag || !confirmUpgrade('将回滚到 ' + shortTag(tag, prefix) + '，重新校验本地镜像，' +
 				(chkKeep.checked ? '保留当前配置。' : '并清空配置。')))
 				return;
-			setMsg('正在提交回滚，设备即将重启…');
-			callUpgradeTag(tag, chkKeep.checked).then(function(r) {
-				if (r && r.error)
-					setMsg('回滚失败：' + r.error, true);
-				else
-					ui.addNotification(null, E('p', {}, '回滚已提交，设备即将重启。'), 'info');
-			});
+			callUpgradeTag(tag, chkKeep.checked).then(taskAccepted).catch(taskFailed);
 		});
 
 		chkKeep.addEventListener('change', function() { callSettings(chkKeep.checked, chkMirror.checked); });

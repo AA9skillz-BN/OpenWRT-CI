@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 # ap3000m-ota-boot —— 每次开机回写上一次 OTA 是否成功
 #
-# 由 Scripts/PRIVATE.sh 投放到 /etc/init.d/ 并建立 /etc/rc.d/S99ap3000m-ota-boot 软链，
+# 由 Scripts/AP3000M/private.sh 投放到 /etc/init.d/ 并建立 /etc/rc.d/S99ap3000m-ota-boot 软链，
 # 不依赖 rc.local（避免用户自定义 rc.local 与行尾差异导致的失配）。
 #
 # 逻辑：升级前 ap3000m-ota 会写 /etc/ap3000m-pending（该文件已在 /etc/sysupgrade.conf 里，

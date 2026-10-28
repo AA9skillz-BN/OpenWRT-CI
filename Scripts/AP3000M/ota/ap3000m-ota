@@ -2,13 +2,13 @@
 # SPDX-License-Identifier: MIT
 # ap3000m-ota —— AirPi AP3000M 一键 OTA（检查更新 / 下载校验 / 升级 / 指定版本回退）
 #
-# 设计要点（2026-10-25 定稿）：
+# 设计要点：
 #   1. 版本号来自构建期写死的 /etc/ap3000m-build.tag，值就是 Release 的 tag，
-#      与 WRT-CORE 的 "$WRT_CONFIG-$WRT_INFO-$WRT_BRANCH-$WRT_DATE" 完全一致。
+#      与 DEVICE-CORE 发布 job 使用同一个构建标签。
 #   2. 元数据只信 api.github.com（推 tag/size/sha256 三元组）；镜像站只参与下载大文件。
 #   3. 强制 sha256 校验，镜像被投毒也刷不进去。
 #   4. 默认保留配置；--wipe 才 sysupgrade -n。
-#   5. 升级前写 /etc/ap3000m-pending，开机由 rc.local 调 boot-hook 回写成功/失败。
+#   5. 升级前写 /etc/ap3000m-pending，开机由 init.d 调 boot-hook 核对运行版本。
 
 set -u
 
@@ -20,8 +20,10 @@ CONF=ap3000m_ota.main
 MARGIN_KB=20480
 DL_TAG_FILE=/tmp/ap3000m-ota-dl.tag
 DL_RESULT_FILE=/tmp/ap3000m-ota-dl.result
-DL_LOG=/tmp/ap3000m-ota-dl.log
 CACHE_FILE=/tmp/ap3000m-ota-check.json
+OP_FILE=/tmp/ap3000m-ota-operation.json
+OP_LOG=/tmp/ap3000m-ota-operation.log
+LOCK=/var/lock/ap3000m-ota.lock
 
 log()  { printf '%s\n' "ap3000m-ota: $*" >&2; }
 warn() { printf '%s\n' "ap3000m-ota: 警告: $*" >&2; }
@@ -51,7 +53,7 @@ current_tag() {
 }
 
 need_tools() {
-	for t in curl jq sha256sum sysupgrade; do
+	for t in curl jq sha256sum sysupgrade flock; do
 		command -v "$t" >/dev/null 2>&1 || die "缺少依赖命令 $t"
 	done
 }
@@ -61,11 +63,113 @@ ensure_dir() {
 	[ -d "$d" ] || mkdir -p "$d" || die "无法创建 $d"
 }
 
-fetch_api() {
-	curl -fsSL --connect-timeout 8 --max-time 30 \
-		-H 'Accept: application/vnd.github+json' \
-		-H 'User-Agent: ap3000m-ota/1.0' \
-		"https://api.github.com/repos/$(repo)/releases?per_page=30"
+valid_tag() {
+	case "$1" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
+	case "$1" in "$(tag_prefix)"*) return 0 ;; *) return 1 ;; esac
+}
+
+fetch_api() (
+	# A requested tag is independent of release pagination and retention order.
+	local page=1 batch all='[]' count url
+	if [ -n "${1:-}" ]; then
+		valid_tag "$1" || return 1
+		url="https://api.github.com/repos/$(repo)/releases/tags/$1"
+		batch=$(curl -fsSL --connect-timeout 8 --max-time 30 \
+			-H 'Accept: application/vnd.github+json' -H 'User-Agent: ap3000m-ota/1.1' "$url") || return 1
+		printf '%s' "$batch" | jq -ce 'if type == "object" and .tag_name then [.] else error("invalid release") end'
+		return $?
+	fi
+	while :; do
+		url="https://api.github.com/repos/$(repo)/releases?per_page=100&page=$page"
+		batch=$(curl -fsSL --connect-timeout 8 --max-time 30 \
+			-H 'Accept: application/vnd.github+json' -H 'User-Agent: ap3000m-ota/1.1' "$url") || return 1
+		count=$(printf '%s' "$batch" | jq -e 'if type == "array" then length else error("invalid releases") end') || return 1
+		all=$(printf '%s\n%s' "$all" "$batch" | jq -cs '.[0] + .[1]') || return 1
+		[ "$count" -eq 100 ] || break
+		page=$((page + 1))
+	done
+	printf '%s\n' "$all"
+)
+
+validate_metadata() {
+	valid_tag "$TAG" || die "版本标签无效或不属于当前机型前缀"
+	case "$NAME" in ''|*[!A-Za-z0-9._-]*) die "固件文件名无效" ;; esac
+	case "$NAME" in *sysupgrade*.bin) ;; *) die "不是 sysupgrade 固件" ;; esac
+	case "$SIZE" in ''|*[!0-9]*) die "固件大小元数据无效" ;; esac
+	[ "$SIZE" -gt 0 ] || die "固件大小必须大于零"
+	case "$SHA" in ''|*[!a-fA-F0-9]*) die "Release 缺少有效 SHA-256，拒绝下载升级" ;; esac
+	[ "${#SHA}" = 64 ] || die "Release SHA-256 长度无效"
+}
+
+save_metadata() {
+	local meta="$IMG.json"
+	(umask 077; jq -n --arg repo "$(repo)" --arg prefix "$(tag_prefix)" --arg tag "$TAG" \
+		--arg asset "$NAME" --arg size "$SIZE" --arg sha256 "$SHA" \
+		'{repo:$repo,prefix:$prefix,tag:$tag,asset:$asset,size:($size|tonumber),sha256:$sha256}' > "$meta.tmp") &&
+		mv -f "$meta.tmp" "$meta" || die "保存本地镜像校验信息失败"
+}
+
+# 1 = no authenticated local copy yet; 2 = present but invalid. No network here.
+verified_local() (
+	local want="$1" line TAG NAME SIZE SHA IMG
+	valid_tag "$want" || return 2
+	IMG="$(work_dir)/$want.bin"
+	[ -f "$IMG" ] && [ -f "$IMG.json" ] || return 1
+	line=$(jq -er --arg repo "$(repo)" --arg prefix "$(tag_prefix)" --arg tag "$want" '
+		select(.repo == $repo and .prefix == $prefix and .tag == $tag)
+		| [.tag,.asset,(.size|tostring),.sha256] | @tsv' "$IMG.json") || return 2
+	TAG=$(printf '%s' "$line" | cut -f1)
+	NAME=$(printf '%s' "$line" | cut -f2)
+	SIZE=$(printf '%s' "$line" | cut -f3)
+	SHA=$(printf '%s' "$line" | cut -f4)
+	(validate_metadata) || return 2
+	[ "$(wc -c < "$IMG" | tr -d ' ')" = "$SIZE" ] || return 2
+	printf '%s  %s\n' "$SHA" "$IMG" | sha256sum -c - >/dev/null 2>&1 || return 2
+	printf '%s\n' "$IMG"
+)
+
+acquire_lock() {
+	mkdir -p "${LOCK%/*}" || die "无法创建锁目录"
+	exec 9>"$LOCK"
+	flock -n 9 || die "已有下载或升级任务在运行"
+}
+
+operation_state() {
+	local state="$1" detail="${2:-}"
+	jq -n --arg action "$ACTION" --arg state "$state" --arg detail "$detail" \
+		'{action:$action,state:$state,detail:$detail}' > "$OP_FILE.tmp" && mv -f "$OP_FILE.tmp" "$OP_FILE"
+}
+
+operation_exit() {
+	local rc=$?
+	if [ "$rc" -ne 0 ]; then
+		operation_state failed "$(tail -c 1200 "$OP_LOG" 2>/dev/null)"
+		[ "$ACTION" != download ] || { rm -f "$DL_TAG_FILE"; printf 'failed 下载失败，见任务详情\n' > "$DL_RESULT_FILE"; }
+	fi
+}
+
+run_operation() {
+	ACTION="$1"; shift
+	trap operation_exit EXIT
+	trap 'exit 130' INT
+	trap 'exit 143' TERM
+	operation_state running
+	case "$ACTION" in
+		download) cmd_download "$@" ;;
+		upgrade) cmd_upgrade "$@" ;;
+	esac
+	local rc=$?
+	[ "$rc" -eq 0 ] || exit "$rc"
+	operation_state completed
+}
+
+background_operation() {
+	# FD 9 stays open in the child: flock releases automatically on every exit.
+	acquire_lock
+	ACTION="$1"
+	operation_state running || die "无法保存后台任务状态"
+	( trap '' HUP; run_operation "$@" ) </dev/null >"$OP_LOG" 2>&1 &
+	printf 'started\n'
 }
 
 # 输出：<tag> <文件名> <大小> <sha256>（空行表示无匹配）
@@ -125,6 +229,7 @@ cmd_check() {
 		esac
 	done
 
+	if [ "$mode" = cache ] && { [ "$(cfg_or enabled 1)" = 0 ] || [ "$(cfg_or auto_check 1)" = 0 ]; }; then return 0; fi
 	json=$(fetch_api) || die "访问 api.github.com 失败（检查 DNS / 网络 / 时间同步）"
 	line=$(printf '%s' "$json" | parse_tag "")
 	[ -n "$line" ] || die "没有找到 $(tag_prefix)* 的 Release"
@@ -137,12 +242,11 @@ cmd_check() {
 
 	if [ "$CUR" = "$LATEST_TAG" ]; then state="已是最新"; upd=false; else state="可升级"; upd=true; fi
 
-	RESULT=$(printf '{"current":"%s","latest":"%s","asset":"%s","size":%s,"sha256":"%s","update":%s,"checked_at":%s}' \
-		"$CUR" "$LATEST_TAG" "$LATEST_NAME" "$LATEST_SIZE" "$LATEST_SHA" "$upd" "$(date +%s)")
-
-	# 无论哪种模式都顺手更新缓存，页面下次打开秒出结果
-	mkdir -p "$(dirname "$CACHE_FILE")" 2>/dev/null
-	printf '%s\n' "$RESULT" >"$CACHE_FILE" 2>/dev/null
+	RESULT=$(jq -n --arg current "$CUR" --arg latest "$LATEST_TAG" --arg asset "$LATEST_NAME" \
+		--arg size "$LATEST_SIZE" --arg sha256 "$LATEST_SHA" --argjson update "$upd" \
+		--arg checked_at "$(date +%s)" \
+		'{current:$current,latest:$latest,asset:$asset,size:($size|tonumber),sha256:$sha256,update:$update,checked_at:($checked_at|tonumber)}') || die "版本元数据无效"
+	printf '%s\n' "$RESULT" > "$CACHE_FILE.$$" && mv -f "$CACHE_FILE.$$" "$CACHE_FILE"
 
 	case "$mode" in
 		json) printf '%s\n' "$RESULT" ;;
@@ -168,19 +272,14 @@ cmd_list() {
 }
 
 cmd_download() {
-	# --background：给 LuCI 用，立即返回，进度靠 /tmp 下的状态文件 + .part 文件大小
-	if [ "${1:-}" = "--background" ]; then
-		shift
-		( cmd_download "$@" >"$DL_LOG" 2>&1 ) &
-		echo "started"
-		return 0
-	fi
-
 	need_tools
 	ensure_dir
 	want=""
-	[ "${1:-}" = "--tag" ] && want="${2:-}"
-	json=$(fetch_api) || die "访问 api.github.com 失败"
+	if [ "$#" -gt 0 ]; then
+		[ "$#" -eq 2 ] && [ "$1" = --tag ] && valid_tag "$2" || die "用法: download [--tag TAG]"
+		want="$2"
+	fi
+	json=$(fetch_api "$want") || die "访问 api.github.com 失败"
 	line=$(printf '%s' "$json" | parse_tag "$want")
 	[ -n "$line" ] || die "找不到目标版本 ${want:-（最新）}"
 
@@ -188,13 +287,8 @@ cmd_download() {
 	NAME=$(printf '%s' "$line" | cut -f2)
 	SIZE=$(printf '%s' "$line" | cut -f3)
 	SHA=$(printf '%s' "$line" | cut -f4)
-	# Never allow missing metadata to downgrade an authenticated download to a
-	# size-only check. Older releases without a digest require manual validation.
-	case "$TAG" in ''|*[!A-Za-z0-9._-]*) die "版本标签包含不支持的路径字符" ;; esac
-	case "$SIZE" in ''|*[!0-9]*) die "固件大小元数据无效" ;; esac
-	[ "$SIZE" -gt 0 ] || die "固件大小必须大于零"
-	case "$SHA" in ''|*[!a-fA-F0-9]*) die "Release 缺少有效 SHA-256，拒绝下载升级" ;; esac
-	[ "${#SHA}" = 64 ] || die "Release SHA-256 长度无效"
+	validate_metadata
+
 	IMG="$(work_dir)/$TAG.bin"
 
 	# 给 LuCI 页面用的进度状态（字节数由页面自己 stat .part 文件获得）
@@ -204,6 +298,7 @@ cmd_download() {
 	if [ -f "$IMG" ] && [ "${SIZE:-0}" -gt 0 ]; then
 		now=$(wc -c < "$IMG" | tr -d ' ')
 		if [ "$now" = "$SIZE" ] && printf '%s  %s\n' "$SHA" "$IMG" | sha256sum -c - >/dev/null 2>&1; then
+			save_metadata
 			log "已存在且 SHA-256 验证通过：$IMG"
 			rm -f "$DL_TAG_FILE"
 			printf 'ok 已存在 %s\n' "$TAG" > "$DL_RESULT_FILE"
@@ -251,6 +346,7 @@ cmd_download() {
 		fi
 	fi
 
+	[ "$(wc -c < "$PART" | tr -d ' ')" = "$SIZE" ] || die "下载文件大小与 Release 不符"
 	if ! printf '%s  %s\n' "$SHA" "$PART" | sha256sum -c - >/dev/null 2>&1; then
 		rm -f "$PART" "$DL_TAG_FILE"
 		printf 'failed sha256 校验失败\n' > "$DL_RESULT_FILE"
@@ -264,6 +360,7 @@ cmd_download() {
 		die "重命名失败"
 	fi
 	rm -f "$DL_TAG_FILE"
+	save_metadata
 	printf 'ok 已下载 %s\n' "$TAG" > "$DL_RESULT_FILE"
 	log "已保存：$IMG"
 	echo "$IMG"
@@ -273,6 +370,7 @@ cmd_upgrade() {
 	need_tools
 	ensure_dir
 	keep=$(keep_default)
+	FORCE_IMG=""
 	want=""
 	yes=0
 	while [ $# -gt 0 ]; do
@@ -280,8 +378,8 @@ cmd_upgrade() {
 			--keep) keep=1 ;;
 			--wipe) keep=0 ;;
 			--yes|-y) yes=1 ;;
-			--tag) shift; want="${1:-}" ;;
-			--image) shift; FORCE_IMG="${1:-}" ;;
+			--tag) shift; want="${1:-}"; valid_tag "$want" || die "非法版本标签" ;;
+			--image) shift; FORCE_IMG="${1:-}"; [ -n "$FORCE_IMG" ] || die "缺少镜像路径" ;;
 			*) die "未知参数：$1" ;;
 		esac
 		shift
@@ -292,7 +390,15 @@ cmd_upgrade() {
 		[ -f "$IMG" ] || die "镜像不存在：$IMG"
 		TAG=$(basename "$IMG" .bin)
 	else
-		IMG=$(cmd_download ${want:+--tag "$want"}) || die "下载失败"
+		IMG=""
+		if [ -n "$want" ]; then
+			IMG=$(verified_local "$want")
+			rc=$?
+			[ "$rc" -ne 2 ] || die "本地镜像或校验信息损坏，拒绝回退；请重新下载该版本"
+		fi
+		if [ -z "$IMG" ]; then
+			if [ -n "$want" ]; then IMG=$(cmd_download --tag "$want"); else IMG=$(cmd_download); fi || die "下载失败"
+		fi
 		TAG=$(basename "$IMG" .bin)
 	fi
 
@@ -312,6 +418,7 @@ cmd_upgrade() {
 	printf '%s\n' "$TAG" > "$PENDING_FILE"
 	sync
 
+	[ -z "${ACTION:-}" ] || operation_state flashing "镜像校验通过，正在提交 sysupgrade"
 	if [ "$keep" = 1 ]; then
 		log "开始升级（保留配置）→ $TAG"
 		sysupgrade "$IMG" || { rm -f "$PENDING_FILE"; die "sysupgrade 执行失败"; }
@@ -323,7 +430,6 @@ cmd_upgrade() {
 }
 
 # 给 LuCI 页面用：一次输出全部本地状态（不联网，快）
-json_escape() { printf '%s' "${1:-}" | tr -d '\r\n' | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 
 cmd_ui_status() {
 	cur=$(current_tag)
@@ -345,30 +451,39 @@ cmd_ui_status() {
 	fi
 	[ -s "$DL_RESULT_FILE" ] && dl_result=$(cat "$DL_RESULT_FILE")
 
-	imgs=""
+	imgs='[]'
 	d=$(work_dir)
 	if [ -d "$d" ]; then
-		for f in "$d"/*.bin; do
-			[ -f "$f" ] || continue
-			imgs="$imgs\"$(basename "$f" .bin)\","
+		for f in "$d"/*.bin.json; do
+			[ -f "$f" ] && [ -f "${f%.json}" ] || continue
+			t=$(basename "$f" .bin.json)
+			valid_tag "$t" || continue
+			jq -e --arg repo "$(repo)" --arg tag "$t" --arg p "$(tag_prefix)" \
+				'.repo == $repo and .tag == $tag and .prefix == $p' "$f" >/dev/null 2>&1 || continue
+			imgs=$(printf '%s' "$imgs" | jq --arg tag "$t" '. + [$tag]')
 		done
 	fi
+	cached=null
+	[ ! -s "$CACHE_FILE" ] || cached=$(jq -c 'if type == "object" then . else null end' "$CACHE_FILE" 2>/dev/null)
+	op=null
+	[ ! -s "$OP_FILE" ] || op=$(jq -c . "$OP_FILE" 2>/dev/null)
+	# A killed process cannot keep a stale "running" status indefinitely.
+	if [ -f "$LOCK" ] && (flock -n 9) 9>"$LOCK"; then
+		case "$(printf '%s' "${op:-null}" | jq -r '.state // ""')" in
+			running|flashing) op='{"state":"failed","detail":"后台任务已中断，请检查日志"}'; dl_tag="" ;;
+		esac
+	fi
+	jq -n --arg current "$cur" --arg pending "$pend" --arg last_result "$last" \
+		--arg downloading "$dl_tag" --arg download_size "$dl_size" --arg download_bytes "$dl_bytes" \
+		--arg download_result "$dl_result" --argjson images "$imgs" \
+		--argjson keep_config "$( [ "$(keep_default)" = 0 ] && echo false || echo true )" \
+		--argjson use_mirror "$( [ "$(use_mirror)" = 0 ] && echo false || echo true )" \
+		--argjson enabled "$( [ "$(cfg_or enabled 1)" = 0 ] && echo false || echo true )" \
+		--arg tag_prefix "$(tag_prefix)" --argjson cached "${cached:-null}" --argjson operation "${op:-null}" \
+		'{current:$current,pending:$pending,last_result:$last_result,downloading:$downloading,
+		  download_size:($download_size|tonumber),download_bytes:($download_bytes|tonumber),download_result:$download_result,
+		  images:$images,keep_config:$keep_config,use_mirror:$use_mirror,enabled:$enabled,tag_prefix:$tag_prefix,cached:$cached,operation:$operation}'
 
-	cached=""
-	[ -s "$CACHE_FILE" ] && cached=$(cat "$CACHE_FILE")
-
-	printf '{"current":"%s","pending":"%s","last_result":"%s","downloading":"%s","download_size":%s,"download_bytes":%s,"download_result":"%s","images":[%s],"keep_config":%s,"use_mirror":%s,"tag_prefix":"%s","cached":%s}\n' \
-		"$(json_escape "$cur")" \
-		"$(json_escape "$pend")" \
-		"$(json_escape "$last")" \
-		"$(json_escape "$dl_tag")" \
-		"${dl_size:-0}" "${dl_bytes:-0}" \
-		"$(json_escape "$dl_result")" \
-		"${imgs%,}" \
-		"$( [ "$(keep_default)" = 0 ] && echo false || echo true )" \
-		"$( [ "$(use_mirror)" = 0 ] && echo false || echo true )" \
-		"$(json_escape "$(tag_prefix)")" \
-		"${cached:-null}"
 }
 
 cmd_status() {
@@ -418,6 +533,7 @@ cmd_self_update() {
 	head -n 1 "$tmp" | grep -q '^#!/bin/sh' || { rm -f "$tmp"; die "内容不像本脚本（首行不是 #!/bin/sh），放弃替换"; }
 	grep -q 'cmd_self_update' "$tmp" || { rm -f "$tmp"; die "下载内容缺少 self-update 实现，放弃替换"; }
 
+	sh -n "$tmp" || { rm -f "$tmp"; die "新脚本语法检查失败"; }
 	chmod 0755 "$tmp"
 	cp -f /usr/sbin/ap3000m-ota /usr/sbin/ap3000m-ota.bak 2>/dev/null
 	mv -f "$tmp" /usr/sbin/ap3000m-ota || die "替换失败"
@@ -434,7 +550,7 @@ usage() {
   list                           列出最近可用版本
   download [--tag <TAG>]         仅下载并校验到 /root/ota
   download --background          后台下载（LuCI 页面用）
-  upgrade [--keep|--wipe] [--yes] [--tag <TAG>] [--image <FILE>]
+  upgrade [--background] [--keep|--wipe] [--yes] [--tag <TAG>] [--image <FILE>]
                                  下载（若需要）并刷写；默认保留配置
   status                         当前版本 / 待验证升级 / 上次结果 / 本地镜像
   self-update [branch]           从 GitHub 拉取最新版本脚本（默认 main），免刷机升级工具
@@ -455,8 +571,17 @@ main() {
 	case "$cmd" in
 		check)     cmd_check "$@" ;;
 		list)      cmd_list ;;
-		download)  cmd_download "$@" ;;
-		upgrade)   cmd_upgrade "$@" ;;
+		download|upgrade)
+			need_tools
+			if [ "${1:-}" = --background ]; then
+				shift
+				background_operation "$cmd" "$@"
+			else
+				acquire_lock
+				# The foreground log stays on stderr; failures remain visible there.
+				"cmd_$cmd" "$@"
+			fi
+			;;
 		status)    cmd_status ;;
 		self-update) cmd_self_update ${1:-main} ;;
 		ui-status) cmd_ui_status ;;

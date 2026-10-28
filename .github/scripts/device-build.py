@@ -188,7 +188,7 @@ def verify_image(tree, data, reports, repo=None):
         if kernels[0].name.rsplit("/", 1)[0] != roots[0].name.rsplit("/", 1)[0]:
             raise ValueError("kernel/root belong to different sysupgrade directories")
         verify_payload(archive, kernels[0], roots[0], data,
-                       repo or Path(os.environ["GITHUB_WORKSPACE"]), reports)
+                       repo or Path(os.environ["GITHUB_WORKSPACE"]), reports, tree=tree)
     # fwtool validates the actual embedded metadata, not the archive filename.
     fwtool = tree / "staging_dir/host/bin/fwtool"
     metadata = reports / "image-metadata.json"

@@ -1,6 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: MIT
-# ap3000m-rdnis-guard —— FM350 RNDIS 端点卡死自愈（两级恢复 + 运行期看门狗）
+# ap3000m-rdnis-guard —— FM350 RNDIS 端点卡死自愈（单级恢复 + 运行期看门狗）
 #
 # 现象（2026-10-25/26 真机多次复现）：eth2 有运营商地址，但没有默认路由、上不了网；
 # `tx_errors` 一路涨而 `rx_packets` 恒为 0 —— 模组 RNDIS 端点卡死，不是配置问题。
@@ -49,13 +49,22 @@ dev() {
 	[ -n "$d" ] && printf '%s' "$d" || printf '%s' "$DEV_DEFAULT"
 }
 
-stat() { cat "/sys/class/net/$(dev)/statistics/$1" 2>/dev/null || echo 0; }
+dev_exists() { [ -d "/sys/class/net/$(dev)" ]; }
+stat() { cat "/sys/class/net/$(dev)/statistics/$1" 2>/dev/null; }
 
-snapshot() { printf '%s %s %s' "$(stat rx_packets)" "$(stat tx_packets)" "$(stat tx_errors)"; }
+snapshot() {
+	local rx tx err
+	rx=$(stat rx_packets) && tx=$(stat tx_packets) && err=$(stat tx_errors) || return 1
+	case "$rx:$tx:$err" in *[!0-9:]*) return 1 ;; esac
+	[ -n "$rx" ] && [ -n "$tx" ] && [ -n "$err" ] || return 1
+	printf '%s %s %s' "$rx" "$tx" "$err"
+}
 
 # 端点卡死判定：一个包都没收到，但明确尝试发过（或有发送错误）
 stalled() {
-	set -- $(snapshot)
+	local sample rx tx err
+	sample=$(snapshot) || return 1
+	set -- $sample
 	rx=$1 tx=$2 err=$3
 	[ "$rx" -eq 0 ] || return 1
 	[ "$tx" -gt 0 ] || [ "$err" -gt 0 ] || return 1
@@ -79,14 +88,14 @@ have_ipv4() {
 }
 
 have_route() {
-	ip route 2>/dev/null | grep -q '^default '
+	ip -4 route show default dev "$(dev)" 2>/dev/null | grep -q '^default '
 }
 
 # 等"地址 + 默认路由"都就位，最多等 $1 秒
 wait_dial() {
 	n=0
 	while [ "$n" -lt "$1" ]; do
-		if have_ipv4 && have_route; then
+		if dev_exists && have_ipv4 && have_route; then
 			return 0
 		fi
 		sleep 5
@@ -102,10 +111,14 @@ record() {
 
 # 等拨号完成 + 静置后判定是否真的恢复
 verify_healed() {
-	wait_dial 120 || log "  120s 内没等到地址+默认路由"
+	local sample
+	wait_dial 120 || { log "  120s 内没等到地址+默认路由"; return 1; }
 	sleep 10
-	log "  采样 rx/tx/err = $(snapshot)"
-	! stalled
+	dev_exists && have_ipv4 && have_route || return 1
+	sample=$(snapshot) || return 1
+	log "  采样 rx/tx/err = $sample"
+	set -- $sample
+	[ "$1" -gt 0 ]
 }
 
 level1() {
@@ -146,7 +159,13 @@ heal() {
 }
 
 cmd_check() {
-	log "设备 $(dev) 统计: rx/tx/err = $(snapshot)"
+	if ! dev_exists || ! have_ipv4 || ! have_route; then
+		log '判定: 接口/地址/默认路由未就绪'
+		return 11
+	fi
+	local sample
+	sample=$(snapshot) || { log "统计读取失败，无法判定数据面状态"; return 11; }
+	log "设备 $(dev) 统计: rx/tx/err = $sample"
 	log "IPv4: $(have_ipv4 && echo 有 || echo 无)  默认路由: $(have_route && echo 有 || echo 无)"
 	if stalled; then
 		log "判定: RNDIS 端点卡死（rx=0 且有发送尝试）"
@@ -158,12 +177,7 @@ cmd_check() {
 
 # 运行期巡检：只在"已经拨号成功但收包为 0"时动手，避免把正常拨号/断网误判
 watch_once() {
-	if [ -f "$LOCK" ]; then
-		log "已有巡检实例在跑（$LOCK），跳过"
-		return 0
-	fi
-	printf '%s\n' "$$" >"$LOCK"
-	trap 'rm -f "$LOCK"' EXIT INT TERM
+	[ "$(uci -q get fm350.main.rdnis_watch)" != 0 ] || return 0
 
 	/etc/init.d/fm350d status >/dev/null 2>&1 || { log "fm350d 未运行，跳过"; return 0; }
 	if ! have_ipv4; then
@@ -180,7 +194,18 @@ watch_once() {
 	heal
 }
 
-case "$MODE" in
+acquire_lock() {
+	mkdir -p "${LOCK%/*}" || return 1
+	exec 9>"$LOCK"
+	flock -n 9
+}
+
+main() {
+	if [ "$MODE" != check ]; then
+		if [ "$MODE" = watch ] && [ "$(uci -q get fm350.main.rdnis_watch)" = 0 ]; then return 0; fi
+		acquire_lock || { log '已有自愈实例在运行，跳过'; return 0; }
+	fi
+	case "$MODE" in
 	check) cmd_check ;;
 	force) heal ;;
 	watch) watch_once ;;
@@ -207,3 +232,6 @@ case "$MODE" in
 		fi
 		;;
 esac
+}
+
+main "$@"

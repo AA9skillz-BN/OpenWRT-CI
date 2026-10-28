@@ -3,18 +3,18 @@
 # 单机型配置：只编 AP3000M，不编整个 filogic 家族
 #
 # 配套文件：
-#   .github/workflows/AP3000M.yml   工作流（调用公用核心 WRT-CORE.yml）
-#   Scripts/PRIVATE.sh              AP3000M 专用扩展（Rust 交叉编译准备）
+#   .github/workflows/AP3000M.yml   工作流（调用 DEVICE-CORE.yml）
+#   Scripts/AP3000M/private.sh      AP3000M 专用扩展
 #   docs/AP3000M.md                 说明文档
 #
-# 插件来源（由 Scripts/Packages.sh 统一克隆，无需在此处额外指定）：
+# 插件来源（由 Profiles/packages.lock.json 锁定安装，无需在此处额外指定）：
 #   LianXia233/luci-app-fm350                 -> package/luci-app-fm350
 #   LianXia233/luci-app-airpi3000m-fancontrol -> package/luci-app-airpi3000m-fancontrol
 #                                               ├─ luci-app-airpi-fancontrol
 #                                               └─ airpi-gpio-fan
 # =====================================================================
 
-# 设备平台（MULTI_PROFILE 由 GENERAL.txt 统一启用，这里只做单设备选择）
+# 设备平台（MULTI_PROFILE 由 BASE.txt 统一启用，这里只做单设备选择）
 CONFIG_TARGET_mediatek=y
 CONFIG_TARGET_mediatek_filogic=y
 CONFIG_TARGET_ALL_PROFILES=n
@@ -89,3 +89,10 @@ CONFIG_PACKAGE_iputils-ping=y
 
 # Required by sound-core and USB audio on current upstream.
 CONFIG_PACKAGE_audio-support=y
+
+# Kernel-managed locks shared by OTA and RNDIS recovery instances.
+CONFIG_PACKAGE_flock=y
+
+# Official firewall4 uses nft-fullcone; the old SONIC symbol is absent.
+CONFIG_PACKAGE_fullconenat-sonic=n
+CONFIG_PACKAGE_kmod-nft-fullcone=y

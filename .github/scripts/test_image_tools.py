@@ -77,6 +77,18 @@ class ImageToolTests(unittest.TestCase):
             with tarfile.open(image) as archive, patch.dict(os.environ, {"WRT_RELEASE_TAG": "fixture-tag"}):
                 verify_payload(archive, *archive.getmembers(), data, temp, temp)
             self.assertTrue((temp / "verified-payload.json").is_file())
+            # The adapted platform file must be the exact bytes in squashfs.
+            adapted = temp / "adapted/helper.sh"
+            adapted.parent.mkdir()
+            shutil.copy2(source, adapted)
+            data["required_files"][0]["build_source"] = "adapted/helper.sh"
+            with tarfile.open(image) as archive, patch.dict(os.environ, {"WRT_RELEASE_TAG": "fixture-tag"}):
+                verify_payload(archive, *archive.getmembers(), data, temp, temp, tree=temp)
+            adapted.write_text("changed after source preparation\n")
+            with tarfile.open(image) as archive, patch.dict(os.environ, {"WRT_RELEASE_TAG": "fixture-tag"}), \
+                 self.assertRaisesRegex(ValueError, "differs from adapted source"):
+                verify_payload(archive, *archive.getmembers(), data, temp, temp, tree=temp)
+            del data["required_files"][0]["build_source"]
             with tarfile.open(image) as archive, patch.dict(os.environ, {"WRT_RELEASE_TAG": "wrong-build"}), \
                  self.assertRaisesRegex(ValueError, "build tag differs"):
                 verify_payload(archive, *archive.getmembers(), data, temp, temp)

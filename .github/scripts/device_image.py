@@ -37,7 +37,7 @@ def check_dtb(dtb, data):
     return compatible
 
 
-def verify_payload(archive, kernel, root, data, repo, reports):
+def verify_payload(archive, kernel, root, data, repo, reports, tree=None):
     with tempfile.TemporaryDirectory(prefix="verify-image-") as directory:
         temp = Path(directory)
         kernel_file, root_file = temp / "kernel.itb", temp / "root.squashfs"
@@ -68,6 +68,9 @@ def verify_payload(archive, kernel, root, data, repo, reports):
                 raise ValueError(f"rootfs file is not executable: {item['path']}")
             if item.get("source") and file.read_bytes() != (repo / item["source"]).read_bytes():
                 raise ValueError(f"rootfs file differs from build source: {item['path']}")
+            if item.get("build_source"):
+                if tree is None or file.read_bytes() != (tree / item["build_source"]).read_bytes():
+                    raise ValueError(f"rootfs file differs from adapted source: {item['path']}")
         tag = extracted / data["build_tag_file"].lstrip("/")
         if not tag.is_file() or tag.read_text().strip() != os.environ["WRT_RELEASE_TAG"]:
             raise ValueError("rootfs build tag differs from this build")

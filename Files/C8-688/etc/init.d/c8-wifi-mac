@@ -8,9 +8,7 @@
 START=19
 
 mac_plus() {
-	local mac="$1" add="$2"
-	local last=$(( 0x${mac##*:} + add ))
-	printf '%s:%02x\n' "${mac%:*}" $(( last & 0xff ))
+	macaddr_add "$1" "$2"
 }
 
 apply_mac() {

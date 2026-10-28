@@ -48,11 +48,20 @@
     "kmod-usb-net-qmi-wwan",
     "audio-support",
     "kmod-sound-core",
-    "kmod-usb-audio"
+    "kmod-usb-audio",
+    "kmod-nft-fullcone"
   ],
-  "release_note": "仅写 eMMC 的 kernel_2nd / rootfs_2nd 第二系统槽。原厂 NROS 后台烧录第二系统前先关闭存储扩展。保留现有风扇、Wi-Fi MAC、双系统切换及 MT5700M 管理功能；不含原厂 NR-OS APP 与多卡切换界面。",
+  "release_note": "\u4ec5\u5199 eMMC \u7684 kernel_2nd / rootfs_2nd \u7b2c\u4e8c\u7cfb\u7edf\u69fd\u3002\u539f\u5382 NROS \u540e\u53f0\u70e7\u5f55\u7b2c\u4e8c\u7cfb\u7edf\u524d\u5148\u5173\u95ed\u5b58\u50a8\u6269\u5c55\u3002\u4fdd\u7559\u73b0\u6709\u98ce\u6247\u3001Wi-Fi MAC\u3001\u53cc\u7cfb\u7edf\u5207\u6362\u53ca MT5700M \u7ba1\u7406\u529f\u80fd\uff1b\u4e0d\u542b\u539f\u5382 NR-OS APP \u4e0e\u591a\u5361\u5207\u6362\u754c\u9762\u3002",
   "build_tag_file": "/etc/c8-688-build.tag",
   "required_files": [
+    {
+      "path": "/lib/upgrade/c8-688.sh",
+      "source": "Files/C8-688/lib/upgrade/c8-688.sh"
+    },
+    {
+      "path": "/lib/upgrade/platform.sh",
+      "build_source": "target/linux/mediatek/filogic/base-files/lib/upgrade/platform.sh"
+    },
     {
       "path": "/usr/sbin/c8-fan",
       "source": "Files/C8-688/usr/sbin/c8-fan",

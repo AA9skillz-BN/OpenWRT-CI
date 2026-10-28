@@ -3,12 +3,12 @@
 # 单机型配置片段：只编 C8-688，不编整个 filogic 家族
 #
 # 配套：
-#   .github/workflows/C8-688.yml     薄壳（uses: WRT-CORE.yml + 产物闸门）
+#   .github/workflows/C8-688.yml     薄壳（uses: DEVICE-CORE.yml + 产物闸门）
 #   Scripts/C8-688/private.sh        注入 DTS / 设备定义 / 02_network / 覆盖层
 #   Files/C8-688/                    风扇曲线、首启
 #   docs/C8-688.md
 #
-# 注意：WRT-CORE 用 `CONFIG_TARGET_<X>=y` 推导平台，前两行不能动；
+# 注意：DEVICE-CORE 与机型 profile 校验平台和唯一设备；
 #       板级包**必须在这里显式选**，只写 filogic.mk 的 DEVICE_PACKAGES 不会进镜像
 #       （2026-10-26 实测：闸门抓到镜像缺 kmod-mt7915e）。
 # =====================================================================
@@ -81,3 +81,7 @@ CONFIG_PACKAGE_kmod-usb-net-cdc-ncm=y
 
 # Required by sound-core and USB audio on current upstream.
 CONFIG_PACKAGE_audio-support=y
+
+# Official firewall4 uses nft-fullcone; the old SONIC symbol is absent.
+CONFIG_PACKAGE_fullconenat-sonic=n
+CONFIG_PACKAGE_kmod-nft-fullcone=y

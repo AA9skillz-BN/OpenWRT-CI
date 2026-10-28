@@ -88,7 +88,7 @@ if [ -d "$_ap3000m_guard_dir" ]; then
 	cp -f "$_ap3000m_guard_dir/99-ap3000m-rdnis-cron" "$_ap3000m_bf/etc/uci-defaults/99-ap3000m-rdnis-cron"
 	chmod 0755 "$_ap3000m_bf/etc/uci-defaults/99-ap3000m-rdnis-cron"
 
-	_ap3000m_log "已投放 RNDIS 自愈（开机自检 + 每 5 分钟运行期巡检，两级恢复）"
+	_ap3000m_log "已投放 RNDIS 自愈（开机自检 + 每 5 分钟运行期巡检，单级恢复 + 失败提示）"
 else
 	echo "Missing required RNDIS guard" >&2
 	exit 1

@@ -29,8 +29,14 @@ sed -i "s/hostname='.*'/hostname='$WRT_NAME'/g" $CFG_FILE
 echo "CONFIG_PACKAGE_luci=y" >> ./.config
 echo "CONFIG_LUCI_LANG_zh_Hans=y" >> ./.config
 echo "CONFIG_PACKAGE_luci-theme-$WRT_THEME=y" >> ./.config
-echo "CONFIG_PACKAGE_luci-app-$WRT_THEME=y" >> ./.config
-echo "CONFIG_PACKAGE_luci-app-$WRT_THEME-config=y" >> ./.config
+# A theme may have a separate settings app; themes such as Aurora have no
+# luci-app-<theme> package. Request only app recipes that actually exist.
+for _theme_app in "luci-app-$WRT_THEME" "luci-app-$WRT_THEME-config"; do
+	if [ -n "$(find ./package ./feeds -path "*/$_theme_app/Makefile" -print -quit)" ]; then
+		echo "CONFIG_PACKAGE_$_theme_app=y" >> ./.config
+	fi
+done
+unset _theme_app
 
 #引入私有扩展配置
 if [ -f "$GITHUB_WORKSPACE/Config/PRIVATE.txt" ]; then

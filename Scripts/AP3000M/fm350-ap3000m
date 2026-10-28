@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 # AirPi AP3000M × Fibocom FM350-GL 首次开机自动配置
 #
-# 由 Scripts/PRIVATE.sh 在构建期投放到 /etc/uci-defaults/99-ap3000m-fm350，
+# 由 Scripts/AP3000M/private.sh 在构建期投放到 /etc/uci-defaults/99-ap3000m-fm350，
 # 首次开机执行一次（成功即自删）。失败时 exit 1，脚本保留，下次启动重试。
 #
 # 为什么需要它（2026-10-25 在真机 192.168.10.1 上实测确认）：

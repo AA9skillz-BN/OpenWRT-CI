@@ -6,6 +6,7 @@ on:
       - '.github/**'
       - 'Profiles/**'
       - 'Config/**'
+      - 'Scripts/*.sh'
       - 'Scripts/TR3000-512/**'
       - 'Scripts/AP3000M/**'
       - 'Files/TR3000-512/**'
@@ -16,6 +17,7 @@ on:
       - '.github/**'
       - 'Profiles/**'
       - 'Config/**'
+      - 'Scripts/*.sh'
       - 'Scripts/TR3000-512/**'
       - 'Scripts/AP3000M/**'
       - 'Files/TR3000-512/**'
@@ -36,28 +38,28 @@ jobs:
           python-version: '3.12'
       - name: Install workflow test dependency
         run: python3 -m pip install PyYAML==6.0.2
-      - name: Test pipeline isolation and final image contracts
-        run: python3 .github/scripts/test_pipeline_contracts.py -v
-      - name: Test configuration and publication gates
-        run: python3 .github/scripts/test_device_build.py -v
-      - name: Test OTA selection and integrity checks
-        run: python3 .github/scripts/test_ota.py -v
-      - name: Install image validation tools
-        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends device-tree-compiler u-boot-tools squashfs-tools
-      - name: Test actual FIT, DTB and squashfs validation
-        run: python3 .github/scripts/test_image_tools.py -v
-      - name: Check shell syntax
+      - name: Install image and runtime validation tools
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends device-tree-compiler u-boot-tools squashfs-tools libjson-c-dev cmake jq util-linux
+      - name: Build pinned ucode test interpreter
+        shell: bash
         run: |
-          find .github/scripts Scripts/TR3000-512 Scripts/AP3000M Scripts/C8-688 -name '*.sh' -print0 |
-            xargs -0 -n1 bash -n
-          bash -n Files/TR3000-512/etc/init.d/tr3000-bbr
-          sh -n Scripts/AP3000M/ota/ap3000m-ota
+          # Same ucode revision as the locked official source's package recipe.
+          mkdir -p "$RUNNER_TEMP/ucode-source"
+          curl -fsSL --retry 3 https://github.com/ucode-lang/ucode/archive/aabdeb4f5060c91c5929bf6d7af745c6aabf5ec5.tar.gz |
+            tar -xz -C "$RUNNER_TEMP/ucode-source" --strip-components=1
+          cmake -S "$RUNNER_TEMP/ucode-source" -B "$RUNNER_TEMP/ucode-build" -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$RUNNER_TEMP/ucode-build" --target ucode -j2
+          echo "UCODE_TEST_BIN=$RUNNER_TEMP/ucode-build/ucode" >> "$GITHUB_ENV"
+      - name: Test build gates, device runtime, OTA and actual images
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
+      - name: Check LuCI JavaScript syntax
+        run: node --check Scripts/AP3000M/luci-app-ap3000m-ota/htdocs/luci-static/resources/view/ap3000m-ota/overview.js
+      - name: Check shell syntax
+        run: python3 .github/scripts/check-shell-syntax.py
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26.1'
           cache: false
       - name: Validate workflow syntax and expressions
         run: |
-          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -shellcheck= \
-            .github/workflows/WRT-CORE.yml .github/workflows/DEVICE-CORE.yml .github/workflows/TR3000.yml \
-            .github/workflows/AP3000M.yml .github/workflows/C8-688.yml .github/workflows/BUILD-CHECKS.yml
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -shellcheck=
