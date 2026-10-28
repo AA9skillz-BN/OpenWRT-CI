@@ -114,6 +114,23 @@ class ToolchainCacheTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unexpected internal toolchain prefix"):
             self.key()
 
+    def test_generated_kernel_config_is_not_a_source_input(self):
+        linux = self.tree / "build_dir/target-aarch64/linux-mediatek_filogic/linux-6.18.1"
+        self.values["LINUX_DIR"] = str(linux)
+        first = self.key()
+        kernel_config = self.put(linux.relative_to(self.tree) / ".config", "CONFIG_ARM64=y\n")
+        self.values["MAKEFILE_LIST"] += " " + kernel_config.as_posix()
+        self.assertEqual(first, self.key())
+        kernel_config.write_text("CONFIG_ARM64=y\nCONFIG_NEW_KERNEL_SYMBOL=y\n")
+        self.assertEqual(first, self.key())
+        # The exception must not drop arbitrary build or target includes.
+        extra = self.put("build_dir/other.mk", "CONFIG_EXTRA_INPUT=y\n")
+        self.values["MAKEFILE_LIST"] += " " + extra.as_posix()
+        self.assertNotEqual(first, self.key())
+        self.values["MAKEFILE_LIST"] = self.values["MAKEFILE_LIST"].removesuffix(" " + extra.as_posix())
+        self.put("target/linux/mediatek/filogic/target.mk", "CPU_TYPE:=cortex-a72")
+        self.assertNotEqual(first, self.key())
+
     def test_rules_headers_patches_new_inputs_and_runner_invalidate(self):
         first = self.key()
         for filename in ("target/linux/generic/kernel-6.18", "target/linux/generic/pending-6.18/001.patch",

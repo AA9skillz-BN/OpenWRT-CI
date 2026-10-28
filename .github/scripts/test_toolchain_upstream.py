@@ -95,8 +95,17 @@ class UpstreamCacheTests(unittest.TestCase):
                 timestamp = tree / "scripts/timestamp.pl"
                 fresh = subprocess.run([str(timestamp), "-n", str(completed[0]), "tools"], cwd=tree)
                 self.assertEqual(fresh.returncode, 1)
+                # The full kernel build adds another optional kernel.mk
+                # include. Reproduce its appearance before sealing the cache.
+                kernel_config = Path(values["LINUX_DIR"]) / ".config"
+                kernel_config.parent.mkdir(parents=True, exist_ok=True)
+                kernel_config.write_text("CONFIG_ARM64=y\nCONFIG_NEW_KERNEL_SYMBOL=y\n")
+                self.assertIn(str(kernel_config), cache.probe(tree)["MAKEFILE_LIST"].split())
+                self.assertEqual(key, cache.fingerprint(tree)[0])
                 cache.seal(tree, reports)
                 times = [p.stat().st_mtime_ns for p in completed]
+                # This build output is not included in the cache archive.
+                shutil.rmtree(tree / "build_dir")
                 cache.restore(tree, reports, True)
                 self.assertEqual(times, [p.stat().st_mtime_ns for p in completed])
                 self.assertFalse((tree / "build_dir").exists())

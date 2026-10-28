@@ -26,7 +26,7 @@ VARIABLES = (
     "TARGET_CROSS", "TARGET_CFLAGS", "TARGET_CXXFLAGS", "TARGET_LDFLAGS",
     "HOST_CFLAGS", "HOST_CXXFLAGS", "HOST_LDFLAGS", "GNU_HOST_NAME",
     "STAGING_DIR_HOST", "TOOLCHAIN_DIR", "BUILD_DIR_HOST", "BUILD_DIR_TOOLCHAIN",
-    "LINUX_VERSION", "LINUX_KERNEL_HASH", "LINUX_SOURCE", "LINUX_SITE",
+    "LINUX_VERSION", "LINUX_KERNEL_HASH", "LINUX_SOURCE", "LINUX_SITE", "LINUX_DIR",
     "KERNEL_PATCHVER", "GENERIC_PLATFORM_DIR", "GENERIC_BACKPORT_DIR",
     "GENERIC_PATCH_DIR", "GENERIC_HACK_DIR", "GENERIC_FILES_DIR",
     "PLATFORM_DIR", "PLATFORM_SUBDIR", "tools-y", "tools-",
@@ -167,6 +167,13 @@ def input_paths(tree, values):
                 raise ValueError(f"external Makefile include requires dependency review: {path}")
             continue
         if relative == ".config" or relative.startswith(("staging_dir/", "tmp/")):
+            continue
+        # kernel.mk optionally includes this build output once the kernel has
+        # been configured. It is absent at key calculation and is not a source
+        # dependency of the installed tools/compiler. Exclude only the exact
+        # internal kernel output; keep all other discovered includes covered.
+        if (relative.startswith("build_dir/") and
+                path == Path(values["LINUX_DIR"]) / ".config"):
             continue
         if path.is_file():
             paths.add(relative)
