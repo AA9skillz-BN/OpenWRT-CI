@@ -103,6 +103,17 @@ class ToolchainCacheTests(unittest.TestCase):
             stream.write("CONFIG_GDB=n\n")
         self.assertNotEqual(first, self.key())
 
+    def test_internal_compiler_install_prefix_is_not_an_input_change(self):
+        self.values.update({"GNU_TARGET_NAME": "aarch64-openwrt-linux",
+                            "REAL_GNU_TARGET_NAME": "aarch64-openwrt-linux-musl",
+                            "TARGET_CROSS": "aarch64-openwrt-linux-"})
+        first = self.key()
+        self.values["TARGET_CROSS"] = "aarch64-openwrt-linux-musl-"
+        self.assertEqual(first, self.key())
+        self.values["TARGET_CROSS"] = "different-compiler-"
+        with self.assertRaisesRegex(ValueError, "unexpected internal toolchain prefix"):
+            self.key()
+
     def test_rules_headers_patches_new_inputs_and_runner_invalidate(self):
         first = self.key()
         for filename in ("target/linux/generic/kernel-6.18", "target/linux/generic/pending-6.18/001.patch",

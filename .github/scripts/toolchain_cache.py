@@ -208,6 +208,16 @@ def fingerprint(tree, environment=None, values=None):
     # Includes PACKAGE_kmod-b43, GDB/NASM, CPU/ABI and hardening dependencies.
     selected = {key: cfg.get(key, "") for key in sorted(referenced) if not key.endswith("_")}
     effective = {key: value for key, value in values.items() if key != "MAKEFILE_LIST"}
+    # Internal toolchains start with GNU_TARGET_NAME- in the pristine info.mk.
+    # GCC's install then writes REAL_GNU_TARGET_NAME- (including the libc) to
+    # that generated file. Both describe the same configured compiler; model
+    # its final prefix while continuing to reject unexpected overrides.
+    if values["REAL_GNU_TARGET_NAME"]:
+        bootstrap_cross = values["GNU_TARGET_NAME"] + "-"
+        installed_cross = values["REAL_GNU_TARGET_NAME"] + "-"
+        if values["TARGET_CROSS"] not in (bootstrap_cross, installed_cross):
+            raise ValueError("unexpected internal toolchain prefix requires dependency review")
+        effective["TARGET_CROSS"] = installed_cross
     target = f"{values['BOARD']}-{values['SUBTARGET']}"
     if not re.fullmatch(r"[a-z0-9_-]+-[a-z0-9_-]+", target):
         raise ValueError(f"invalid cache target: {target}")
@@ -279,6 +289,7 @@ def check_inputs(tree, reports):
     expected_inputs = expected(reports)
     key, inputs = fingerprint(tree)
     if inputs != expected_inputs["inputs"] or key != expected_inputs["key"]:
+        write(reports / "toolchain-inputs-changed.json", {"key": key, "inputs": inputs})
         raise ValueError("tools/toolchain inputs changed after cache key calculation")
     return key, inputs
 

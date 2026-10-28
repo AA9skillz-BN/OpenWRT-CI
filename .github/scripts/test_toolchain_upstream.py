@@ -58,10 +58,22 @@ class UpstreamCacheTests(unittest.TestCase):
                 key, inputs = cache.fingerprint(tree, values=values)
                 reports = tree / "reports"
                 cache.write(reports / cache.INPUTS, {"key": key, "inputs": inputs})
+                # Exercise the real GCC install mutation that the previous
+                # stamp-only fixture missed. info.mk is a generated output.
+                info = Path(values["TOOLCHAIN_DIR"]) / "info.mk"
+                info.parent.mkdir(parents=True, exist_ok=True)
+                initial_info = info.read_text()
+                installed_prefix = values["REAL_GNU_TARGET_NAME"] + "-"
+                self.assertNotEqual(values["TARGET_CROSS"], installed_prefix)
+                info.write_text(initial_info.replace("TARGET_CROSS=", "TARGET_CROSS=" + installed_prefix))
+                self.assertEqual(cache.probe(tree)["TARGET_CROSS"], installed_prefix)
+                self.assertEqual(key, cache.fingerprint(tree)[0])
+                info.write_text(initial_info)
                 bootstrap = Path(values["STAGING_DIR_HOST"]) / "bin/prerequisite-fixture"
                 bootstrap.parent.mkdir(parents=True, exist_ok=True)
                 bootstrap.write_text("pristine prerequisite")
                 cache.prepare(tree, reports)
+                info.write_text(initial_info.replace("TARGET_CROSS=", "TARGET_CROSS=" + installed_prefix))
                 for root in cache.roots(tree, inputs):
                     (root / "bin").mkdir(parents=True, exist_ok=True)
                     (root / "stamp").mkdir(exist_ok=True)
