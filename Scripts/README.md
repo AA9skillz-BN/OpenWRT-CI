@@ -50,7 +50,7 @@ squashfs 内容。独立发布 job 只处理本次 Artifact，不再使用旧的
 
 ## 清理与自动触发
 
-- `Auto-Clean.yml` 按可识别机型保留最近三个 Release，保留 Git 标签。
+- `Auto-Clean.yml` 按可识别机型和正式 / 测试渠道分别保留最近三个 Release，保留 Git 标签。
 - `Cache-Clean.yml` 已移除定时触发；手动执行会清空缓存，不能用于日常构建后的轮换。
 - `MTK-ALL`、`OWRT-ALL`、`QCA-ALL`、`QCB-ALL` 已移除清理后自动编译的触发，文件保留供手动使用。
 - 工作流是否被 GitHub 禁用属于仓库设置，应在 Actions 中核对，不能仅凭文件内容推断。
