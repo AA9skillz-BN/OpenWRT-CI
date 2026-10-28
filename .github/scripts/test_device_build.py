@@ -193,6 +193,16 @@ class DeviceContractTests(unittest.TestCase):
             build.package(self.tree, REPO, "AP3000M", self.data, self.reports)
         assets = {f.name for f in (self.tree / "upload").iterdir()}
         self.assertIn("sha256sums", assets)
+        upload = self.tree / "upload"
+        ota = json.loads((upload / "ap3000m-ota-update.json").read_text())
+        self.assertEqual(ota["runtime_abi"], "1")
+        self.assertEqual(ota["tag"], env["WRT_RELEASE_TAG"])
+        import hashlib
+        self.assertEqual(ota["sha256"], hashlib.sha256((upload / "ap3000m-ota").read_bytes()).hexdigest())
+        self.assertEqual(ota["size"], (upload / "ap3000m-ota").stat().st_size)
+        sums = (upload / "sha256sums").read_text()
+        self.assertIn("  ap3000m-ota\n", sums)
+        self.assertIn("  ap3000m-ota-update.json\n", sums)
         self.assertIn(self.manifest.name, assets)
         self.assertIn("feeds.buildinfo", assets)
         for line in (self.tree / "upload/sha256sums").read_text().splitlines():

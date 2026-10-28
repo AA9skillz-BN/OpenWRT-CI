@@ -153,13 +153,14 @@ ap3000m-ota status                       # 当前版本和本地状态
 | 工作流 / 功能 | 行为 |
 | --- | --- |
 | [Build logic checks](.github/workflows/BUILD-CHECKS.yml) | 回归测试、真实 ucode / 文件锁与 FIT/DTB/squashfs 测试、Shell / JS / 工作流语法检查 |
-| [Auto-Clean](.github/workflows/Auto-Clean.yml) | 每天香港时间 05:21，三款机型的正式版 / 测试版各保留最近 3 个 Release；草稿和未识别机型保留，Git tag 保留；手动默认预览，`APPLY=true` 才执行删除 |
+| [Auto-Clean](.github/workflows/Auto-Clean.yml) | 每天香港时间 05:21，三款机型每渠道保留最近 3 个 Release；回收已核实归属、失败且最后活动超过 24 小时的流水线草稿，人工草稿/未识别机型/Git tag 保留；手动默认预览，`APPLY=true` 才删除 |
 | 下载缓存 `dl` | 按机型与 ref 使用，下载内容仍由 OpenWrt 核对哈希 |
 | 编译缓存 `.ccache` | 滚动保存；编译失败也可保留已完成的缓存，取消的任务不保存 |
 | host / toolchain staging | 按源码、feeds、配置、工具链和构建脚本等输入严格匹配；恢复后刷新 Rust 工具链接 |
 | 缓存轮换 | 成功后清理本机型、本 ref 的旧缓存，保留当前及最新一代；缺少当前缓存时保留回退缓存 |
 
 `Cache-Clean`、`AIROHA-ALL`、`MTK-ALL`、`OWRT-ALL`、`QCA-ALL`、`QCB-ALL` 当前在 GitHub 中手动禁用；文件保留，启用前需重新审查。
+这些通用构建入口已移除 Auto-Clean 完成后的自动触发，AIROHA 也只保留手动入口。
 `Cache-Clean` 的手动动作会清空仓库缓存，不用于日常轮换。工作流启停状态以 Actions 设置为准。
 缓存不含完整 `build_dir`，构建时间受上游、命中情况和 runner 影响，不给出固定耗时保证。
 

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-# Keep three stable and three preview releases per recognized device.
+# Keep three stable and three preview releases per device; reclaim owned failed drafts.
 name: Auto-Clean
 
 on:
@@ -9,12 +9,13 @@ on:
   workflow_dispatch:
     inputs:
       APPLY:
-        description: '勾选执行删除；每型号正式/测试版分别保留三版，默认仅预览'
+        description: '执行删除：每型号/渠道保留三版，回收超过一天的流水线失败草稿；默认仅预览'
         type: boolean
         default: false
 
 permissions:
   contents: write
+  actions: read
 
 concurrency:
   group: release-cleanup-per-model
@@ -30,7 +31,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Keep latest three releases per model
+      - name: Retain releases and reclaim verified failed drafts
         shell: bash
         run: |
           if [ "$APPLY" = true ]; then

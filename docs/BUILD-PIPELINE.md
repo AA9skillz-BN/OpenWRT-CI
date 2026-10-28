@@ -30,6 +30,14 @@ README 不作为构建配置来源。
    先上传 draft Release，附件上传成功后公开。
    不再查找“最新 Release”、下载固件、事后裁剪或修改说明。
 
+AP3000M 另外打包 OTA 脚本和兼容元数据，均纳入校验和。最终 squashfs 必须含相同脚本及
+`/usr/share/ap3000m-ota/runtime-abi`。修改 UCI/RPC/UI 契约或不兼容的运行依赖时必须递增
+`Scripts/AP3000M/ota/runtime-abi`；独立 self-update 只允许相同兼容版本的正式版附件。
+
+发布 job 为草稿写入仓库、run ID、attempt、提交、标签和时间标记，失败时只回收本次草稿。
+Auto-Clean 保留每机型/渠道最近三版，并兜底回收已失败/取消且最后活动超过 24 小时的流水线草稿；
+人工草稿、无法核实归属的旧草稿、活跃发布及 Git 标签保留。手动运行默认只预览。
+
 非 main 分支发布始终标记 prerelease，不标记为 latest，tag 额外加 `preview-`
 前缀，保证尚未更新、不会过滤 prerelease 的旧 OTA 客户端也不会匹配实验版本。
 AP3000M OTA 排除

@@ -59,6 +59,10 @@
   "build_tag_file": "/etc/ap3000m-build.tag",
   "required_files": [
     {
+      "path": "/usr/share/ap3000m-ota/runtime-abi",
+      "source": "Scripts/AP3000M/ota/runtime-abi"
+    },
+    {
       "path": "/usr/sbin/ap3000m-ota",
       "source": "Scripts/AP3000M/ota/ap3000m-ota",
       "executable": true

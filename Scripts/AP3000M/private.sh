@@ -41,6 +41,9 @@ if [ -d "$_ap3000m_ota_dir" ]; then
 
 	cp -f "$_ap3000m_ota_dir/ap3000m-ota" "$_ap3000m_bf/usr/sbin/ap3000m-ota"
 	chmod 0755 "$_ap3000m_bf/usr/sbin/ap3000m-ota"
+	mkdir -p "$_ap3000m_bf/usr/share/ap3000m-ota"
+	cp -f "$_ap3000m_ota_dir/runtime-abi" "$_ap3000m_bf/usr/share/ap3000m-ota/runtime-abi"
+	chmod 0644 "$_ap3000m_bf/usr/share/ap3000m-ota/runtime-abi"
 
 	cp -f "$_ap3000m_ota_dir/ap3000m_ota.config" "$_ap3000m_bf/etc/config/ap3000m_ota"
 	chmod 0644 "$_ap3000m_bf/etc/config/ap3000m_ota"

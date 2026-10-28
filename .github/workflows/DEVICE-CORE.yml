@@ -333,6 +333,13 @@ jobs:
       working-directory: ./release/wrt/upload
       run: |
         sha256sum --check --strict sha256sums
+    - name: Mark pipeline draft ownership
+      env:
+        RELEASE_TAG: ${{needs.core.outputs.release_tag}}
+      run: |
+        printf '\n<!-- firmware-ci: repo=%s run=%s attempt=%s sha=%s tag=%s started=%s -->\n' \
+          "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_SHA" \
+          "$RELEASE_TAG" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> ./release/build-reports/release-notes.md
     - name: Create validated draft
       id: release
       uses: softprops/action-gh-release@v2
@@ -352,3 +359,23 @@ jobs:
         RELEASE_ID: ${{steps.release.outputs.id}}
       run: |
         gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -F draft=false
+    - name: Remove this run's failed draft
+      if: ${{ failure() || cancelled() }}
+      env:
+        GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
+        RELEASE_TAG: ${{needs.core.outputs.release_tag}}
+      run: |
+        # The action may have created a draft before failing to return its ID.
+        # Match this exact run/attempt; never delete a published or manual draft.
+        gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" > releases.json
+        marker="<!-- firmware-ci: repo=$GITHUB_REPOSITORY run=$GITHUB_RUN_ID attempt=$GITHUB_RUN_ATTEMPT sha=$GITHUB_SHA tag=$RELEASE_TAG started="
+        id=$(jq -r --arg tag "$RELEASE_TAG" --arg marker "$marker" \
+          '[.[][] | select(.draft == true and .tag_name == $tag and ((.body // "") | contains($marker)))]
+           | if length == 1 then .[0].id else empty end' releases.json)
+        if [ -n "$id" ]; then
+          gh api "repos/$GITHUB_REPOSITORY/releases/$id" > draft.json
+          if jq -e --arg tag "$RELEASE_TAG" --arg marker "$marker" \
+            '.draft == true and .tag_name == $tag and ((.body // "") | contains($marker))' draft.json >/dev/null; then
+            gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+          fi
+        fi

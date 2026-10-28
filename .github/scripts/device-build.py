@@ -204,6 +204,20 @@ def verify_image(tree, data, reports, repo=None):
     return image, manifest
 
 
+def package_ota_update(repo, upload, tag):
+    source = repo / "Scripts/AP3000M/ota"
+    abi = (source / "runtime-abi").read_text().strip()
+    if not re.fullmatch(r"[0-9]+", abi):
+        raise ValueError("invalid OTA runtime ABI")
+    script = (source / "ap3000m-ota").read_bytes()
+    (upload / "ap3000m-ota").write_bytes(script)
+    metadata = {"schema": 1, "model": "ap3000m", "runtime_abi": abi,
+                "tag": tag, "asset": "ap3000m-ota", "size": len(script),
+                "sha256": hashlib.sha256(script).hexdigest(),
+                "requires": ["curl", "jq", "sha256sum", "sysupgrade", "flock"]}
+    write(upload / "ap3000m-ota-update.json", json.dumps(metadata, indent=2) + "\n")
+
+
 def package(tree, repo, name, data, reports):
     check_config(tree, data)
     image, manifest = verify_image(tree, data, reports, repo)
@@ -215,6 +229,9 @@ def package(tree, repo, name, data, reports):
     outname = f"{image.stem}-{os.environ['WRT_INFO']}-{branch}-{os.environ['WRT_DATE']}.bin"
     shutil.copy2(image, upload / outname)
     shutil.copy2(manifest, upload / manifest.name)
+    if name == "AP3000M":
+        # verify_image has already checked these exact files in the squashfs.
+        package_ota_update(repo, upload, tag)
     for file in reports.iterdir():
         if file.is_file() and file.name in ("source-commit.txt", "feeds.buildinfo", "packages.lock.json",
                                              "build-inputs.json", "image-metadata.json", "compatibility.txt", "ci-commit.txt",

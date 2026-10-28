@@ -24,6 +24,8 @@ CACHE_FILE=/tmp/ap3000m-ota-check.json
 OP_FILE=/tmp/ap3000m-ota-operation.json
 OP_LOG=/tmp/ap3000m-ota-operation.log
 LOCK=/var/lock/ap3000m-ota.lock
+RUNTIME_ABI_FILE=/usr/share/ap3000m-ota/runtime-abi
+OTA_SCRIPT=/usr/sbin/ap3000m-ota
 
 log()  { printf '%s\n' "ap3000m-ota: $*" >&2; }
 warn() { printf '%s\n' "ap3000m-ota: 警告: $*" >&2; }
@@ -514,33 +516,77 @@ cmd_boot_hook() {
 	return 0
 }
 
-# 自我更新：从 GitHub 仓库 main 分支拉取最新版脚本并替换自身
-# 用途：设备上固件里带的脚本可能比仓库旧（例如 OTA 早期版本有 jq 正则 bug），
-#       不用刷机也能拿到修复。备份在 /usr/sbin/ap3000m-ota.bak。
-cmd_self_update() {
-	command -v curl >/dev/null 2>&1 || die "缺少 curl"
-	branch="${1:-main}"
-	url="https://api.github.com/repos/$(repo)/contents/Scripts/AP3000M/ota/ap3000m-ota?ref=$branch"
-	tmp=/tmp/ap3000m-ota.new
-
-	log "从 $branch 分支拉取最新脚本…"
-	curl -fsSL --connect-timeout 8 --max-time 60 \
-		-H 'Accept: application/vnd.github.raw' \
-		-H 'User-Agent: ap3000m-ota/1.0' \
-		-o "$tmp" "$url" || { rm -f "$tmp"; die "下载失败（api.github.com 不可达）"; }
-
-	[ -s "$tmp" ] || { rm -f "$tmp"; die "下载内容为空"; }
-	head -n 1 "$tmp" | grep -q '^#!/bin/sh' || { rm -f "$tmp"; die "内容不像本脚本（首行不是 #!/bin/sh），放弃替换"; }
-	grep -q 'cmd_self_update' "$tmp" || { rm -f "$tmp"; die "下载内容缺少 self-update 实现，放弃替换"; }
-
-	sh -n "$tmp" || { rm -f "$tmp"; die "新脚本语法检查失败"; }
-	chmod 0755 "$tmp"
-	cp -f /usr/sbin/ap3000m-ota /usr/sbin/ap3000m-ota.bak 2>/dev/null
-	mv -f "$tmp" /usr/sbin/ap3000m-ota || die "替换失败"
-	chmod 0755 /usr/sbin/ap3000m-ota
-	log "已更新（旧版备份：/usr/sbin/ap3000m-ota.bak）"
-	log "重新执行命令即可使用新版本，例如：ap3000m-ota check"
-}
+# Only release attachments may update the CLI. The firmware ABI file describes
+# the installed UCI/RPC/UI contract; self-update never changes that file.
+cmd_self_update() (
+	local want='' abi json line tag meta_size meta_sha script_size script_sha tmpdir tool sha
+	case "$#" in
+		0) ;;
+		2) [ "$1" = --tag ] && valid_tag "$2" || die "用法：self-update [--tag <正式版标签>]"; want="$2" ;;
+		*) die "用法：self-update [--tag <正式版标签>]；不再从分支更新" ;;
+	esac
+	need_tools
+	[ -s "$RUNTIME_ABI_FILE" ] || die "当前固件没有 OTA 兼容标记，请先整包升级"
+	abi=$(cat "$RUNTIME_ABI_FILE")
+	case "$abi" in ''|*[!0-9]*) die "OTA 兼容标记无效，请先整包升级" ;; esac
+	acquire_lock
+	json=$(fetch_api "$want") || die "获取正式版 Release 失败"
+	line=$(printf '%s' "$json" | jq -r --arg p "$(tag_prefix)" --arg want "$want" '
+		[ .[] | select(.draft == false and .prerelease != true)
+		  | select(.tag_name | startswith($p))
+		  | select($want == "" or .tag_name == $want)
+		  | . as $r
+		  | [.assets[] | select(.name == "ap3000m-ota-update.json")] as $m
+		  | [.assets[] | select(.name == "ap3000m-ota")] as $s
+		  | select(($m|length) == 1 and ($s|length) == 1)
+		  | select(($m[0].size|type) == "number" and $m[0].size > 0 and $m[0].size <= 16384)
+		  | select(($s[0].size|type) == "number" and $s[0].size > 0 and $s[0].size <= 1048576)
+		  | {release:$r, meta:$m[0], script:$s[0]} ]
+		| sort_by([(.release.published_at // ""), .release.id]) | last
+		| if . == null then "" else
+		  [.release.tag_name, (.meta.size|tostring), ((.meta.digest // "")|ltrimstr("sha256:")),
+		   (.script.size|tostring), ((.script.digest // "")|ltrimstr("sha256:"))] | @tsv end') || die "更新元数据格式无效"
+	[ -n "$line" ] || die "没有包含独立 OTA 更新附件的正式版；请先整包升级"
+	tag=$(printf '%s' "$line" | cut -f1)
+	meta_size=$(printf '%s' "$line" | cut -f2)
+	meta_sha=$(printf '%s' "$line" | cut -f3)
+	script_size=$(printf '%s' "$line" | cut -f4)
+	script_sha=$(printf '%s' "$line" | cut -f5)
+	valid_tag "$tag" || die "更新标签不属于当前机型渠道"
+	for sha in "$meta_sha" "$script_sha"; do
+		case "$sha" in ''|*[!a-fA-F0-9]*) die "更新附件缺少有效 SHA-256" ;; esac
+		[ "${#sha}" = 64 ] || die "更新附件 SHA-256 长度无效"
+	done
+	tmpdir=$(mktemp -d "${OTA_SCRIPT%/*}/.ap3000m-ota.XXXXXX") || die "无法创建更新临时目录"
+	trap 'rm -rf "$tmpdir"' EXIT
+	trap 'exit 130' INT
+	trap 'exit 143' TERM
+	log "核对正式版 $tag 的 OTA 兼容信息…"
+	curl -fsSL --connect-timeout 8 --max-time 60 --max-filesize 16384 \
+		-o "$tmpdir/metadata" "$(asset_url "$tag" ap3000m-ota-update.json)" || die "兼容信息下载失败"
+	[ "$(wc -c < "$tmpdir/metadata" | tr -d ' ')" = "$meta_size" ] || die "兼容信息大小不符"
+	printf '%s  %s\n' "$meta_sha" "$tmpdir/metadata" | sha256sum -c - >/dev/null 2>&1 || die "兼容信息 SHA-256 不符"
+	jq -e --arg abi "$abi" --arg tag "$tag" --arg sha "$script_sha" --argjson size "$script_size" '
+		type == "object" and .schema == 1 and .model == "ap3000m" and .runtime_abi == $abi
+		and .tag == $tag and .asset == "ap3000m-ota" and .sha256 == $sha and .size == $size
+		and (.requires|type) == "array" and (.requires|length) > 0
+		and all(.requires[]; type == "string")' "$tmpdir/metadata" >/dev/null || die "脚本与当前固件不兼容，请整包升级"
+	for tool in $(jq -r '.requires[]' "$tmpdir/metadata"); do
+		case "$tool" in ''|*[!A-Za-z0-9_-]*) die "更新依赖名称无效" ;; esac
+		command -v "$tool" >/dev/null 2>&1 || die "缺少更新依赖 $tool，请先整包升级"
+	done
+	curl -fsSL --connect-timeout 8 --max-time 60 --max-filesize 1048576 \
+		-o "$tmpdir/script" "$(asset_url "$tag" ap3000m-ota)" || die "脚本下载失败"
+	[ "$(wc -c < "$tmpdir/script" | tr -d ' ')" = "$script_size" ] || die "脚本大小不符"
+	printf '%s  %s\n' "$script_sha" "$tmpdir/script" | sha256sum -c - >/dev/null 2>&1 || die "脚本 SHA-256 不符"
+	[ "$(head -n 1 "$tmpdir/script")" = '#!/bin/sh' ] || die "更新内容不是 shell 脚本"
+	sh -n "$tmpdir/script" || die "新脚本语法检查失败"
+	chmod 0755 "$tmpdir/script" || die "设置脚本权限失败"
+	cp -p "$OTA_SCRIPT" "$tmpdir/backup" && mv -f "$tmpdir/backup" "$OTA_SCRIPT.bak" || die "备份失败，未替换脚本"
+	# Temporary file and destination share a filesystem, so replacement is atomic.
+	mv -f "$tmpdir/script" "$OTA_SCRIPT" || die "替换失败，旧版备份在 $OTA_SCRIPT.bak"
+	log "已更新到 $tag 的 OTA 脚本（旧版备份：$OTA_SCRIPT.bak）"
+)
 
 usage() {
 	cat <<'EOF'
@@ -553,7 +599,7 @@ usage() {
   upgrade [--background] [--keep|--wipe] [--yes] [--tag <TAG>] [--image <FILE>]
                                  下载（若需要）并刷写；默认保留配置
   status                         当前版本 / 待验证升级 / 上次结果 / 本地镜像
-  self-update [branch]           从 GitHub 拉取最新版本脚本（默认 main），免刷机升级工具
+  self-update [--tag <TAG>]      从兼容的正式版附件更新工具；默认最新，保留旧脚本备份
   ui-status                      输出 JSON 状态（LuCI 页面用）
   boot-hook                      开机回写升级结果（init.d 自动调用）
 
@@ -583,7 +629,7 @@ main() {
 			fi
 			;;
 		status)    cmd_status ;;
-		self-update) cmd_self_update ${1:-main} ;;
+		self-update) cmd_self_update "$@" ;;
 		ui-status) cmd_ui_status ;;
 		boot-hook) cmd_boot_hook ;;
 		-h|--help|help) usage ;;

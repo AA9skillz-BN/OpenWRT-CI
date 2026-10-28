@@ -68,6 +68,119 @@ curl() {
         release.update(overrides)
         return release
 
+    def self_update_fixture(self, metadata=None, script=b'#!/bin/sh\nprintf updated\\n\n'):
+        (self.root / "candidate").write_bytes(script)
+        info = {"schema": 1, "model": "ap3000m", "runtime_abi": "1", "tag": "AP3000M-update",
+                "asset": "ap3000m-ota", "size": len(script), "sha256": hashlib.sha256(script).hexdigest(),
+                "requires": ["sh"]}
+        info.update(metadata or {})
+        raw = json.dumps(info).encode()
+        (self.root / "metadata").write_bytes(raw)
+        (self.root / "runtime-abi").write_text("1\n")
+        (self.root / "installed").write_bytes(b"old script\n")
+        release = self.release("AP3000M-update")
+        release["assets"] = [
+            {"name": "ap3000m-ota-update.json", "size": len(raw), "digest": "sha256:" + hashlib.sha256(raw).hexdigest()},
+            {"name": "ap3000m-ota", "size": len(script), "digest": "sha256:" + hashlib.sha256(script).hexdigest()}]
+        return release
+
+    def self_update(self, release, body='cmd_self_update\n'):
+        return self.shell('''
+OTA_SCRIPT="$TASK_TMP/installed"
+RUNTIME_ABI_FILE="$TASK_TMP/runtime-abi"
+acquire_lock() { :; }
+curl() {
+    local dest='' url=''
+    while [ "$#" -gt 0 ]; do
+        if [ "$1" = '-o' ]; then shift; dest="$1"; else url="$1"; fi
+        shift
+    done
+    printf '%s\\n' "$url" >> "$TASK_TMP/update-urls"
+    case "$url" in
+        */ap3000m-ota-update.json) cp "$TASK_TMP/metadata" "$dest";;
+        */ap3000m-ota) cp "$TASK_TMP/candidate" "$dest";;
+        *) return 1;;
+    esac
+}
+''' + body, API_JSON=json.dumps([release]))
+
+    def assert_installed_untouched(self):
+        self.assertEqual((self.root / "installed").read_bytes(), b"old script\n")
+        self.assertFalse((self.root / "installed.bak").exists())
+        self.assertEqual(list(self.root.glob(".ap3000m-ota.*")), [])
+
+    def test_self_update_uses_verified_release_assets_and_keeps_backup(self):
+        release = self.self_update_fixture()
+        result = self.self_update(release)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.root / "installed").read_bytes(), (self.root / "candidate").read_bytes())
+        self.assertEqual((self.root / "installed.bak").read_bytes(), b"old script\n")
+        urls = (self.root / "update-urls").read_text()
+        self.assertIn("/releases/download/AP3000M-update/ap3000m-ota", urls)
+        self.assertNotIn("/contents/", urls)
+        self.assertEqual(list(self.root.glob(".ap3000m-ota.*")), [])
+
+    def test_self_update_refuses_branches_and_missing_firmware_contract_before_download(self):
+        release = self.self_update_fixture()
+        for body in ('cmd_self_update main\n', 'rm -f "$RUNTIME_ABI_FILE"; cmd_self_update\n'):
+            result = self.self_update(release, body)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse((self.root / "update-urls").exists())
+            self.assert_installed_untouched()
+
+    def test_self_update_rejects_new_abi_and_missing_dependencies(self):
+        for info in ({"runtime_abi": "2"}, {"requires": ["nonexistent_ota_dependency_9001"]},
+                     {"tag": "AP3000M-other"}, {"model": "c8-688"}):
+            with self.subTest(info=info):
+                release = self.self_update_fixture(info)
+                result = self.self_update(release)
+                self.assertNotEqual(result.returncode, 0)
+                self.assert_installed_untouched()
+                self.assertNotIn("/ap3000m-ota\n", (self.root / "update-urls").read_text())
+
+    def test_self_update_rejects_corruption_missing_digest_and_bad_shell(self):
+        for fault in ("metadata", "script", "digest", "syntax"):
+            with self.subTest(fault=fault):
+                release = self.self_update_fixture(script=b'#!/bin/sh\nif then\n' if fault == "syntax" else b'#!/bin/sh\nexit 0\n')
+                if fault == "metadata":
+                    raw = (self.root / "metadata").read_bytes()
+                    (self.root / "metadata").write_bytes(raw.replace(b'"ap3000m"', b'"xp3000m"'))
+                elif fault == "script":
+                    (self.root / "candidate").write_bytes(b'#!/bin/sh\nexit 1\n')
+                elif fault == "digest":
+                    release["assets"][1].pop("digest")
+                result = self.self_update(release)
+                self.assertNotEqual(result.returncode, 0)
+                self.assert_installed_untouched()
+
+    def test_self_update_ignores_draft_preview_and_other_device(self):
+        for overrides in ({"draft": True}, {"prerelease": True}, {"tag_name": "C8-688-update"}, {"assets": []}):
+            release = self.self_update_fixture()
+            release.update(overrides)
+            result = self.self_update(release)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse((self.root / "update-urls").exists())
+            self.assert_installed_untouched()
+
+    def test_self_update_honors_explicit_tag_and_rejects_another_result(self):
+        release = self.self_update_fixture()
+        result = self.self_update(release, 'cmd_self_update --tag AP3000M-other\n')
+        self.assertNotEqual(result.returncode, 0)
+        self.assert_installed_untouched()
+
+    @unittest.skipIf(os.name == "nt" or not shutil.which("flock"), "Linux flock required")
+    def test_self_update_cannot_overlap_a_download_or_upgrade(self):
+        release = self.self_update_fixture()
+        actual = SOURCE[SOURCE.index("acquire_lock() {"):SOURCE.index("\noperation_state()")]
+        result = self.self_update(release, actual + '''
+acquire_lock
+(exec 9>&-; cmd_self_update) && exit 90
+exit 0
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.root / "update-urls").exists())
+        self.assert_installed_untouched()
+
     def test_latest_uses_publication_time_not_source_name_in_tag(self):
         old = self.release("AP3000M-z-old", published_at="2026-10-26T00:00:00Z")
         new = self.release("AP3000M-a-new")
