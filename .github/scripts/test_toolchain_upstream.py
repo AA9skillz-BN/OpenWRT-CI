@@ -24,6 +24,7 @@ CONFIG_CPU_TYPE="cortex-a53"
 CONFIG_TARGET_OPTIMIZATION="-Os -pipe -mcpu=cortex-a53"
 CONFIG_GCC_VERSION="14.4.0"
 CONFIG_LIBC="musl"
+CONFIG_TARGET_SUFFIX="musl"
 CONFIG_USE_MUSL=y
 CONFIG_CCACHE=y
 '''
@@ -55,17 +56,23 @@ class UpstreamCacheTests(unittest.TestCase):
                 subprocess.run(["git", "-C", str(tree), "add", "."], check=True)
                 (tree / ".config").write_text(CONFIG)
                 values = cache.probe(tree)
+                info = Path(values["TOOLCHAIN_DIR"]) / "info.mk"
+                # A prerequisite/initial compiler can leave the unsuffixed
+                # prefix in generated info.mk, as observed in the full builds.
+                initial_info = info.read_text().replace(
+                    "TARGET_CROSS=", "TARGET_CROSS=" + values["GNU_TARGET_NAME"] + "-")
+                info.write_text(initial_info)
+                values = cache.probe(tree)
                 key, inputs = cache.fingerprint(tree, values=values)
                 reports = tree / "reports"
                 cache.write(reports / cache.INPUTS, {"key": key, "inputs": inputs})
                 # Exercise the real GCC install mutation that the previous
                 # stamp-only fixture missed. info.mk is a generated output.
-                info = Path(values["TOOLCHAIN_DIR"]) / "info.mk"
-                info.parent.mkdir(parents=True, exist_ok=True)
-                initial_info = info.read_text()
                 installed_prefix = values["REAL_GNU_TARGET_NAME"] + "-"
                 self.assertNotEqual(values["TARGET_CROSS"], installed_prefix)
-                info.write_text(initial_info.replace("TARGET_CROSS=", "TARGET_CROSS=" + installed_prefix))
+                installed_info = initial_info.replace("TARGET_CROSS=" + values["GNU_TARGET_NAME"] + "-",
+                                                      "TARGET_CROSS=" + installed_prefix)
+                info.write_text(installed_info)
                 self.assertEqual(cache.probe(tree)["TARGET_CROSS"], installed_prefix)
                 self.assertEqual(key, cache.fingerprint(tree)[0])
                 info.write_text(initial_info)
@@ -73,7 +80,7 @@ class UpstreamCacheTests(unittest.TestCase):
                 bootstrap.parent.mkdir(parents=True, exist_ok=True)
                 bootstrap.write_text("pristine prerequisite")
                 cache.prepare(tree, reports)
-                info.write_text(initial_info.replace("TARGET_CROSS=", "TARGET_CROSS=" + installed_prefix))
+                info.write_text(installed_info)
                 for root in cache.roots(tree, inputs):
                     (root / "bin").mkdir(parents=True, exist_ok=True)
                     (root / "stamp").mkdir(exist_ok=True)
