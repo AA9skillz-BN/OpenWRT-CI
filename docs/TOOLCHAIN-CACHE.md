@@ -9,6 +9,8 @@
 `.github/scripts/toolchain_cache.py` 用 OpenWrt Make 规则展开实际 host tools、toolchain 列表、
 stamp 路径、CPU/ABI、编译与链接参数及内核版本。读取这些源码实际引用的 CONFIG 符号，
 包括 `CONFIG_PACKAGE_kmod-b43` 等例外；不使用容易漏项的手工配置白名单。
+宿主 OS/架构和 GNU host triplet 先由实际顶层 Makefile 的初始化规则读取，再传入依赖探针，
+避免把空的 `HOST_OS` 当成另一种宿主系统而选错 tools 列表及完成 stamp。
 
 源码输入在所有设备补丁、配置解析之后计算：`tools/`、`toolchain/`、`include/`、上游
 `scripts/`、`config/`、根 Makefile/rules/Config.in、`target/linux/generic/`（含内核版本/哈希、
@@ -70,6 +72,8 @@ job 输出交给独立 actions/write job，仅删除本 ref 的精确 key，保�
 拒绝复用、原 stamp 不被刷新，以及两套锁定上游真实 Make/stamp 规则在无 build_dir 时跳过构建。
 该规则测试使用安装文件夹具，不代表完成了真实工具链冷/暖构建。实际收益需后续完整构建
 精确命中后，从原始日志、`toolchain-cache.json` 和最终镜像验证一起确认。
+夹具完成 stamp 的路径来自独立调用的真实顶层递归 Makefile，并与探针结果比较；恢复后也通过
+这一实际入口请求原完成 stamp，避免探针和夹具共享同一错误假设。
 
 ## 下载缓存
 

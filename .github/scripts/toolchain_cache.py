@@ -24,7 +24,7 @@ VARIABLES = (
     "ARCH", "ARCH_SUFFIX", "BOARD", "SUBTARGET", "CPU_TYPE", "CPU_SUBTYPE",
     "GCC_ARCH", "GCCV", "LIBC", "GNU_TARGET_NAME", "REAL_GNU_TARGET_NAME",
     "TARGET_CROSS", "TARGET_CFLAGS", "TARGET_CXXFLAGS", "TARGET_LDFLAGS",
-    "HOST_CFLAGS", "HOST_CXXFLAGS", "HOST_LDFLAGS", "GNU_HOST_NAME",
+    "HOST_CFLAGS", "HOST_CXXFLAGS", "HOST_LDFLAGS", "GNU_HOST_NAME", "HOST_OS", "HOST_ARCH",
     "STAGING_DIR_HOST", "TOOLCHAIN_DIR", "BUILD_DIR_HOST", "BUILD_DIR_TOOLCHAIN",
     "LINUX_VERSION", "LINUX_KERNEL_HASH", "LINUX_SOURCE", "LINUX_SITE", "LINUX_DIR",
     "KERNEL_PATCHVER", "GENERIC_PLATFORM_DIR", "GENERIC_BACKPORT_DIR",
@@ -68,6 +68,22 @@ def config(path):
 
 
 def probe(tree):
+    # The normal outer Makefile exports these before its recursive build.
+    # Read that real preamble instead of assuming rules.mk initializes them:
+    # an empty HOST_OS selects extra tools and a different completion stamp.
+    host_names = ("HOST_OS", "HOST_ARCH", "GNU_HOST_NAME")
+    host_probe = tree / "tmp/.ci-toolchain-host.mk"
+    host_probe.parent.mkdir(parents=True, exist_ok=True)
+    host_probe.write_text("\n".join([
+        *[f"$(info CI_CACHE_HOST:{name}=$({name}))" for name in host_names],
+        ".PHONY: ci-cache-host", "ci-cache-host:", "\t@:", "",
+    ]), encoding="utf-8")
+    result = capture("make", "--no-print-directory", "-s", "-f", "Makefile", "-f", str(host_probe),
+                     "OPENWRT_BUILD=", "ci-cache-host", cwd=tree)
+    host = dict(line.removeprefix("CI_CACHE_HOST:").split("=", 1)
+                for line in result.splitlines() if line.startswith("CI_CACHE_HOST:"))
+    if set(host) != set(host_names) or not all(host.values()):
+        raise ValueError("OpenWrt top-level host probe returned incomplete variables")
     # No build target is executed. $(info) avoids shell interpolation of flags.
     makefile = "\n".join([
         "include $(TOPDIR)/rules.mk", "include $(INCLUDE_DIR)/kernel.mk",
@@ -82,7 +98,8 @@ def probe(tree):
     generated.parent.mkdir(parents=True, exist_ok=True)
     generated.write_text(makefile, encoding="utf-8")
     result = capture("make", "--no-print-directory", "-s", "-f", str(generated),
-                     f"TOPDIR={tree}", "ci-cache-inputs", cwd=tree)
+                     f"TOPDIR={tree}", *[f"{name}={host[name]}" for name in host_names],
+                     "ci-cache-inputs", cwd=tree)
     values = dict(line.removeprefix("CI_CACHE:").split("=", 1)
                   for line in result.splitlines() if line.startswith("CI_CACHE:"))
     if set(values) != set(VARIABLES):

@@ -32,6 +32,26 @@ CONFIG_CCACHE=y
 
 @unittest.skipUnless(os.name != "nt" and shutil.which("make"), "real Linux Make rules required")
 class UpstreamCacheTests(unittest.TestCase):
+    def world_make(self, tree, goal):
+        # Enter via the real outer Makefile so its exports, then the actual
+        # target/package/tools/toolchain include order, define the stamps.
+        wrapper = tree / "tmp/.ci-cache-world.mk"
+        wrapper.parent.mkdir(parents=True, exist_ok=True)
+        names = ("HOST_OS", "HOST_ARCH", "GNU_HOST_NAME", "tools-y", "tools-",
+                 "tools/stamp-compile", "toolchain/stamp-compile", "toolchain/builddirs")
+        wrapper.write_text("\n".join([
+            "ifeq ($(__rules_inc),1)", ".PHONY: ci-cache-world-inputs ci-warm-cache",
+            "ci-cache-world-inputs:",
+            "\t@" + "".join(f"$(info CI_WORLD:{name}=$({name}))" for name in names) + ":",
+            "ci-warm-cache: $(tools/stamp-compile) $(toolchain/stamp-compile)", "\t@:",
+            "else", ".PHONY: ci-cache-world-inputs ci-warm-cache",
+            "ci-cache-world-inputs ci-warm-cache:",
+            "\t@+$(SUBMAKE) -r -f $(TOPDIR)/Makefile -f " + str(wrapper) + " $@",
+            "endif", "",
+        ]), encoding="utf-8")
+        return cache.capture("make", "--no-print-directory", "-s", "-f", "Makefile", "-f", str(wrapper),
+                             goal, cwd=tree)
+
     def test_both_locked_sources_reuse_original_stamps_without_build_dir(self):
         locks = json.loads((REPO / "Profiles/sources.lock.json").read_text())
         for name in ("AP3000M", "TR3000-512"):
@@ -56,6 +76,13 @@ class UpstreamCacheTests(unittest.TestCase):
                 subprocess.run(["git", "-C", str(tree), "add", "."], check=True)
                 (tree / ".config").write_text(CONFIG)
                 values = cache.probe(tree)
+                world = dict(line.removeprefix("CI_WORLD:").split("=", 1)
+                             for line in self.world_make(tree, "ci-cache-world-inputs").splitlines()
+                             if line.startswith("CI_WORLD:"))
+                self.assertEqual(values["HOST_OS"], "Linux")
+                self.assertTrue(values["GNU_HOST_NAME"])
+                self.assertEqual(world, {name: values[name] for name in world})
+                self.assertEqual(len(world), 8)
                 info = Path(values["TOOLCHAIN_DIR"]) / "info.mk"
                 # A prerequisite/initial compiler can leave the unsuffixed
                 # prefix in generated info.mk, as observed in the full builds.
@@ -85,7 +112,9 @@ class UpstreamCacheTests(unittest.TestCase):
                     (root / "bin").mkdir(parents=True, exist_ok=True)
                     (root / "stamp").mkdir(exist_ok=True)
                     (root / "bin/example").write_text("installed artifact fixture")
-                completed = [Path(values["tools/stamp-compile"]), Path(values["toolchain/stamp-compile"]),
+                # Construct fixtures at independently obtained world-build
+                # paths, not at paths produced by the probe under test.
+                completed = [Path(world["tools/stamp-compile"]), Path(world["toolchain/stamp-compile"]),
                              Path(values["TOOLCHAIN_DIR"]) / "stamp/.gcc_final_installed"]
                 previous = time.time() - 3600
                 for path in completed:
@@ -111,16 +140,7 @@ class UpstreamCacheTests(unittest.TestCase):
                 self.assertFalse((tree / "build_dir").exists())
                 (tree / "tmp").mkdir(exist_ok=True)
                 (tree / "tmp/.build").touch()
-                script = "\n".join([
-                    "include $(TOPDIR)/rules.mk", "include $(INCLUDE_DIR)/kernel.mk",
-                    "include $(INCLUDE_DIR)/depends.mk", "include $(INCLUDE_DIR)/subdir.mk",
-                    "include $(TOPDIR)/tools/Makefile", "include $(TOPDIR)/toolchain/Makefile",
-                    "$(toolchain/stamp-compile): $(tools/stamp-compile)",
-                    ".PHONY: ci-warm-cache",
-                    "ci-warm-cache: $(tools/stamp-compile) $(toolchain/stamp-compile)", "\t@:", "",
-                ])
-                subprocess.run(["make", "--no-print-directory", "-s", "-f", "-", f"TOPDIR={tree}",
-                                "ci-warm-cache"], cwd=tree, input=script, text=True, check=True)
+                self.world_make(tree, "ci-warm-cache")
                 # Any descent into tools/toolchain would try to prepare/build
                 # missing artifacts, and either fail or create build_dir.
                 self.assertFalse((tree / "build_dir").exists())
