@@ -1,0 +1,331 @@
+#!/usr/bin/env python3
+"""Content-addressed installed tools/toolchain cache; never manufacture stamps."""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import shutil
+import stat
+import subprocess
+
+SCHEMA = 3
+EPOCH = 946684800  # Older than every supported build, independent of commit dates.
+MANIFEST = ".ci-toolchain-cache.json"
+INPUTS = "toolchain-inputs.json"
+STATE = "toolchain-cache.json"
+CONFIG_SYMBOL = re.compile(r"\bCONFIG_[A-Za-z0-9_][A-Za-z0-9_-]*")
+# Expanded by OpenWrt itself, including the selected host tools and stamp name.
+VARIABLES = (
+    "ARCH", "ARCH_SUFFIX", "BOARD", "SUBTARGET", "CPU_TYPE", "CPU_SUBTYPE",
+    "GCC_ARCH", "GCCV", "LIBC", "GNU_TARGET_NAME", "REAL_GNU_TARGET_NAME",
+    "TARGET_CROSS", "TARGET_CFLAGS", "TARGET_CXXFLAGS", "TARGET_LDFLAGS",
+    "HOST_CFLAGS", "HOST_CXXFLAGS", "HOST_LDFLAGS", "GNU_HOST_NAME",
+    "STAGING_DIR_HOST", "TOOLCHAIN_DIR", "BUILD_DIR_HOST", "BUILD_DIR_TOOLCHAIN",
+    "LINUX_VERSION", "LINUX_KERNEL_HASH", "LINUX_SOURCE", "LINUX_SITE",
+    "KERNEL_PATCHVER", "GENERIC_PLATFORM_DIR", "GENERIC_BACKPORT_DIR",
+    "GENERIC_PATCH_DIR", "GENERIC_HACK_DIR", "GENERIC_FILES_DIR",
+    "PLATFORM_DIR", "PLATFORM_SUBDIR", "tools-y", "tools-",
+    "toolchain/builddirs", "tools/stamp-compile", "toolchain/stamp-compile",
+    "MAKEFILE_LIST",
+)
+
+
+def capture(*args, cwd=None, **kwargs):
+    return subprocess.check_output(args, cwd=cwd, text=True, **kwargs).strip()
+
+
+def write(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+
+
+def digest(path):
+    value = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            value.update(block)
+    return value.hexdigest()
+
+
+def json_digest(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def config(path):
+    values = {}
+    for line in path.read_text().splitlines():
+        if line.startswith("CONFIG_") and "=" in line:
+            key, value = line.split("=", 1)
+            values[key] = value
+        elif line.startswith("# CONFIG_") and line.endswith(" is not set"):
+            values[line[2:-11]] = "n"
+    return values
+
+
+def probe(tree):
+    # No build target is executed. $(info) avoids shell interpolation of flags.
+    makefile = "\n".join([
+        "include $(TOPDIR)/rules.mk", "include $(INCLUDE_DIR)/kernel.mk",
+        "include $(INCLUDE_DIR)/depends.mk", "include $(INCLUDE_DIR)/subdir.mk",
+        "include $(TOPDIR)/tools/Makefile", "include $(TOPDIR)/toolchain/Makefile",
+        *[f"$(info CI_CACHE:{name}=$({name}))" for name in VARIABLES],
+        ".PHONY: ci-cache-inputs", "ci-cache-inputs:", "\t@:", "",
+    ])
+    result = capture("make", "--no-print-directory", "-s", "-f", "-",
+                     f"TOPDIR={tree}", "ci-cache-inputs", cwd=tree, input=makefile)
+    values = dict(line.removeprefix("CI_CACHE:").split("=", 1)
+                  for line in result.splitlines() if line.startswith("CI_CACHE:"))
+    if set(values) != set(VARIABLES):
+        raise ValueError("OpenWrt cache probe returned incomplete variables")
+    return values
+
+
+def host_environment():
+    # Conservative system package inventory covers linked libraries AND headers.
+    # Hosted Rust/Go and their paths are package-build inputs, not this cache.
+    tools = {}
+    for name in ("gcc", "g++", "ld", "as", "make", "bash", "perl", "python3",
+                 "patch", "tar", "cmake", "ninja", "pkg-config"):
+        binary = Path(shutil.which(name) or "missing").resolve(strict=True)
+        tools[name] = {"path": str(binary), "sha256": digest(binary)}
+    cpu = Path("/proc/cpuinfo").read_text()
+    cpu = sorted({line for line in cpu.splitlines() if line.startswith(("flags\t", "Features\t"))})
+    return {"machine": capture("uname", "-m"), "cpu_features": cpu,
+            "os": Path("/etc/os-release").read_text(),
+            "packages": sorted(capture("dpkg-query", "-W", "-f=${binary:Package}=${Version}\n").splitlines()),
+            "gcc": capture("gcc", "-dumpfullversion"),
+            "libc": capture("ldd", "--version").splitlines()[0], "tools": tools,
+            "environment": {key: os.environ[key] for key in (
+                "CC", "CXX", "CFLAGS", "CXXFLAGS", "CPPFLAGS", "LDFLAGS",
+                "HOSTCC", "HOSTCXX", "SOURCE_DATE_EPOCH", "GIT_SRC_CHECKOUT_DIR",
+                "GIT_TREE_OVERRIDE_DIR") if key in os.environ}}
+
+
+def record(path):
+    mode = path.lstat().st_mode
+    if stat.S_ISLNK(mode):
+        return {"type": "link", "target": os.readlink(path)}
+    if stat.S_ISREG(mode):
+        return {"type": "file", "sha256": digest(path), "mode": stat.S_IMODE(mode)}
+    if stat.S_ISDIR(mode):
+        return {"type": "directory", "mode": stat.S_IMODE(mode)}
+    raise ValueError(f"unsupported cache file type: {path}")
+
+
+def input_paths(tree, values):
+    # Git's inventory includes applied changes and new non-ignored patches, but
+    # excludes generated scripts/config binaries and object files after a build.
+    paths = capture("git", "ls-files", "-z", "--cached", "--others", "--exclude-standard",
+                    "--", "tools", "toolchain", "include", "scripts", "config",
+                    "Makefile", "rules.mk", "Config.in", "target/linux/generic", cwd=tree).split("\0")
+    paths = {p for p in paths if p and os.path.lexists(tree / p)}
+    # Target Makefiles and every extra include discovered by the actual probe.
+    for filename in shlex.split(values["MAKEFILE_LIST"]):
+        path = Path(filename)
+        if not path.is_absolute():
+            path = tree / path
+        try:
+            relative = path.relative_to(tree).as_posix()
+        except ValueError:
+            if path.is_file():
+                raise ValueError(f"external Makefile include requires dependency review: {path}")
+            continue
+        if relative == ".config" or relative.startswith(("staging_dir/", "tmp/")):
+            continue
+        if path.is_file():
+            paths.add(relative)
+    for required in ("tools/Makefile", "toolchain/Makefile", "include/subdir.mk",
+                     "scripts/timestamp.pl", "rules.mk"):
+        if required not in paths:
+            raise ValueError(f"missing cache dependency: {required}")
+    return sorted(paths)
+
+
+def fingerprint(tree, environment=None, values=None):
+    tree = tree.resolve()
+    values = probe(tree) if values is None else values
+    cfg = config(tree / ".config")
+    for symbol in ("CONFIG_EXTERNAL_TOOLCHAIN", "CONFIG_NATIVE_TOOLCHAIN"):
+        if cfg.get(symbol) == "y":
+            raise ValueError(f"installed cache does not support {symbol}")
+    if cfg.get("CONFIG_EXTERNAL_KERNEL_TREE", '""') not in ('""', "n"):
+        raise ValueError("external kernel tree cannot use installed cache")
+    if cfg.get("CONFIG_KERNEL_GIT_CLONE_URI", '""') not in ('""', "n"):
+        raise ValueError("custom kernel Git sources require cache dependency review")
+    files, referenced = {}, set()
+    for relative in input_paths(tree, values):
+        path = tree / relative
+        if path.is_symlink() and not path.resolve().is_relative_to(tree):
+            raise ValueError(f"external source link requires dependency review: {relative}")
+        files[relative] = record(path)
+        if path.is_symlink():
+            if not path.resolve().is_file():
+                raise ValueError(f"source directory link requires dependency review: {relative}")
+            files[relative]["resolved_sha256"] = digest(path.resolve())
+        if path.is_file():
+            text = path.read_bytes().decode("utf-8", errors="replace")
+            referenced.update(CONFIG_SYMBOL.findall(text))
+            if relative.startswith(("tools/", "toolchain/")) and re.search(r"CONFIG_[\w-]*\$[({]", text):
+                raise ValueError(f"dynamic config dependency requires review: {relative}")
+    # Read referenced CONFIG symbols rather than a hand-maintained whitelist.
+    # Includes PACKAGE_kmod-b43, GDB/NASM, CPU/ABI and hardening dependencies.
+    selected = {key: cfg.get(key, "n") for key in sorted(referenced) if not key.endswith("_")}
+    effective = {key: value for key, value in values.items() if key != "MAKEFILE_LIST"}
+    target = f"{values['BOARD']}-{values['SUBTARGET']}"
+    if not re.fullmatch(r"[a-z0-9_-]+-[a-z0-9_-]+", target):
+        raise ValueError(f"invalid cache target: {target}")
+    inputs = {"schema": SCHEMA, "implementation": digest(Path(__file__)), "root": str(tree),
+              "source_files": files, "config": selected, "effective": effective,
+              "host": host_environment() if environment is None else environment}
+    key = f"wrt-v3-toolchain-{target}-{json_digest(inputs)}"
+    return key, inputs
+
+
+def roots(tree, inputs):
+    result = []
+    for name, prefix in (("STAGING_DIR_HOST", "host"), ("TOOLCHAIN_DIR", "toolchain-")):
+        path = Path(inputs["effective"][name])
+        if path.parent != tree / "staging_dir" or not path.name.startswith(prefix) or path.is_symlink():
+            raise ValueError(f"unsafe installed cache root: {path}")
+        if name == "STAGING_DIR_HOST" and path.name != "host":
+            raise ValueError("hostpkg is not an installed tools cache")
+        result.append(path)
+    return result
+
+
+def snapshot(tree, inputs):
+    entries, external = {}, {}
+    for root in roots(tree, inputs):
+        if not root.is_dir():
+            raise ValueError(f"missing installed cache directory: {root}")
+        for path in [root, *sorted(root.rglob("*"))]:
+            relative = path.relative_to(tree).as_posix()
+            entries[relative] = record(path)
+            if path.is_symlink():
+                resolved = path.resolve(strict=True)
+                if resolved.is_relative_to(tree):
+                    if not any(resolved.is_relative_to(item) for item in roots(tree, inputs)):
+                        raise ValueError(f"installed link depends on uncached build files: {relative}")
+                elif resolved.is_file():
+                    external[str(resolved)] = digest(resolved)
+                else:
+                    raise ValueError(f"external directory link cannot be verified: {relative}")
+    return entries, external
+
+
+def stamps(tree, inputs):
+    values = inputs["effective"]
+    paths = [Path(values[name]) for name in ("tools/stamp-compile", "toolchain/stamp-compile")]
+    paths.append(Path(values["TOOLCHAIN_DIR"]) / "stamp/.gcc_final_installed")
+    for path in paths:
+        if not path.is_file() or path.is_symlink() or path.stat().st_mtime <= EPOCH:
+            raise ValueError(f"missing or invalid completed-build stamp: {path}")
+        if not any(path.is_relative_to(root) for root in roots(tree, inputs)):
+            raise ValueError(f"stamp outside cache roots: {path}")
+    return paths
+
+
+def expected(reports):
+    return json.loads((reports / INPUTS).read_text())
+
+
+def check_inputs(tree, reports):
+    expected_inputs = expected(reports)
+    key, inputs = fingerprint(tree)
+    if inputs != expected_inputs["inputs"] or key != expected_inputs["key"]:
+        raise ValueError("tools/toolchain inputs changed after cache key calculation")
+    return key, inputs
+
+
+def restore(tree, reports, hit):
+    key, inputs = check_inputs(tree, reports)
+    state = {"key": key, "exact_hit": hit, "validated": False}
+    write(reports / STATE, state)
+    if not hit:
+        print("Installed tools/toolchain cache miss; normal source build")
+        return
+    saved = json.loads((tree / MANIFEST).read_text())
+    if saved.get("key") != key or saved.get("schema") != SCHEMA:
+        raise ValueError("installed cache manifest does not match the exact key")
+    entries, external = snapshot(tree, inputs)
+    if saved.get("files") != entries or saved.get("external_files") != external:
+        raise ValueError("installed cache is incomplete, changed, or links to a different runner tool")
+    completed = stamps(tree, inputs)
+    # Only verified content is normalized. No stamp is created or refreshed.
+    for folder in (tree / "tools", tree / "toolchain"):
+        for path in [*sorted(folder.rglob("*"), reverse=True), folder]:
+            os.utime(path, (EPOCH, EPOCH), follow_symlinks=False)
+    for stamp, source, dependencies in ((completed[0], "tools", []),
+                                        (completed[1], "toolchain", [str(completed[2])])):
+        subprocess.run([str(tree / "scripts/timestamp.pl"), "-n", str(stamp), source, *dependencies],
+                       cwd=tree, check=True)
+    state["validated"] = True
+    state["files_verified"] = len(entries)
+    write(reports / STATE, state)
+    print(f"Verified {len(entries)} installed entries; original build stamps retained")
+
+
+def seal(tree, reports):
+    key, inputs = check_inputs(tree, reports)
+    stamps(tree, inputs)
+    entries, external = snapshot(tree, inputs)
+    write(tree / MANIFEST, {"schema": SCHEMA, "key": key, "files": entries, "external_files": external})
+    print(f"Sealed {len(entries)} installed entries for {key}")
+
+
+def report(tree, reports):
+    if not (reports / STATE).is_file():
+        return
+    state = json.loads((reports / STATE).read_text())
+    compiled, intervals, begins = set(), [], {}
+    logs = [p for p in (reports / "parallel.tsv", reports / "serial.tsv") if p.is_file()]
+    for log in logs:
+        for line in log.read_text().splitlines():
+            parts = line.split("\t")
+            if len(parts) != 4:
+                continue
+            when, event, phase, target = parts
+            if not target.startswith(("tools/", "toolchain/")):
+                continue
+            marker = (log.name, phase, target)
+            if event == "begin":
+                begins[marker] = float(when)
+                if phase == "compile":
+                    compiled.add(target)
+            elif event == "end" and marker in begins:
+                intervals.append((begins.pop(marker), float(when)))
+    merged = []
+    for begin, end in sorted(intervals):
+        if merged and begin <= merged[-1][1]:
+            merged[-1][1] = max(end, merged[-1][1])
+        else:
+            merged.append([begin, end])
+    state.update({"compiled": sorted(compiled), "activity_seconds": sum(b-a for a, b in merged),
+                  "time_logs": [p.name for p in logs], "unfinished_events": len(begins)})
+    if state["exact_hit"] and state["validated"] and (compiled or not logs):
+        print("::warning::Exact tools/toolchain cache restored, but " +
+              ("compile events were recorded; see toolchain-cache.json" if compiled else "build timing evidence is missing"))
+    write(reports / STATE, state)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("command", choices=("restore", "seal", "report"))
+    parser.add_argument("--tree", type=Path, default=Path.cwd())
+    parser.add_argument("--reports", type=Path)
+    args = parser.parse_args()
+    tree = args.tree.resolve()
+    reports = args.reports or Path(os.environ["GITHUB_WORKSPACE"]) / "build-reports"
+    if args.command == "restore":
+        restore(tree, reports, os.environ.get("TOOLCHAIN_CACHE_HIT") == "true")
+    elif args.command == "seal":
+        seal(tree, reports)
+    else:
+        report(tree, reports)
+
+
+if __name__ == "__main__":
+    main()

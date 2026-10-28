@@ -7,6 +7,10 @@ set -euo pipefail
 REPORT_DIR="${GITHUB_WORKSPACE:-$PWD}/build-reports"
 mkdir -p "$REPORT_DIR"
 
+if [ -f "$REPORT_DIR/toolchain-inputs.json" ]; then
+	python3 "$GITHUB_WORKSPACE/.github/scripts/toolchain_cache.py" report
+fi
+
 git rev-parse HEAD > "$REPORT_DIR/source-commit.txt"
 if [ -f .config ]; then
 	cp .config "$REPORT_DIR/config.txt"

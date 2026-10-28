@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Retain the current and newest cache of each kind, within this device/ref only."""
+"""Prune device caches and aged shared toolchains, always within this ref."""
+from datetime import datetime, timedelta, timezone
 import json
 import os
+import re
 import subprocess
 
 
 def main():
     prefix = os.environ["DEVICE_CACHE_PREFIX"]
-    if not prefix.startswith("wrt-v2-"):
+    if not re.fullmatch(r"wrt-v2-(?:ap3000m|c8-688|tr3000-512)-linux-x64", prefix):
         raise ValueError("refusing to prune outside device cache namespace")
     repo = os.environ["GITHUB_REPOSITORY"]
     entries = json.loads(subprocess.check_output([
@@ -24,6 +26,37 @@ def main():
         for entry in group[1:]:
             if entry["key"] not in current:
                 subprocess.run(["gh", "cache", "delete", str(entry["id"]), "--repo", repo], check=True)
+
+    shared = os.environ.get("TOOLCHAIN_CACHE_PREFIX")
+    if not shared:
+        return
+    if not re.fullmatch(r"wrt-v3-toolchain-[a-z0-9_-]+", shared):
+        raise ValueError("refusing to prune outside shared toolchain namespace")
+    key = os.environ["DEVICE_STAGING_KEY"]
+    if not re.fullmatch(re.escape(shared) + r"-[a-f0-9]{64}", key):
+        raise ValueError("toolchain key does not match its namespace")
+    shared_entries = json.loads(subprocess.check_output([
+        "gh", "cache", "list", "--repo", repo, "--ref", os.environ["GITHUB_REF"],
+        "--key", shared + "-", "--limit", "100", "--json", "id,key,createdAt"], text=True))
+    shared_entries = sorted((e for e in shared_entries if re.fullmatch(
+        re.escape(shared) + r"-[a-f0-9]{64}", e["key"])), key=lambda e: e["createdAt"], reverse=True)
+    if not any(e["key"] == key for e in shared_entries):
+        return  # A failed/racing save must not remove any fallback cache.
+    # Shared consumers may have different fingerprints. Keep the current key,
+    # the newest two generations, and ALL entries younger than seven days.
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    for entry in shared_entries[2:]:
+        created = datetime.fromisoformat(entry["createdAt"].replace("Z", "+00:00"))
+        if entry["key"] != key and created < cutoff:
+            result = subprocess.run(["gh", "cache", "delete", str(entry["id"]), "--repo", repo],
+                                    text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if result.returncode and "404" not in result.stderr:
+                raise RuntimeError(result.stderr)
+    # Retire only this device's obsolete v2 staging after its v3 save is visible.
+    # Leave dl/ccache and other devices/ref namespaces untouched.
+    for entry in entries:
+        if entry["key"].startswith(prefix + "-staging-"):
+            subprocess.run(["gh", "cache", "delete", str(entry["id"]), "--repo", repo], check=True)
 
 
 if __name__ == "__main__":

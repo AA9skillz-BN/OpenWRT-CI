@@ -209,7 +209,7 @@ class DeviceContractTests(unittest.TestCase):
             digest, file = line.split("  ", 1)
             self.assertEqual(digest, build.hashlib.sha256((self.tree / "upload" / file).read_bytes()).hexdigest())
 
-    def test_toolchain_cache_ignores_image_date_but_tracks_feed_and_rust(self):
+    def test_provenance_keeps_feed_and_rust_outside_toolchain_identity(self):
         build.write(self.reports / "packages.lock.json", "{}")
         build.write(self.reports / "host-toolchains.txt", "host toolchain version")
         build.write(self.tree / "feeds/packages/.git", "fixture")
@@ -234,7 +234,8 @@ class DeviceContractTests(unittest.TestCase):
         def key():
             output.write_text("")
             with patch.dict(os.environ, {"GITHUB_OUTPUT": str(output)}), \
-                 patch.object(build, "run", side_effect=fake_run), patch.object(build, "Path", side_effect=fake_path):
+                 patch.object(build, "run", side_effect=fake_run), patch.object(build, "Path", side_effect=fake_path), \
+                 patch.object(build.toolchain_cache, "fingerprint", return_value=("wrt-v3-toolchain-mediatek-filogic-" + "a"*64, {})):
                 build.cache_keys(REPO, self.tree, "AP3000M", self.reports)
             return dict(line.split("=", 1) for line in output.read_text().splitlines())
 
@@ -243,11 +244,12 @@ class DeviceContractTests(unittest.TestCase):
         self.assertEqual(first, key())
         versions["feed"] = "c" * 40
         changed_feed = key()
-        self.assertNotEqual(first["staging"], changed_feed["staging"])
+        self.assertEqual(first["staging"], changed_feed["staging"])
+        self.assertEqual(json.loads((self.reports / "build-inputs.json").read_text())["feeds"]["packages"], "c"*40)
         self.assertEqual(first["ccache"], changed_feed["ccache"])
         versions["rust"] = "rustc 1.97.0"
         changed_rust = key()
-        self.assertNotEqual(changed_feed["staging"], changed_rust["staging"])
+        self.assertEqual(changed_feed["staging"], changed_rust["staging"])
         self.assertNotEqual(changed_feed["ccache"], changed_rust["ccache"])
 
 

@@ -11,6 +11,7 @@ import stat
 import subprocess
 import tarfile
 from device_image import verify_payload
+import toolchain_cache
 
 
 def run(*args, cwd=None):
@@ -235,7 +236,8 @@ def package(tree, repo, name, data, reports):
     for file in reports.iterdir():
         if file.is_file() and file.name in ("source-commit.txt", "feeds.buildinfo", "packages.lock.json",
                                              "build-inputs.json", "image-metadata.json", "compatibility.txt", "ci-commit.txt",
-                                             "config-resolution.json", "source-lock.json", "verified-payload.json"):
+                                             "config-resolution.json", "source-lock.json", "verified-payload.json",
+                                             "toolchain-inputs.json", "toolchain-cache.json"):
             shutil.copy2(file, upload / file.name)
     # Do not discard evidence needed to reproduce or diagnose this release.
     checksums = []
@@ -283,13 +285,16 @@ def cache_keys(repo, tree, name, reports):
             if file.is_file():
                 inputs["scripts"]["source/" + str(file.relative_to(tree))] = hashlib.sha256(file.read_bytes()).hexdigest()
     serialized = json.dumps(inputs, sort_keys=True, ensure_ascii=False)
-    digest = hashlib.sha256(serialized.encode()).hexdigest()
     write(reports / "build-inputs.json", serialized + "\n")
+    # Full provenance remains above; installed tools have their own dependencies.
+    staging, tool_inputs = toolchain_cache.fingerprint(tree)
+    toolchain_cache.write(reports / toolchain_cache.INPUTS, {"key": staging, "inputs": tool_inputs})
     prefix = f"wrt-v2-{name.lower()}-linux-x64"
     # ccache validates compiler/content itself; toolchain staging never falls back.
     ccache = hashlib.sha256((compiler + inputs["rust"] + inputs["os"]).encode()).hexdigest()[:16]
     with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as stream:
-        stream.write(f"prefix={prefix}\nstaging={prefix}-staging-{digest}\n"
+        stream.write(f"prefix={prefix}\nstaging={staging}\n"
+                     f"toolchain_prefix={staging.rsplit('-', 1)[0]}\n"
                      f"ccache={prefix}-ccache-{ccache}-\ndl={prefix}-dl-\n")
 
 

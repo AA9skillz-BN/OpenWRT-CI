@@ -87,11 +87,21 @@ Samba、USB 网卡、存储工具等功能。可在每个 profile 的 `config_fr
 - `dl`：独立滚动缓存，下载由 OpenWrt 检查哈希。
 - `.ccache`：独立滚动缓存，上限 1 GiB，每次运行产生新 key 以积累结果；
   即使编译失败也保留已完成的缓存。
-- host/toolchain staging：严格匹配系统、主源码、feeds、配置、工具链版本、
-  插件锁和构建脚本指纹，无前缀回退，不刷新 stamp 冒充已构建。
+- host/toolchain staging：使用 `wrt-v3-toolchain-<target>-<subtarget>-<hash>`，仅精确匹配，
+  不使用前缀回退。缓存范围为 `staging_dir/host`、`staging_dir/toolchain-*` 和完整性清单，
+  不含 `hostpkg`、目标平台的 `host` 或 `build_dir`。详细输入、验证和限制见
+  [工具链缓存设计](TOOLCHAIN-CACHE.md)。
+- 工具链 key 依据补丁后的源码内容、上游规则实际引用的配置、Make 展开的工具集合/CPU/ABI/flags，
+  以及宿主系统包、工具和 CPU 特性；完整构建版本记录仍单独保留。
+  机型名称、feeds/插件版本、Rust 和本仓库测试/Profile 文件本身不进入工具链 key。
+- 精确命中后先校验文件内容、权限、符号链接、外部工具及原有 stamp；通过后仅把
+  `tools/`、`toolchain/` 源码时间规范化为固定旧时间，不创建或刷新 stamp。
+  校验失败会中止构建，不使用可疑缓存。命中后仍有重编会产生警告和报告。
 - 恢复后始终重建 Rust 工具链接，避免缓存指向旧 runner 路径。
-- 成功后只清理本机型、本 ref 的旧缓存，保留当前及最新一代；找不到当前缓存时
-  不删回退缓存。GitHub 仍可能按仓库容量配额自动淘汰缓存。
+- 下载和 ccache 成功后仅清理本机型、本 ref 的旧缓存，保留当前及最新一代；找不到当前缓存时
+  不删回退缓存。共享工具链仅清理本 target、本 ref 中超过七天的旧缓存，保留当前、最新两代
+  及全部七天内记录。新工具链缓存保存可见后，回收该机型旧 v2 staging。
+  GitHub 仍可能按仓库容量配额自动淘汰缓存。
 
 新缓存与旧流程使用不同命名空间，首次构建可能冷启动；不能直接用首次耗时衡量提速。
 
@@ -121,7 +131,7 @@ auto 服从 SOURCE_MODE；locked 下跟随版本锁，latest 下跟随分支。�
 正常合并双方修改，不应整文件覆盖。同步后先跑 Build logic checks，再跑
 三个机型的 TEST；公共构建逻辑变化时应再跑 BUILD_ONLY。
 
-OpenWrt/ImmortalWrt 源码和 feeds 默认不会自动漂移；更新版本锁后，工具链缓存随
+OpenWrt/ImmortalWrt 源码和 feeds 默认不会自动漂移；更新版本锁后，工具链缓存按其实际
 构建输入变化失效，设备与包清单校验可以阻止不完整镜像发布。上游接口发生变化时
 仍然需要适配，检查通过也不等同于真机验证通过。
 
