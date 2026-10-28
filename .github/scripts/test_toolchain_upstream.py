@@ -81,7 +81,10 @@ class UpstreamCacheTests(unittest.TestCase):
                              if line.startswith("CI_WORLD:"))
                 self.assertEqual(values["HOST_OS"], "Linux")
                 self.assertTrue(values["GNU_HOST_NAME"])
-                self.assertEqual(world, {name: values[name] for name in world})
+                # The final captured line is stripped by capture(); Make's
+                # optional builddir list can have harmless trailing spaces.
+                self.assertEqual({name: value.strip() for name, value in world.items()},
+                                 {name: values[name].strip() for name in world})
                 self.assertEqual(len(world), 8)
                 info = Path(values["TOOLCHAIN_DIR"]) / "info.mk"
                 # A prerequisite/initial compiler can leave the unsuffixed
