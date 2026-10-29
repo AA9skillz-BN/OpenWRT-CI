@@ -138,6 +138,27 @@ curl() { while [ "$#" -gt 0 ]; do if [ "$1" = -o ]; then shift; printf good > "$
         self.assertFalse((self.root / "env-written").exists())
         self.assertFalse((self.root / "rebooted").exists())
 
+    def test_env_probe_installs_only_crc_valid_config_and_preserves_on_failure(self):
+        probe = (REPO / "Files/C8-688/usr/sbin/c8-env-detect").read_text(encoding="utf-8")
+        probe = probe.replace('. /lib/functions/c8-system.sh || exit 1', '')
+        probe = probe.replace('CONF=/etc/fw_env.config', 'CONF="$TASK_TMP/detected"')
+        (self.root / "detected").write_text("previous config\n")
+        for valid in (False, True):
+            mock = '''
+logger() { :; }; flock() { :; }
+fw_printenv() {
+ [ "$1" = -c ] || return 1
+ grep -q '0x80000$' "$2" || return 1
+''' + ('echo 1\n' if valid else 'return 1\n') + '}\n'
+            result = self.shell(mock + probe, library=True)
+            if valid:
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual((self.root / "detected").read_text(), "/dev/mmcblk0p2 0x0 0x80000\n")
+            else:
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual((self.root / "detected").read_text(), "previous config\n")
+            self.assertFalse((self.root / "env-written").exists())
+
     @unittest.skipIf(os.name == "nt" or not shutil.which("flock"), "Linux flock required")
     def test_switch_and_ota_cannot_overlap(self):
         result = self.shell('''

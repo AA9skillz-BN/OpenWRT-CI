@@ -66,7 +66,7 @@ class C8FanTests(unittest.TestCase):
             result = subprocess.run([cargo, "test", "--locked", "--offline", "--test", "repository_c8"],
                                     cwd=tree / "src", text=True, capture_output=True, timeout=180)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn("4 passed; 0 failed", result.stdout)
+            self.assertIn("5 passed; 0 failed", result.stdout)
             print(result.stdout)
 
 

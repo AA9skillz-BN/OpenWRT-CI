@@ -32,7 +32,7 @@ c8_read_boot_system() {
  awk '
   /^[[:space:]]*(#|$)/ { next }
   { n++; if (NF != 3 || $1 != "/dev/mmcblk0p2" || $2 != "0x0" ||
-    $3 !~ /^(0x2000|0x4000|0x8000|0x10000|0x20000)$/) bad=1 }
+    $3 !~ /^(0x2000|0x4000|0x8000|0x10000|0x20000|0x80000)$/) bad=1 }
   END { exit (n != 1 || bad) }
  ' "$C8_ENV_CONF" 2>/dev/null || { c8_error '启动环境配置未通过检查，请先探测 env'; return 1; }
  local current

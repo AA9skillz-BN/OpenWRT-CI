@@ -1,32 +1,29 @@
 #!/bin/sh
-# C8-688：探测 u-boot env 的真实大小，写进 /etc/fw_env.config。
-#
-# 背景：p2(u-boot-env) offset 0 起是 CRC32 + "baudrate=…" 文本，
-#       但 CONFIG_ENV_SIZE 未知（0x2000/0x4000/0x8000/0x10000 都可能）。
-#       CRC 是对整个 env 区算的，尺寸猜错 => fw_printenv 报 CRC 错。
-#       这里逐个试，能读出 boot_system 的就是对的。
-
+# SPDX-License-Identifier: MIT
+# Discover a CRC-valid C8 environment without changing its contents.
+# The real board uses a single 0x80000-byte environment at p2 offset zero.
+. /lib/functions/c8-system.sh || exit 1
 CONF=/etc/fw_env.config
 DEV=/dev/mmcblk0p2
-CANDIDATES="0x8000 0x4000 0x10000 0x20000 0x2000"
+CANDIDATES="0x80000 0x8000 0x4000 0x10000 0x20000 0x2000"
 
-command -v fw_printenv >/dev/null 2>&1 || {
-	echo "c8-env-detect: 没有 uboot-envtools，跳过" >&2
-	exit 1
-}
-[ -b "$DEV" ] || { echo "c8-env-detect: $DEV 不存在" >&2; exit 1; }
-
+command -v fw_printenv >/dev/null 2>&1 || exit 1
+command -v flock >/dev/null 2>&1 || exit 1
+c8_lock || exit 1
+c8_check_platform || exit 1
+candidate=$(mktemp "${CONF}.XXXXXX") || exit 1
+trap 'rm -f "$candidate"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 for sz in $CANDIDATES; do
-	printf '%s 0x0 %s\n' "$DEV" "$sz" > "$CONF"
-	if v=$(fw_printenv -n boot_system 2>/dev/null); then
-		echo "c8-env-detect: env size=$sz boot_system=$v" >&2
-		logger -t c8-env "env size=$sz boot_system=$v"
-		exit 0
-	fi
+ printf '%s 0x0 %s\n' "$DEV" "$sz" > "$candidate" || exit 1
+ if v=$(fw_printenv -c "$candidate" -n boot_system 2>/dev/null); then
+  case "$v" in 0|1) ;; *) continue ;; esac
+  chmod 0644 "$candidate" && mv -f "$candidate" "$CONF" || exit 1
+  logger -t c8-env "CRC-valid env size=$sz boot_system=$v"
+  exit 0
+ fi
 done
-
-# 全失败：留一个最可能的值，别把文件弄没（c8-boot-official 会做只读判断）
-printf '%s 0x0 0x8000\n' "$DEV" > "$CONF"
-logger -t c8-env "env size 探测失败，回退 0x8000"
-echo "c8-env-detect: 所有候选都读不出来" >&2
+# Keep the existing file on failure; never install a guessed fallback config.
+echo 'c8-env-detect: 未找到 CRC 有效且 boot_system=0/1 的环境；保留原配置' >&2
 exit 1

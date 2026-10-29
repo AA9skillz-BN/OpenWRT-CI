@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 
 HASHES = {
+    "src/src/sensor.rs": "c755b62e8526d4f41a79cf6c2ee669a7df4150fbe1df1fda34ac4f95016ee24b",
     "src/src/fan.rs": "5ac3fd9689a8fc9249bc376e1eab4ff293e505bd4218262c1ef931c83d115c2a",
     "src/src/safety.rs": "44f6391896bc0688f195c42d1058ed0d00a0aa297395d444ac95fbf373494091",
     "src/src/paths.rs": "45d89df8ef13e9359dc3a6dbde5081a992a3039b89acd4b0d9336b9c8e714358",
@@ -33,7 +34,9 @@ FLOOR = '''    // C8: retain every kernel map, with the previous controller's fu
 
 
 def transform(name, text):
-    if name == "src/src/fan.rs":
+    if name == "src/src/sensor.rs":
+        text = text.replace('&["mt799", "wifi", "radio"]', '&["mt799", "mt7915", "wifi", "radio"]')
+    elif name == "src/src/fan.rs":
         # Never select an unrelated chip's PWM, even when pwmfan is missing.
         text = text.replace("let pwm_path = chosen.or(fallback)?;", "let _ = fallback;\n    let pwm_path = chosen?;")
         text = text.replace("Ok(self.read_pwm().unwrap_or(value))", '''self.read_pwm().ok_or_else(|| Error::PwmWrite {
@@ -41,7 +44,10 @@ def transform(name, text):
             message: "PWM readback unavailable".to_string(),
         })''')
     elif name == "src/src/safety.rs":
-        text = text.replace("    let of_dir = fan.of_node();", FLOOR + "    let of_dir = fan.of_node();", 1)
+        text = text.replace("    let mut assessment = FloorAssessment::empty(Ownership::Unknown);",
+                            "    let mut assessment = FloorAssessment::empty(Ownership::Unknown);\n" + FLOOR, 1)
+        text = text.replace('assessment.basis = "no pwm-fan cooling device; kernel floor unknown"',
+                            'assessment.floor_pwm = 255;\n        assessment.basis = "C8 cooling device missing: full output"')
         # C8's actual upstream trips are named active-low/med/high, hot, crit.
         # H5000M's trip-point* filter would silently miss all of these.
         text = text.replace('list_dirs(&zone.join("trips"), "trip-point")',

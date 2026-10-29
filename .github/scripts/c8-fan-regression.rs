@@ -2,6 +2,21 @@
 mod common;
 use common::{mc, Fixture, StubProbe};
 use h5000m_fancontrol::{controller, fan, safety};
+use h5000m_fancontrol::sensor::{self, SensorId};
+
+#[test]
+fn c8_real_sensor_names_are_classified() {
+    let f = Fixture::new("c8-hwmon-names");
+    f.thermal_zone("cpu-thermal", mc(55));
+    f.hwmon("mdio_bus:05", Some(mc(48)));
+    f.hwmon("mt7915_phy0", Some(mc(49)));
+    f.hwmon("mt7915_phy1", Some(mc(50)));
+    let sensors = sensor::sample_all(&f.paths, &StubProbe::new(), 1000);
+    assert_eq!(sensors.value(SensorId::Cpu), Some(55));
+    assert_eq!(sensors.value(SensorId::Phy), Some(48));
+    assert_eq!(sensors.value(SensorId::Wifi1), Some(49));
+    assert_eq!(sensors.value(SensorId::Wifi2), Some(50));
+}
 
 #[test]
 fn c8_never_writes_an_unrelated_pwm_chip() {
@@ -35,6 +50,7 @@ fn c8_manual_and_automatic_modes_write_pwm_without_changing_cpu_policy() {
         let f = Fixture::new("c8-control");
         f.thermal_zone("cpu-thermal", mc(52));
         let hw = f.pwm_fan(0, None);
+        f.pwm_fan_cooling_device(3);
         f.dt_pwm_fan(7, &[0, 64, 128, 255]);
         f.dt_trip("cpu-thermal", "active-low", "active", 60_000, 2_000, 11);
         f.dt_cooling_map("cpu-thermal", "map0", 7, 1, 11);
@@ -52,6 +68,7 @@ fn c8_manual_and_automatic_modes_write_pwm_without_changing_cpu_policy() {
 fn c8_kernel_cooling_floor_is_retained() {
     let f = Fixture::new("c8-kernel-floor");
     f.pwm_fan(0, None);
+    f.pwm_fan_cooling_device(3);
     f.dt_pwm_fan(7, &[0, 64, 128, 255]);
     f.dt_trip("cpu-thermal", "active-low", "active", 60_000, 2_000, 11);
     f.dt_cooling_map("cpu-thermal", "map0", 7, 2, 11);
