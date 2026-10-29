@@ -73,9 +73,16 @@ else
 	exit 1
 fi
 
+# Optional, user-enabled USB 2.0 compatibility. Run before fm350d (S95).
+# Preserve the user's UCI choice; fresh firmware keeps USB 3.0 available.
+_ap3000m_usb_compat="$GITHUB_WORKSPACE/Scripts/AP3000M/ap3000m-fm350-usb-compat"
+cp -f "$_ap3000m_usb_compat" "$_ap3000m_bf/etc/init.d/ap3000m-fm350-usb-compat"
+chmod 0755 "$_ap3000m_bf/etc/init.d/ap3000m-fm350-usb-compat"
+ln -sf ../init.d/ap3000m-fm350-usb-compat "$_ap3000m_bf/etc/rc.d/S90ap3000m-fm350-usb-compat"
+
 # 8) 开机 RNDIS 卡死自愈
-#    真机两次复现：刷机/重启后 eth2 有地址但 rx_packets=0、tx_errors 飞涨，唯一解法是
-#    软重启模组（AT+CFUN=1,1）+ 重新定位 AT 口。这里做成开机 120s 后自动执行。
+#    历史真机复现：eth2 有地址但 rx_packets=0、tx_errors 增长。
+#    模组重启并非每次有效；恢复结果仍须实际探测，失败不能当作联网成功。
 _ap3000m_guard_dir="$GITHUB_WORKSPACE/Scripts/AP3000M/rdnis-guard"
 if [ -d "$_ap3000m_guard_dir" ]; then
 	cp -f "$_ap3000m_guard_dir/ap3000m-rdnis-guard" "$_ap3000m_bf/usr/sbin/ap3000m-rdnis-guard"

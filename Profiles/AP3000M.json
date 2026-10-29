@@ -59,6 +59,15 @@
   "build_tag_file": "/etc/ap3000m-build.tag",
   "required_files": [
     {
+      "path": "/etc/init.d/ap3000m-fm350-usb-compat",
+      "source": "Scripts/AP3000M/ap3000m-fm350-usb-compat",
+      "executable": true
+    },
+    {
+      "path": "/etc/rc.d/S90ap3000m-fm350-usb-compat",
+      "executable": true
+    },
+    {
       "path": "/usr/share/ap3000m-ota/runtime-abi",
       "source": "Scripts/AP3000M/ota/runtime-abi"
     },
