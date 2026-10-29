@@ -56,6 +56,7 @@ jobs:
         run: |
           node --check Scripts/AP3000M/luci-app-ap3000m-ota/htdocs/luci-static/resources/view/ap3000m-ota/overview.js
           node --check Scripts/C8-688/luci-app-c8-688-ota/htdocs/luci-static/resources/view/c8-688-ota/overview.js
+          node .github/scripts/test_c8_ota_ui.js
       - name: Check shell syntax
         run: python3 .github/scripts/check-shell-syntax.py
       - uses: actions/setup-go@v5
