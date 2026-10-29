@@ -220,7 +220,7 @@
 		};
 	};
 
-	/* eth1 = 5G 模组板上行（GPY211 @ mdio 21），原厂按 DHCP 取地址 */
+	/* eth1 = 5G 模组板上行（GPY211 @ MDIO 0x15，即十进制 21） */
 	gmac1: mac@1 {
 		compatible = "mediatek,eth-mac";
 		reg = <1>;
@@ -240,12 +240,12 @@
 			reset-deassert-us = <20000>;
 		};
 
-		/* 实机 /sys/bus/mdio_bus 实测：两个 2.5G PHY 都在 mdio 5 与 mdio 15，
-		 * ID 均为 0x67c9de0a（MaxLinear GPY211）。
-		 * 注意：C8-668GL 那份 in-tree DTS 把第二个 PHY 写在 21，本机不能用。 */
+		/* 原厂 kernel DTB 的 reg 为 0x15；sysfs 的 :15 也是十六进制。
+		 * unit-address @15 正确，但 reg=<15> 会错误探测十进制 15（0x0f），
+		 * 导致 GPIO8 复位无法释放、eth1 无法挂接 PHY。 */
 		phy21: ethernet-phy@15 {
 			compatible = "ethernet-phy-ieee802.3-c45";
-			reg = <15>;
+			reg = <0x15>;
 			reset-gpios = <&pio 8 GPIO_ACTIVE_LOW>;
 			reset-assert-us = <600>;
 			reset-deassert-us = <20000>;

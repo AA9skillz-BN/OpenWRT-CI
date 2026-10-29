@@ -93,5 +93,21 @@
       "source": "Files/C8-688/etc/uci-defaults/99-c8-688"
     }
   ],
-  "root_partition": "rootfs_2nd"
+  "root_partition": "rootfs_2nd",
+  "ethernet_links": [
+    {
+      "mac": "/soc/ethernet@15100000/mac@1",
+      "phy": "/soc/ethernet@15100000/mdio-bus/ethernet-phy@15",
+      "address": 21,
+      "mode": "2500base-x",
+      "reset_gpio": 8
+    },
+    {
+      "mac": "/soc/ethernet@15100000/mdio-bus/switch@1f/ports/port@5",
+      "phy": "/soc/ethernet@15100000/mdio-bus/ethernet-phy@5",
+      "address": 5,
+      "mode": "2500base-x",
+      "reset_gpio": 7
+    }
+  ]
 }
