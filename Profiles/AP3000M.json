@@ -59,6 +59,10 @@
   "build_tag_file": "/etc/ap3000m-build.tag",
   "required_files": [
     {
+      "path": "/www/luci-static/resources/view/airpi-fancontrol/fancontrol.js",
+      "build_source": "package/luci-app-airpi3000m-fancontrol/luci-app-airpi-fancontrol/htdocs/luci-static/resources/view/airpi-fancontrol/fancontrol.js"
+    },
+    {
       "path": "/etc/init.d/ap3000m-fm350-usb-compat",
       "source": "Scripts/AP3000M/ap3000m-fm350-usb-compat",
       "executable": true
