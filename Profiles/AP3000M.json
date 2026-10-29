@@ -59,6 +59,11 @@
   "build_tag_file": "/etc/ap3000m-build.tag",
   "required_files": [
     {
+      "path": "/usr/sbin/fm350d",
+      "build_source": "package/luci-app-fm350/rust/target/aarch64-unknown-linux-musl/release/fm350d",
+      "executable": true
+    },
+    {
       "path": "/www/luci-static/resources/view/airpi-fancontrol/fancontrol.js",
       "build_source": "package/luci-app-airpi3000m-fancontrol/luci-app-airpi-fancontrol/htdocs/luci-static/resources/view/airpi-fancontrol/fancontrol.js"
     },

@@ -19,6 +19,10 @@ _ap3000m_log() { echo "==> [AP3000M] $*"; }
 python3 "$GITHUB_WORKSPACE/Scripts/AP3000M/fancontrol/fix-confirm.py" \
 	package/luci-app-airpi3000m-fancontrol
 
+# Keep IPv6 DNS out of the PDP activation/address fallback in the locked plugin.
+python3 "$GITHUB_WORKSPACE/Scripts/AP3000M/fm350/fix-pdp-dns.py" \
+	package/luci-app-fm350
+
 # 6) 投放 AP3000M 专属的首次开机配置（FM350 的 AT 口 / APN / CID 自动纠正）
 #    真机实测：插件默认 at_port=/dev/ttyUSB1 在本机是哑口（真 AT 口是 USB 接口 :1.6
 #    = /dev/ttyUSB3），且默认 cid=1 会拨到运营商的 ims 承载，表现为「能读到模组却上不了网」。
