@@ -99,7 +99,10 @@ def adapt(tree):
     for name, digest in HASHES.items():
         file = tree / name
         raw = file.read_bytes()
-        backup = originals / name
+        # OpenWrt scans hidden directories for files literally named Makefile.
+        # Even a reviewed backup must never become a second package recipe.
+        backup_path = originals / name
+        backup = backup_path.with_name(backup_path.name + ".original")
         original = backup.read_bytes() if backup.exists() else raw
         if hashlib.sha256(original).hexdigest() != digest:
             raise ValueError(f"{name}: not the reviewed locked source")

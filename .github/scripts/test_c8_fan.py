@@ -54,6 +54,40 @@ class C8FanTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "drift"):
                 adapt.adapt(tree)
 
+    @unittest.skipIf(os.name == "nt", "actual OpenWrt package discovery runs on Linux")
+    def test_locked_openwrt_scan_does_not_discover_review_backups_as_packages(self):
+        source = json.loads((REPO / "Profiles/sources.lock.json").read_text())["C8-688"]
+        raw = "https://raw.githubusercontent.com/immortalwrt/immortalwrt/" + source["commit"] + "/"
+        files = {}
+        for name in ("include/scan.mk", "include/scan.awk"):
+            with urllib.request.urlopen(raw + name, timeout=60) as response:
+                files[name] = response.read()
+        with tempfile.TemporaryDirectory() as directory:
+            top = Path(directory)
+            tree = top / "package/luci-app-h5000m-fancontrol"
+            self.tree(tree)
+            adapt.adapt(tree)
+            for name, data in files.items():
+                path = top / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(data)
+            (top / "include/verbose.mk").touch()
+            (top / "rules.mk").write_text('STAGING_DIR_HOST:=$(TOPDIR)/host\n')
+            (top / "tmp/info").mkdir(parents=True)
+            def scan(cookie):
+                name = f"tmp/info/.files-packageinfo-{cookie}"
+                result = subprocess.run(["make", "--no-print-directory", "-f", "include/scan.mk",
+                                         f"TOPDIR={top}", f"SCAN_COOKIE={cookie}", str(top / name)],
+                                        cwd=top, text=True, capture_output=True, timeout=60)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                return (top / name).read_text().splitlines()
+            self.assertEqual(scan("fixed"), ["luci-app-h5000m-fancontrol"])
+            # Independently reproduce the full-build failure with a legacy
+            # literal Makefile backup. The fixed format must avoid this entry.
+            legacy = tree / ".c8-reviewed-originals/Makefile"
+            legacy.write_bytes((tree / ".c8-reviewed-originals/Makefile.original").read_bytes())
+            self.assertIn("luci-app-h5000m-fancontrol/.c8-reviewed-originals", scan("legacy"))
+
     @unittest.skipIf(os.name == "nt", "Linux Rust/sysfs regression runs in CI")
     def test_real_controller_obeys_c8_pwm_and_safety(self):
         cargo = shutil.which("cargo")
