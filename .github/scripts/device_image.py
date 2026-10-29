@@ -83,6 +83,11 @@ def verify_payload(archive, kernel, root, data, repo, reports, tree=None):
                 raise ValueError("required file resolves outside rootfs")
             if item.get("executable") and not file.stat().st_mode & 0o111:
                 raise ValueError(f"rootfs file is not executable: {item['path']}")
+            if item.get("elf_machine"):
+                elf = file.read_bytes()[:20]
+                if (len(elf) != 20 or elf[:6] != b"\x7fELF\x02\x01" or
+                        int.from_bytes(elf[18:20], "little") != item["elf_machine"]):
+                    raise ValueError(f"rootfs binary has wrong ELF architecture: {item['path']}")
             if item.get("source") and file.read_bytes() != (repo / item["source"]).read_bytes():
                 raise ValueError(f"rootfs file differs from build source: {item['path']}")
             if item.get("build_source"):

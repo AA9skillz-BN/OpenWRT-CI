@@ -20,9 +20,22 @@ if [ "$(uci -q get network.lan.device)" = "br-lan" ]; then
 fi
 uci -q commit network
 
+# The requested theme change must also apply after a config-preserving upgrade.
+# A saved Argon mediaurlbase would otherwise refer to a removed theme.
+case "$(uci -q get luci.main.mediaurlbase)" in
+	''|*/argon|*/bootstrap)
+		uci -q set luci.main.mediaurlbase='/luci-static/aurora'
+		uci -q commit luci
+		;;
+esac
+
 # ---- 风扇 ---------------------------------------------------------------
-[ -x /usr/sbin/c8-fan ] && /etc/init.d/c8-fan enable 2>/dev/null
-/etc/init.d/c8-fan restart 2>/dev/null
+# Remove a preserved legacy startup link; only the new daemon may write PWM.
+/etc/init.d/c8-fan disable 2>/dev/null
+[ ! -x /usr/sbin/h5000m-fancontrol ] || {
+ /etc/init.d/h5000m-fancontrol enable
+ /etc/init.d/h5000m-fancontrol start
+}
 
 # ---- u-boot env（boot_system 双系统开关）-------------------------------
 # 原厂没带 fw_printenv/fw_env.config，env 大小只能自己探

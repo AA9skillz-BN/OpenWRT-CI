@@ -106,7 +106,7 @@ class DeviceContractTests(unittest.TestCase):
             data = build.profile(REPO, name)
             build.merge_config(REPO, self.tree, name, data)
             # Settings.sh adds the workflow theme after fragment merging.
-            theme = "argon" if name == "C8-688" else "aurora"
+            theme = "aurora"
             with (self.tree / ".config").open("a") as stream:
                 stream.write(f"CONFIG_PACKAGE_luci-theme-{theme}=y\nCONFIG_PACKAGE_luci-app-{theme}-config=y\n")
             build.check_config(self.tree, data)
@@ -208,6 +208,22 @@ class DeviceContractTests(unittest.TestCase):
         for line in (self.tree / "upload/sha256sums").read_text().splitlines():
             digest, file = line.split("  ", 1)
             self.assertEqual(digest, build.hashlib.sha256((self.tree / "upload" / file).read_bytes()).hexdigest())
+
+    def test_c8_update_attachment_has_distinct_model_and_dependencies(self):
+        import hashlib
+        upload = self.tree / "ota-assets"
+        upload.mkdir()
+        tag = "C8-688-immortalwrt-master-fixture"
+        build.package_ota_update(REPO, upload, tag, "C8-688")
+        raw = (upload / "c8-688-ota").read_bytes()
+        meta = json.loads((upload / "c8-688-ota-update.json").read_text())
+        self.assertEqual(meta["model"], "c8-688")
+        self.assertEqual(meta["tag"], tag)
+        self.assertEqual(meta["runtime_abi"], "1")
+        self.assertEqual(meta["sha256"], hashlib.sha256(raw).hexdigest())
+        self.assertEqual(meta["size"], len(raw))
+        self.assertIn("fw_setenv", meta["requires"])
+        self.assertFalse((upload / "ap3000m-ota").exists())
 
     def test_provenance_keeps_feed_and_rust_outside_toolchain_identity(self):
         build.write(self.reports / "packages.lock.json", "{}")

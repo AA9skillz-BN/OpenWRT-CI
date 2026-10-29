@@ -1,0 +1,23 @@
+#!/bin/sh /etc/rc.common
+# SPDX-License-Identifier: MIT
+# c8-688-ota-boot —— 每次开机回写上一次 OTA 是否成功
+#
+# 由 Scripts/C8-688/private.sh 投放到 /etc/init.d/ 并建立 /etc/rc.d/S99c8-688-ota-boot 软链，
+# 不依赖 rc.local（避免用户自定义 rc.local 与行尾差异导致的失配）。
+#
+# 逻辑：升级前 c8-688-ota 会写 /etc/c8-688-pending（该文件已在 /etc/sysupgrade.conf 里，
+# 跨 sysupgrade 保留）。开机后拿它和新镜像自带的 /etc/c8-688-build.tag 比对：
+#   相等 -> success；不等 -> failed（例如刷的是别的版本、或刷写失败回滚）。
+
+START=99
+STOP=05
+
+start() {
+	[ -x /usr/sbin/c8-688-ota ] || return 0
+	/usr/sbin/c8-688-ota boot-hook >/dev/null 2>&1
+	return 0
+}
+
+stop() {
+	return 0
+}

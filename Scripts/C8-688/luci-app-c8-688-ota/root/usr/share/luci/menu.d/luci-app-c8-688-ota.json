@@ -1,0 +1,13 @@
+{
+	"admin/system/c8-688-ota": {
+		"title": "固件升级",
+		"order": 90,
+		"action": {
+			"type": "view",
+			"path": "c8-688-ota/overview"
+		},
+		"depends": {
+			"acl": [ "luci-app-c8-688-ota" ]
+		}
+	}
+}

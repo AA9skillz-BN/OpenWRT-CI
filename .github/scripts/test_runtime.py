@@ -121,25 +121,12 @@ exit 0
             self.assertEqual(len(lines), 2)
             self.assertIn("other-job", lines[0])
 
-    def test_fan_fails_to_full_speed_and_uses_hottest_soc_reading(self):
-        hw = self.root / "hwmon/hwmon0"
-        hw.mkdir(parents=True)
-        for name, value in (("name", "pwmfan"), ("pwm1", "0"), ("pwm1_enable", "0")):
-            (hw / name).write_text(value)
-        source = read("Files/C8-688/usr/sbin/c8-fan").replace("/sys/class/hwmon", '"$TASK_TMP/hwmon"')
-        source = source.replace("/sys/class/thermal", '"$TASK_TMP/thermal"')
-        for values, expected in (([], "255"), ([("cpu-thermal", "garbage")], "255"),
-                                 ([("cpu-thermal", "48000"), ("soc-thermal", "68000"),
-                                   ("wifi", "1000")], "205")):
-            shutil.rmtree(self.root / "thermal", ignore_errors=True)
-            for i, (kind, value) in enumerate(values):
-                zone = self.root / f"thermal/thermal_zone{i}"
-                zone.mkdir(parents=True)
-                (zone / "type").write_text(kind)
-                (zone / "temp").write_text(value)
-            result = self.shell('logger() { :; }\n' + source, args=("once",))
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual((hw / "pwm1").read_text().strip(), expected)
+    def test_legacy_fan_command_delegates_to_the_single_controller(self):
+        source = read("Files/C8-688/usr/sbin/c8-fan").replace(
+            "exec /usr/sbin/h5000m-fancontrol", "fan_mock")
+        result = self.shell('fan_mock() { printf "%s" "$*"; }\n' + source, args=("once",))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "apply")
 
     def platform(self, body):
         patcher = module("Scripts/C8-688/patch-upgrade.py")

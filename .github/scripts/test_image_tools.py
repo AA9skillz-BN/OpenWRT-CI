@@ -89,6 +89,11 @@ class ImageToolTests(unittest.TestCase):
                  self.assertRaisesRegex(ValueError, "differs from adapted source"):
                 verify_payload(archive, *archive.getmembers(), data, temp, temp, tree=temp)
             del data["required_files"][0]["build_source"]
+            data["required_files"][0]["elf_machine"] = 183
+            with tarfile.open(image) as archive, patch.dict(os.environ, {"WRT_RELEASE_TAG": "fixture-tag"}), \
+                 self.assertRaisesRegex(ValueError, "wrong ELF architecture"):
+                verify_payload(archive, *archive.getmembers(), data, temp, temp)
+            del data["required_files"][0]["elf_machine"]
             with tarfile.open(image) as archive, patch.dict(os.environ, {"WRT_RELEASE_TAG": "wrong-build"}), \
                  self.assertRaisesRegex(ValueError, "build tag differs"):
                 verify_payload(archive, *archive.getmembers(), data, temp, temp)

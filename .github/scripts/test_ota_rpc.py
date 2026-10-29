@@ -13,8 +13,14 @@ UCODE = os.environ.get("UCODE_TEST_BIN") or shutil.which("ucode")
 
 @unittest.skipUnless(UCODE, "ucode runtime required (installed by Linux CI)")
 class OtaRpcTests(unittest.TestCase):
-    def test_rpc_respects_exit_codes_switches_tags_and_background_submission(self):
-        source = (REPO / "Scripts/AP3000M/luci-app-ap3000m-ota/root/usr/share/rpcd/ucode/ap3000m-ota.uc").read_text(encoding="utf-8")
+    def test_ap_rpc_contract(self):
+        self.exercise_device("AP3000M", "ap3000m")
+
+    def test_c8_rpc_contract_and_explicit_switch_confirmation(self):
+        self.exercise_device("C8-688", "c8-688")
+
+    def exercise_device(self, device, cli):
+        source = (REPO / f"Scripts/{device}/luci-app-{cli}-ota/root/usr/share/rpcd/ucode/{cli}-ota.uc").read_text(encoding="utf-8")
         source = re.sub(r"^import .*?;$", "", source, flags=re.M)
         harness = '''
 let code = 0, output = 'started', calls = [], is_enabled = '1';
@@ -56,6 +62,19 @@ code = 0; output = '{"latest":"AP3000M-ok"}';
 assert(api.check.call().latest == 'AP3000M-ok');
 print('rpc behavior verified\\n');
 '''
+        if device == "C8-688":
+            harness = harness.replace("luci.ap3000m_ota", "luci.c8_688_ota").replace("AP3000M", "C8-688")
+            harness += """
+code = 0; output = 'started';
+let count_before = length(calls);
+assert(api.official.call({ args: { confirm: false } }).error != null);
+assert(api.official.call({ args: { confirm: 'yes' } }).error != null);
+assert(length(calls) == count_before);
+assert(api.official.call({ args: { confirm: true } }).started == true);
+assert(index(calls[-1], 'official --background --yes') >= 0);
+is_enabled = '0';
+assert(api.official.call({ args: { confirm: true } }).error != null);
+"""
         with tempfile.TemporaryDirectory() as directory:
             script = Path(directory) / "rpc.uc"
             script.write_text(harness, encoding="utf-8", newline="\n")

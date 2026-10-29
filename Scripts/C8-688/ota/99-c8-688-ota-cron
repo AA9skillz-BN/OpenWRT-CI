@@ -1,0 +1,22 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# 99-c8-688-ota-cron —— 开机按需装好「每日自动检查更新」的 cron
+#
+# 为什么需要：LuCI 页面能读 /tmp 里的检查缓存秒出结果，但缓存得有东西去填。
+# 这里每天 04:15 跑一次 `c8-688-ota check --cache`（静默、只写缓存）。
+# 开关每次执行时检查；定时项保持一份以支持即时重新启用。
+
+CRON=/etc/crontabs/root
+mkdir -p /etc/crontabs
+
+touch "$CRON"
+sed -i '\|/usr/sbin/c8-688-ota check --cache|d' "$CRON"
+# Keep one lightweight scheduler entry so re-enabling UCI also takes effect.
+# The command checks its UCI switch on every invocation; no boot/reinstall needed.
+printf '15 4 * * * /usr/sbin/c8-688-ota check --cache >/dev/null 2>&1\n' >>"$CRON"
+
+/etc/init.d/cron enable 2>/dev/null
+/etc/init.d/cron restart 2>/dev/null
+logger -t c8-688-ota "已同步自动检查开关（04:15）"
+
+exit 0

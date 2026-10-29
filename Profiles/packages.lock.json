@@ -127,5 +127,13 @@
       "luci-app-mt5700m",
       "mt5700m-transport"
     ]
+  },
+  "c8-fancontrol": {
+    "url": "https://github.com/LianXia233/luci-app-h5000m-fancontrol.git",
+    "commit": "ec33e8c683f621a059fdea1d222a4292ecbf0b05",
+    "directory": "luci-app-h5000m-fancontrol",
+    "replaces": [
+      "luci-app-h5000m-fancontrol"
+    ]
   }
 }

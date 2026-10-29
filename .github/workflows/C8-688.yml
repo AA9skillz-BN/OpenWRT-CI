@@ -71,7 +71,7 @@ jobs:
       WRT_PROFILE: C8-688
       WRT_SOURCE_MODE: ${{ inputs.SOURCE_MODE || 'locked' }}
       WRT_PUBLISH: ${{ !inputs.BUILD_ONLY }}
-      WRT_THEME: argon
+      WRT_THEME: aurora
       WRT_NAME: C8-688
       WRT_SSID: C8-688
       WRT_WORD: '12345678'

@@ -1,0 +1,659 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# c8-688-ota —— NRadio C8-688 一键 OTA（检查更新 / 下载校验 / 升级 / 指定版本回退）
+#
+# 设计要点：
+#   1. 版本号来自构建期写死的 /etc/c8-688-build.tag，值就是 Release 的 tag，
+#      与 DEVICE-CORE 发布 job 使用同一个构建标签。
+#   2. 元数据只信 api.github.com（推 tag/size/sha256 三元组）；镜像站只参与下载大文件。
+#   3. 强制 sha256 校验，镜像被投毒也刷不进去。
+#   4. 默认保留配置；--wipe 才 sysupgrade -n。
+#   5. 升级前写 /etc/c8-688-pending，开机由 init.d 调 boot-hook 核对运行版本。
+
+set -u
+. /lib/functions/c8-system.sh || exit 1
+
+DIR_DEFAULT=/root/ota
+BUILD_TAG_FILE=/etc/c8-688-build.tag
+PENDING_FILE=/etc/c8-688-pending
+RESULT_FILE=/etc/c8-688-result
+CONF=c8_688_ota.main
+MARGIN_KB=20480
+DL_TAG_FILE=/tmp/c8-688-ota-dl.tag
+DL_RESULT_FILE=/tmp/c8-688-ota-dl.result
+CACHE_FILE=/tmp/c8-688-ota-check.json
+OP_FILE=/tmp/c8-688-ota-operation.json
+OP_LOG=/tmp/c8-688-ota-operation.log
+LOCK=/var/lock/c8-system.lock
+RUNTIME_ABI_FILE=/usr/share/c8-688-ota/runtime-abi
+OTA_SCRIPT=/usr/sbin/c8-688-ota
+
+log()  { printf '%s\n' "c8-688-ota: $*" >&2; }
+warn() { printf '%s\n' "c8-688-ota: 警告: $*" >&2; }
+die()  { printf '%s\n' "c8-688-ota: 错误: $*" >&2; exit 1; }
+
+cfg() { uci -q get "$CONF.$1" 2>/dev/null; }
+cfg_or() { v=$(cfg "$1"); [ -n "$v" ] && printf '%s' "$v" || printf '%s' "$2"; }
+
+repo()         { cfg_or repo "AA9skillz-BN/OpenWRT-CI"; }
+tag_prefix() {
+	prefix=$(cfg_or tag_prefix "C8-688-immortalwrt-master-")
+	# Migrate the original broad default even when sysupgrade restored old UCI.
+	[ "$prefix" != "C8-688-" ] || prefix="C8-688-immortalwrt-master-"
+	printf '%s' "$prefix"
+}
+work_dir()     { cfg_or dir "$DIR_DEFAULT"; }
+use_mirror()   { cfg_or use_mirror 1; }
+keep_default() { cfg_or keep_config 1; }
+
+current_tag() {
+	if [ -s "$BUILD_TAG_FILE" ]; then
+		cat "$BUILD_TAG_FILE"
+		return 0
+	fi
+	( . /etc/openwrt_release 2>/dev/null
+	  printf 'unknown-%s' "${DISTRIB_REVISION:-$(uname -r)}" )
+}
+
+need_tools() {
+	for t in curl jq sha256sum sysupgrade flock; do
+		command -v "$t" >/dev/null 2>&1 || die "缺少依赖命令 $t"
+	done
+}
+
+ensure_dir() {
+	d=$(work_dir)
+	[ -d "$d" ] || mkdir -p "$d" || die "无法创建 $d"
+}
+
+valid_tag() {
+	case "$1" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
+	case "$1" in "$(tag_prefix)"*) return 0 ;; *) return 1 ;; esac
+}
+
+fetch_api() (
+	# A requested tag is independent of release pagination and retention order.
+	local page=1 batch all='[]' count url
+	if [ -n "${1:-}" ]; then
+		valid_tag "$1" || return 1
+		url="https://api.github.com/repos/$(repo)/releases/tags/$1"
+		batch=$(curl -fsSL --connect-timeout 8 --max-time 30 \
+			-H 'Accept: application/vnd.github+json' -H 'User-Agent: c8-688-ota/1.1' "$url") || return 1
+		printf '%s' "$batch" | jq -ce 'if type == "object" and .tag_name then [.] else error("invalid release") end'
+		return $?
+	fi
+	while :; do
+		url="https://api.github.com/repos/$(repo)/releases?per_page=100&page=$page"
+		batch=$(curl -fsSL --connect-timeout 8 --max-time 30 \
+			-H 'Accept: application/vnd.github+json' -H 'User-Agent: c8-688-ota/1.1' "$url") || return 1
+		count=$(printf '%s' "$batch" | jq -e 'if type == "array" then length else error("invalid releases") end') || return 1
+		all=$(printf '%s\n%s' "$all" "$batch" | jq -cs '.[0] + .[1]') || return 1
+		[ "$count" -eq 100 ] || break
+		page=$((page + 1))
+	done
+	printf '%s\n' "$all"
+)
+
+validate_metadata() {
+	valid_tag "$TAG" || die "版本标签无效或不属于当前机型前缀"
+	case "$NAME" in ''|*[!A-Za-z0-9._-]*) die "固件文件名无效" ;; esac
+	case "$NAME" in *nradio_c8-688*-sysupgrade*.bin) ;; *) die "不是 sysupgrade 固件" ;; esac
+	case "$SIZE" in ''|*[!0-9]*) die "固件大小元数据无效" ;; esac
+	[ "$SIZE" -gt 0 ] || die "固件大小必须大于零"
+	case "$SHA" in ''|*[!a-fA-F0-9]*) die "Release 缺少有效 SHA-256，拒绝下载升级" ;; esac
+	[ "${#SHA}" = 64 ] || die "Release SHA-256 长度无效"
+}
+
+save_metadata() {
+	local meta="$IMG.json"
+	(umask 077; jq -n --arg repo "$(repo)" --arg prefix "$(tag_prefix)" --arg tag "$TAG" \
+		--arg asset "$NAME" --arg size "$SIZE" --arg sha256 "$SHA" \
+		'{repo:$repo,prefix:$prefix,tag:$tag,asset:$asset,size:($size|tonumber),sha256:$sha256}' > "$meta.tmp") &&
+		mv -f "$meta.tmp" "$meta" || die "保存本地镜像校验信息失败"
+}
+
+# 1 = no authenticated local copy yet; 2 = present but invalid. No network here.
+verified_local() (
+	local want="$1" line TAG NAME SIZE SHA IMG
+	valid_tag "$want" || return 2
+	IMG="$(work_dir)/$want.bin"
+	[ -f "$IMG" ] && [ -f "$IMG.json" ] || return 1
+	line=$(jq -er --arg repo "$(repo)" --arg prefix "$(tag_prefix)" --arg tag "$want" '
+		select(.repo == $repo and .prefix == $prefix and .tag == $tag)
+		| [.tag,.asset,(.size|tostring),.sha256] | @tsv' "$IMG.json") || return 2
+	TAG=$(printf '%s' "$line" | cut -f1)
+	NAME=$(printf '%s' "$line" | cut -f2)
+	SIZE=$(printf '%s' "$line" | cut -f3)
+	SHA=$(printf '%s' "$line" | cut -f4)
+	(validate_metadata) || return 2
+	[ "$(wc -c < "$IMG" | tr -d ' ')" = "$SIZE" ] || return 2
+	printf '%s  %s\n' "$SHA" "$IMG" | sha256sum -c - >/dev/null 2>&1 || return 2
+	printf '%s\n' "$IMG"
+)
+
+acquire_lock() {
+	mkdir -p "${LOCK%/*}" || die "无法创建锁目录"
+	exec 9>"$LOCK"
+	flock -n 9 || die "已有下载或升级任务在运行"
+}
+
+operation_state() {
+	local state="$1" detail="${2:-}"
+	jq -n --arg action "$ACTION" --arg state "$state" --arg detail "$detail" \
+		'{action:$action,state:$state,detail:$detail}' > "$OP_FILE.tmp" && mv -f "$OP_FILE.tmp" "$OP_FILE"
+}
+
+operation_exit() {
+	local rc=$?
+	if [ "$rc" -ne 0 ]; then
+		operation_state failed "$(tail -c 1200 "$OP_LOG" 2>/dev/null)"
+		[ "$ACTION" != download ] || { rm -f "$DL_TAG_FILE"; printf 'failed 下载失败，见任务详情\n' > "$DL_RESULT_FILE"; }
+	fi
+}
+
+run_operation() {
+	ACTION="$1"; shift
+	trap operation_exit EXIT
+	trap 'exit 130' INT
+	trap 'exit 143' TERM
+	operation_state running
+	case "$ACTION" in
+		download) cmd_download "$@" ;;
+		upgrade) cmd_upgrade "$@" ;;
+		official) cmd_official "$@" ;;
+	esac
+	local rc=$?
+	[ "$rc" -eq 0 ] || exit "$rc"
+	operation_state completed
+}
+
+background_operation() {
+	# FD 9 stays open in the child: flock releases automatically on every exit.
+	acquire_lock
+	ACTION="$1"
+	operation_state running || die "无法保存后台任务状态"
+	( trap '' HUP; run_operation "$@" ) </dev/null >"$OP_LOG" 2>&1 &
+	printf 'started\n'
+}
+
+# 输出：<tag> <文件名> <大小> <sha256>（空行表示无匹配）
+#
+# 注意：OpenWrt 的 jq 是 --without-oniguruma 编译的，test/match/sub 等正则函数
+# 运行时会报 "jq was compiled without ONIGURUMA regex library"。
+# 这里只用纯字符串函数：startswith / endswith / contains / ltrimstr。
+parse_tag() {
+	# $1 = 空 -> 最新；否则为指定 tag
+	jq -r --arg p "$(tag_prefix)" --arg want "${1:-}" '
+		[ .[] | select(.draft == false and .prerelease != true)
+		  | select(.tag_name | startswith($p))
+		  | select([.assets[] | select((.name | endswith(".bin")) and (.name | contains("nradio_c8-688")) and (.name | contains("sysupgrade")))] | length == 1) ] as $all
+		| (if $want == "" then ($all | sort_by([(.published_at // .created_at // ""), .id]) | last) else ($all | map(select(.tag_name == $want)) | first) end) as $r
+		| if $r == null then "" else
+			($r.assets | map(select((.name | endswith(".bin")) and (.name | contains("nradio_c8-688")) and (.name | contains("sysupgrade"))))[0]) as $a
+			| [ $r.tag_name, $a.name, ($a.size // 0 | tostring), (($a.digest // "") | ltrimstr("sha256:")) ] | @tsv
+		  end'
+}
+
+list_tags() {
+	jq -r --arg p "$(tag_prefix)" '
+		[ .[] | select(.draft == false and .prerelease != true) | select(.tag_name | startswith($p)) ]
+		| sort_by([(.published_at // .created_at // ""), .id]) | reverse | .[] | .tag_name'
+}
+
+asset_url() {
+	printf 'https://github.com/%s/releases/download/%s/%s' "$(repo)" "$1" "$2"
+}
+
+mirror_list() {
+	[ "$(use_mirror)" = "1" ] || return 0
+	[ -f /lib/functions.sh ] || return 0
+	. /lib/functions.sh
+	config_load c8_688_ota 2>/dev/null || return 0
+	config_list_foreach main mirror echo
+}
+
+human_mb() {
+	awk -v b="${1:-0}" 'BEGIN{ printf "%.2f MB", b/1048576 }'
+}
+
+free_kb() {
+	df -k "$(work_dir)" 2>/dev/null | awk 'NR==2 {print $4}'
+}
+
+# ---------- 子命令 ----------
+
+cmd_check() {
+	need_tools
+	mode="text"
+	for a in "$@"; do
+		case "$a" in
+			--json) mode="json" ;;
+			--cache) mode="cache" ;;
+			--quiet|-q) mode="quiet" ;;
+		esac
+	done
+
+	if [ "$mode" = cache ] && { [ "$(cfg_or enabled 1)" = 0 ] || [ "$(cfg_or auto_check 1)" = 0 ]; }; then return 0; fi
+	json=$(fetch_api) || die "访问 api.github.com 失败（检查 DNS / 网络 / 时间同步）"
+	line=$(printf '%s' "$json" | parse_tag "")
+	[ -n "$line" ] || die "没有找到 $(tag_prefix)* 的 Release"
+
+	LATEST_TAG=$(printf '%s' "$line" | cut -f1)
+	LATEST_NAME=$(printf '%s' "$line" | cut -f2)
+	LATEST_SIZE=$(printf '%s' "$line" | cut -f3)
+	LATEST_SHA=$(printf '%s' "$line" | cut -f4)
+	CUR=$(current_tag)
+
+	if [ "$CUR" = "$LATEST_TAG" ]; then state="已是最新"; upd=false; else state="可升级"; upd=true; fi
+
+	RESULT=$(jq -n --arg current "$CUR" --arg latest "$LATEST_TAG" --arg asset "$LATEST_NAME" \
+		--arg size "$LATEST_SIZE" --arg sha256 "$LATEST_SHA" --argjson update "$upd" \
+		--arg checked_at "$(date +%s)" \
+		'{current:$current,latest:$latest,asset:$asset,size:($size|tonumber),sha256:$sha256,update:$update,checked_at:($checked_at|tonumber)}') || die "版本元数据无效"
+	printf '%s\n' "$RESULT" > "$CACHE_FILE.$$" && mv -f "$CACHE_FILE.$$" "$CACHE_FILE"
+
+	case "$mode" in
+		json) printf '%s\n' "$RESULT" ;;
+		cache|quiet) return 0 ;;
+		*)
+			log "当前版本 : $CUR"
+			log "最新版本 : $LATEST_TAG"
+			log "固件文件 : $LATEST_NAME（$(human_mb "$LATEST_SIZE")）"
+			log "sha256   : ${LATEST_SHA:-（该 Release 未提供，拒绝自动下载升级）}"
+			log "状态     : $state"
+			[ "$CUR" = "$LATEST_TAG" ] || log "升级命令 : c8-688-ota upgrade"
+			;;
+	esac
+}
+
+cmd_list() {
+	need_tools
+	json=$(fetch_api) || die "访问 api.github.com 失败"
+	printf '%s' "$json" | list_tags | while read -r t; do
+		[ "$t" = "$(current_tag)" ] && mark=" (当前)" || mark=""
+		printf '  %s%s\n' "$t" "$mark"
+	done
+}
+
+cmd_download() {
+	need_tools
+	ensure_dir
+	want=""
+	if [ "$#" -gt 0 ]; then
+		[ "$#" -eq 2 ] && [ "$1" = --tag ] && valid_tag "$2" || die "用法: download [--tag TAG]"
+		want="$2"
+	fi
+	json=$(fetch_api "$want") || die "访问 api.github.com 失败"
+	line=$(printf '%s' "$json" | parse_tag "$want")
+	[ -n "$line" ] || die "找不到目标版本 ${want:-（最新）}"
+
+	TAG=$(printf '%s' "$line" | cut -f1)
+	NAME=$(printf '%s' "$line" | cut -f2)
+	SIZE=$(printf '%s' "$line" | cut -f3)
+	SHA=$(printf '%s' "$line" | cut -f4)
+	validate_metadata
+
+	IMG="$(work_dir)/$TAG.bin"
+
+	# 给 LuCI 页面用的进度状态（字节数由页面自己 stat .part 文件获得）
+	printf '%s %s\n' "$TAG" "$SIZE" > "$DL_TAG_FILE"
+	rm -f "$DL_RESULT_FILE"
+
+	if [ -f "$IMG" ] && [ "${SIZE:-0}" -gt 0 ]; then
+		now=$(wc -c < "$IMG" | tr -d ' ')
+		if [ "$now" = "$SIZE" ] && printf '%s  %s\n' "$SHA" "$IMG" | sha256sum -c - >/dev/null 2>&1; then
+			save_metadata
+			log "已存在且 SHA-256 验证通过：$IMG"
+			rm -f "$DL_TAG_FILE"
+			printf 'ok 已存在 %s\n' "$TAG" > "$DL_RESULT_FILE"
+			echo "$IMG"
+			return 0
+		fi
+	fi
+
+	need=$(( SIZE / 1024 * 3 + MARGIN_KB ))
+	have=$(free_kb)
+	if [ -z "$have" ]; then
+		rm -f "$DL_TAG_FILE"
+		printf 'failed 无法读取剩余空间\n' > "$DL_RESULT_FILE"
+		die "无法读取 $(work_dir) 剩余空间"
+	fi
+	if [ "$have" -le "$need" ]; then
+		rm -f "$DL_TAG_FILE"
+		printf 'failed 空间不足：需要约 %sMB，剩余 %sMB\n' "$((need / 1024))" "$((have / 1024))" > "$DL_RESULT_FILE"
+		die "空间不足：需要约 $((need / 1024))MB，剩余 $((have / 1024))MB"
+	fi
+
+	URL=$(asset_url "$TAG" "$NAME")
+	PART="$IMG.part"
+	rm -f "$PART"
+
+	log "下载 $TAG（$(human_mb "$SIZE")）"
+	ok=0
+	mirror_list > /tmp/.ota-mirrors.$$ 2>/dev/null || : > /tmp/.ota-mirrors.$$
+	if [ -s /tmp/.ota-mirrors.$$ ]; then
+		while read -r m; do
+			[ -n "$m" ] || continue
+			log "  尝试镜像：$m"
+			if curl -fL --connect-timeout 8 --speed-time 30 --speed-limit 1024 \
+				-o "$PART" "$m$URL"; then ok=1; break; fi
+			rm -f "$PART"
+		done < /tmp/.ota-mirrors.$$
+	fi
+	rm -f /tmp/.ota-mirrors.$$
+	if [ "$ok" = 0 ]; then
+		log "  尝试直连 GitHub"
+		if ! curl -fL --connect-timeout 8 --speed-time 30 --speed-limit 1024 -o "$PART" "$URL"; then
+			rm -f "$PART" "$DL_TAG_FILE"
+			printf 'failed 所有下载源均失败\n' > "$DL_RESULT_FILE"
+			die "所有下载源均失败"
+		fi
+	fi
+
+	[ "$(wc -c < "$PART" | tr -d ' ')" = "$SIZE" ] || die "下载文件大小与 Release 不符"
+	if ! printf '%s  %s\n' "$SHA" "$PART" | sha256sum -c - >/dev/null 2>&1; then
+		rm -f "$PART" "$DL_TAG_FILE"
+		printf 'failed sha256 校验失败\n' > "$DL_RESULT_FILE"
+		die "sha256 校验失败（镜像可能被篡改或下载不完整）"
+	fi
+	log "sha256 校验通过"
+
+	if ! mv -f "$PART" "$IMG"; then
+		rm -f "$DL_TAG_FILE"
+		printf 'failed 重命名失败\n' > "$DL_RESULT_FILE"
+		die "重命名失败"
+	fi
+	rm -f "$DL_TAG_FILE"
+	save_metadata
+	printf 'ok 已下载 %s\n' "$TAG" > "$DL_RESULT_FILE"
+	log "已保存：$IMG"
+	echo "$IMG"
+}
+
+cmd_upgrade() {
+	local boot
+	boot=$(c8_read_boot_system) || die '第二系统或启动环境检查失败，未提交升级'
+	[ "$boot" = 1 ] || die '下次启动已指向第一系统，请先确认启动选择，拒绝 OTA'
+	need_tools
+	ensure_dir
+	keep=$(keep_default)
+	FORCE_IMG=""
+	want=""
+	yes=0
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--keep) keep=1 ;;
+			--wipe) keep=0 ;;
+			--yes|-y) yes=1 ;;
+			--tag) shift; want="${1:-}"; valid_tag "$want" || die "非法版本标签" ;;
+			--image) shift; FORCE_IMG="${1:-}"; [ -n "$FORCE_IMG" ] || die "缺少镜像路径" ;;
+			*) die "未知参数：$1" ;;
+		esac
+		shift
+	done
+
+	if [ -n "${FORCE_IMG:-}" ]; then
+		IMG="$FORCE_IMG"
+		[ -f "$IMG" ] || die "镜像不存在：$IMG"
+		TAG=$(basename "$IMG" .bin)
+	else
+		IMG=""
+		if [ -n "$want" ]; then
+			IMG=$(verified_local "$want")
+			rc=$?
+			[ "$rc" -ne 2 ] || die "本地镜像或校验信息损坏，拒绝回退；请重新下载该版本"
+		fi
+		if [ -z "$IMG" ]; then
+			if [ -n "$want" ]; then IMG=$(cmd_download --tag "$want"); else IMG=$(cmd_download); fi || die "下载失败"
+		fi
+		TAG=$(basename "$IMG" .bin)
+	fi
+
+	if [ "$keep" = 0 ] && [ "$yes" != 1 ]; then
+		printf '不保留配置会清空 WiFi 密码、登录密码和所有插件配置，确认继续？[y/N] '
+		read -r ans
+		case "$ans" in y|Y|yes|YES) ;; *) die "已取消" ;; esac
+	fi
+
+	# Validate device compatibility before recording a pending upgrade.
+	sysupgrade -T "$IMG" || die "镜像校验失败，未提交升级"
+
+	# 升级前备份当前配置（万一要手工恢复）
+	bk="$(work_dir)/config-$(current_tag)-$(date +%Y%m%d-%H%M%S).tar.gz"
+	sysupgrade -b "$bk" >/dev/null 2>&1 && log "已备份配置：$bk" || warn "配置备份失败（不影响升级）"
+
+	printf '%s\n' "$TAG" > "$PENDING_FILE"
+	sync
+
+	[ -z "${ACTION:-}" ] || operation_state flashing "镜像校验通过，正在提交 sysupgrade"
+	if [ "$keep" = 1 ]; then
+		log "开始升级（保留配置）→ $TAG"
+		sysupgrade "$IMG" || { rm -f "$PENDING_FILE"; die "sysupgrade 执行失败"; }
+	else
+		log "开始升级（不保留配置）→ $TAG"
+		sysupgrade -n "$IMG" || { rm -f "$PENDING_FILE"; die "sysupgrade 执行失败"; }
+	fi
+	log "已提交升级，设备将在数秒内重启（请勿断电）"
+}
+
+# 给 LuCI 页面用：一次输出全部本地状态（不联网，快）
+
+cmd_official() {
+	[ "$#" -eq 1 ] && [ "$1" = --yes ] || die '切回第一系统需要显式 --yes 确认'
+	[ -z "${ACTION:-}" ] || operation_state switching '正在切回第一系统，设备将重启'
+	c8_select_system 0 || die '切回第一系统失败'
+}
+
+cmd_ui_status() {
+	local boot_error boot_system boot_ready=false ota_ready=false
+	boot_error=$(mktemp) || die '无法创建状态临时文件'
+	boot_system=$(c8_read_boot_system 2>"$boot_error") && boot_ready=true
+	[ "$boot_ready" != true ] || [ "$boot_system" != 1 ] || ota_ready=true
+	boot_error_text=$(cat "$boot_error"); rm -f "$boot_error"
+	cur=$(current_tag)
+	pend=""
+	[ -s "$PENDING_FILE" ] && pend=$(cat "$PENDING_FILE")
+	last=""
+	[ -s "$RESULT_FILE" ] && last=$(cat "$RESULT_FILE")
+
+	dl_tag=""
+	dl_size=0
+	dl_bytes=0
+	dl_result=""
+	if [ -s "$DL_TAG_FILE" ]; then
+		set -- $(cat "$DL_TAG_FILE")
+		dl_tag="${1:-}"
+		dl_size="${2:-0}"
+		part="$(work_dir)/$dl_tag.bin.part"
+		[ -f "$part" ] && dl_bytes=$(wc -c < "$part" | tr -d ' ')
+	fi
+	[ -s "$DL_RESULT_FILE" ] && dl_result=$(cat "$DL_RESULT_FILE")
+
+	imgs='[]'
+	d=$(work_dir)
+	if [ -d "$d" ]; then
+		for f in "$d"/*.bin.json; do
+			[ -f "$f" ] && [ -f "${f%.json}" ] || continue
+			t=$(basename "$f" .bin.json)
+			valid_tag "$t" || continue
+			jq -e --arg repo "$(repo)" --arg tag "$t" --arg p "$(tag_prefix)" \
+				'.repo == $repo and .tag == $tag and .prefix == $p' "$f" >/dev/null 2>&1 || continue
+			imgs=$(printf '%s' "$imgs" | jq --arg tag "$t" '. + [$tag]')
+		done
+	fi
+	cached=null
+	[ ! -s "$CACHE_FILE" ] || cached=$(jq -c 'if type == "object" then . else null end' "$CACHE_FILE" 2>/dev/null)
+	op=null
+	[ ! -s "$OP_FILE" ] || op=$(jq -c . "$OP_FILE" 2>/dev/null)
+	# A killed process cannot keep a stale "running" status indefinitely.
+	if [ -f "$LOCK" ] && (flock -n 9) 9>"$LOCK"; then
+		case "$(printf '%s' "${op:-null}" | jq -r '.state // ""')" in
+			running|flashing|switching) op='{"state":"failed","detail":"后台任务已中断，请检查日志"}'; dl_tag="" ;;
+		esac
+	fi
+	jq -n --arg current "$cur" --arg pending "$pend" --arg last_result "$last" \
+		--arg downloading "$dl_tag" --arg download_size "$dl_size" --arg download_bytes "$dl_bytes" \
+		--arg download_result "$dl_result" --argjson images "$imgs" \
+		--arg boot_system "$boot_system" --arg boot_error "$boot_error_text" \
+		--argjson boot_ready "$boot_ready" --argjson ota_ready "$ota_ready" \
+		--argjson keep_config "$( [ "$(keep_default)" = 0 ] && echo false || echo true )" \
+		--argjson use_mirror "$( [ "$(use_mirror)" = 0 ] && echo false || echo true )" \
+		--argjson enabled "$( [ "$(cfg_or enabled 1)" = 0 ] && echo false || echo true )" \
+		--arg tag_prefix "$(tag_prefix)" --argjson cached "${cached:-null}" --argjson operation "${op:-null}" \
+		'{current:$current,pending:$pending,last_result:$last_result,downloading:$downloading,
+		  download_size:($download_size|tonumber),download_bytes:($download_bytes|tonumber),download_result:$download_result,
+		  boot:{ready:$boot_ready,system:$boot_system,error:$boot_error},ota_ready:$ota_ready,images:$images,keep_config:$keep_config,use_mirror:$use_mirror,enabled:$enabled,tag_prefix:$tag_prefix,cached:$cached,operation:$operation}'
+
+}
+
+cmd_status() {
+	log "当前版本 : $(current_tag)"
+	[ -s "$PENDING_FILE" ] && log "待验证升级: $(cat "$PENDING_FILE")"
+	[ -s "$RESULT_FILE" ] && log "上次结果 : $(cat "$RESULT_FILE")"
+	d=$(work_dir)
+	if [ -d "$d" ]; then
+		log "本地镜像 :"
+		ls -1 "$d"/*.bin 2>/dev/null | while read -r f; do
+			printf '    %s（%s）\n' "$(basename "$f")" "$(human_mb "$(wc -c < "$f" | tr -d ' ')")"
+		done
+		ls -1 "$d"/*.bin >/dev/null 2>&1 || printf '    （无）\n'
+	fi
+}
+
+cmd_boot_hook() {
+	[ -s "$PENDING_FILE" ] || return 0
+	pending=$(cat "$PENDING_FILE")
+	cur=$(current_tag)
+	if [ "$pending" = "$cur" ]; then
+		printf 'success %s %s\n' "$pending" "$(date +%s)" > "$RESULT_FILE"
+	else
+		printf 'failed want=%s got=%s %s\n' "$pending" "$cur" "$(date +%s)" > "$RESULT_FILE"
+	fi
+	rm -f "$PENDING_FILE"
+	rm -f "$(work_dir)"/*.part 2>/dev/null
+	return 0
+}
+
+# Only release attachments may update the CLI. The firmware ABI file describes
+# the installed UCI/RPC/UI contract; self-update never changes that file.
+cmd_self_update() (
+	local want='' abi json line tag meta_size meta_sha script_size script_sha tmpdir tool sha
+	case "$#" in
+		0) ;;
+		2) [ "$1" = --tag ] && valid_tag "$2" || die "用法：self-update [--tag <正式版标签>]"; want="$2" ;;
+		*) die "用法：self-update [--tag <正式版标签>]；不再从分支更新" ;;
+	esac
+	need_tools
+	[ -s "$RUNTIME_ABI_FILE" ] || die "当前固件没有 OTA 兼容标记，请先整包升级"
+	abi=$(cat "$RUNTIME_ABI_FILE")
+	case "$abi" in ''|*[!0-9]*) die "OTA 兼容标记无效，请先整包升级" ;; esac
+	acquire_lock
+	json=$(fetch_api "$want") || die "获取正式版 Release 失败"
+	line=$(printf '%s' "$json" | jq -r --arg p "$(tag_prefix)" --arg want "$want" '
+		[ .[] | select(.draft == false and .prerelease != true)
+		  | select(.tag_name | startswith($p))
+		  | select($want == "" or .tag_name == $want)
+		  | . as $r
+		  | [.assets[] | select(.name == "c8-688-ota-update.json")] as $m
+		  | [.assets[] | select(.name == "c8-688-ota")] as $s
+		  | select(($m|length) == 1 and ($s|length) == 1)
+		  | select(($m[0].size|type) == "number" and $m[0].size > 0 and $m[0].size <= 16384)
+		  | select(($s[0].size|type) == "number" and $s[0].size > 0 and $s[0].size <= 1048576)
+		  | {release:$r, meta:$m[0], script:$s[0]} ]
+		| sort_by([(.release.published_at // ""), .release.id]) | last
+		| if . == null then "" else
+		  [.release.tag_name, (.meta.size|tostring), ((.meta.digest // "")|ltrimstr("sha256:")),
+		   (.script.size|tostring), ((.script.digest // "")|ltrimstr("sha256:"))] | @tsv end') || die "更新元数据格式无效"
+	[ -n "$line" ] || die "没有包含独立 OTA 更新附件的正式版；请先整包升级"
+	tag=$(printf '%s' "$line" | cut -f1)
+	meta_size=$(printf '%s' "$line" | cut -f2)
+	meta_sha=$(printf '%s' "$line" | cut -f3)
+	script_size=$(printf '%s' "$line" | cut -f4)
+	script_sha=$(printf '%s' "$line" | cut -f5)
+	valid_tag "$tag" || die "更新标签不属于当前机型渠道"
+	for sha in "$meta_sha" "$script_sha"; do
+		case "$sha" in ''|*[!a-fA-F0-9]*) die "更新附件缺少有效 SHA-256" ;; esac
+		[ "${#sha}" = 64 ] || die "更新附件 SHA-256 长度无效"
+	done
+	tmpdir=$(mktemp -d "${OTA_SCRIPT%/*}/.c8-688-ota.XXXXXX") || die "无法创建更新临时目录"
+	trap 'rm -rf "$tmpdir"' EXIT
+	trap 'exit 130' INT
+	trap 'exit 143' TERM
+	log "核对正式版 $tag 的 OTA 兼容信息…"
+	curl -fsSL --connect-timeout 8 --max-time 60 --max-filesize 16384 \
+		-o "$tmpdir/metadata" "$(asset_url "$tag" c8-688-ota-update.json)" || die "兼容信息下载失败"
+	[ "$(wc -c < "$tmpdir/metadata" | tr -d ' ')" = "$meta_size" ] || die "兼容信息大小不符"
+	printf '%s  %s\n' "$meta_sha" "$tmpdir/metadata" | sha256sum -c - >/dev/null 2>&1 || die "兼容信息 SHA-256 不符"
+	jq -e --arg abi "$abi" --arg tag "$tag" --arg sha "$script_sha" --argjson size "$script_size" '
+		type == "object" and .schema == 1 and .model == "c8-688" and .runtime_abi == $abi
+		and .tag == $tag and .asset == "c8-688-ota" and .sha256 == $sha and .size == $size
+		and (.requires|type) == "array" and (.requires|length) > 0
+		and all(.requires[]; type == "string")' "$tmpdir/metadata" >/dev/null || die "脚本与当前固件不兼容，请整包升级"
+	for tool in $(jq -r '.requires[]' "$tmpdir/metadata"); do
+		case "$tool" in ''|*[!A-Za-z0-9_-]*) die "更新依赖名称无效" ;; esac
+		command -v "$tool" >/dev/null 2>&1 || die "缺少更新依赖 $tool，请先整包升级"
+	done
+	curl -fsSL --connect-timeout 8 --max-time 60 --max-filesize 1048576 \
+		-o "$tmpdir/script" "$(asset_url "$tag" c8-688-ota)" || die "脚本下载失败"
+	[ "$(wc -c < "$tmpdir/script" | tr -d ' ')" = "$script_size" ] || die "脚本大小不符"
+	printf '%s  %s\n' "$script_sha" "$tmpdir/script" | sha256sum -c - >/dev/null 2>&1 || die "脚本 SHA-256 不符"
+	[ "$(head -n 1 "$tmpdir/script")" = '#!/bin/sh' ] || die "更新内容不是 shell 脚本"
+	sh -n "$tmpdir/script" || die "新脚本语法检查失败"
+	chmod 0755 "$tmpdir/script" || die "设置脚本权限失败"
+	cp -p "$OTA_SCRIPT" "$tmpdir/backup" && mv -f "$tmpdir/backup" "$OTA_SCRIPT.bak" || die "备份失败，未替换脚本"
+	# Temporary file and destination share a filesystem, so replacement is atomic.
+	mv -f "$tmpdir/script" "$OTA_SCRIPT" || die "替换失败，旧版备份在 $OTA_SCRIPT.bak"
+	log "已更新到 $tag 的 OTA 脚本（旧版备份：$OTA_SCRIPT.bak）"
+)
+
+usage() {
+	cat <<'EOF'
+用法: c8-688-ota <命令> [参数]
+
+  check [--json|--cache|--quiet] 检查是否有新版本（--cache 只写缓存，供页面秒开）
+  list                           列出最近可用版本
+  download [--tag <TAG>]         仅下载并校验到 /root/ota
+  download --background          后台下载（LuCI 页面用）
+  upgrade [--background] [--keep|--wipe] [--yes] [--tag <TAG>] [--image <FILE>]
+                                 下载（若需要）并刷写；默认保留配置
+  official [--background] --yes  确认后选择第一系统并重启（不刷写原厂分区）
+  status                         当前版本 / 待验证升级 / 上次结果 / 本地镜像
+  self-update [--tag <TAG>]      从兼容的正式版附件更新工具；默认最新，保留旧脚本备份
+  ui-status                      输出 JSON 状态（LuCI 页面用）
+  boot-hook                      开机回写升级结果（init.d 自动调用）
+
+示例:
+  c8-688-ota check
+  c8-688-ota upgrade                 # 保留配置升级到最新
+  c8-688-ota upgrade --wipe --yes    # 不保留配置
+  c8-688-ota upgrade --tag C8-688-immortalwrt-master-26.10.25-09.51.12   # 指定版本（回退）
+EOF
+}
+
+main() {
+	[ $# -ge 1 ] || { usage; exit 2; }
+	cmd="$1"; shift
+	case "$cmd" in
+		check)     cmd_check "$@" ;;
+		list)      cmd_list ;;
+		download|upgrade|official)
+			need_tools
+			if [ "${1:-}" = --background ]; then
+				shift
+				background_operation "$cmd" "$@"
+			else
+				acquire_lock
+				# The foreground log stays on stderr; failures remain visible there.
+				"cmd_$cmd" "$@"
+			fi
+			;;
+		status)    cmd_status ;;
+		self-update) cmd_self_update "$@" ;;
+		ui-status) cmd_ui_status ;;
+		boot-hook) cmd_boot_hook ;;
+		-h|--help|help) usage ;;
+		*) usage; exit 2 ;;
+	esac
+}
+
+main "$@"

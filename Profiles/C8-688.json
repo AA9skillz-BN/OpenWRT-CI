@@ -27,8 +27,10 @@
     "natmapt",
     "stuntman",
     "luci-natmapt",
-    "argon",
-    "mt5700m"
+    "mt5700m",
+    "aurora",
+    "aurora-config",
+    "c8-fancontrol"
   ],
   "required_packages": [
     "kmod-mt7915e",
@@ -36,8 +38,8 @@
     "mt7981-wo-firmware",
     "kmod-phy-maxlinear",
     "kmod-hwmon-pwmfan",
-    "luci-theme-argon",
-    "luci-app-argon-config",
+    "luci-theme-aurora",
+    "luci-app-aurora-config",
     "luci-app-mt5700m",
     "mt5700m-transport",
     "luci-i18n-mt5700m-zh-cn",
@@ -49,9 +51,16 @@
     "audio-support",
     "kmod-sound-core",
     "kmod-usb-audio",
-    "kmod-nft-fullcone"
+    "kmod-nft-fullcone",
+    "luci-app-c8-688-ota",
+    "luci-app-h5000m-fancontrol",
+    "luci-i18n-h5000m-fancontrol-zh-cn",
+    "curl",
+    "ca-bundle",
+    "flock",
+    "rpcd-mod-ucode"
   ],
-  "release_note": "\u4ec5\u5199 eMMC \u7684 kernel_2nd / rootfs_2nd \u7b2c\u4e8c\u7cfb\u7edf\u69fd\u3002\u539f\u5382 NROS \u540e\u53f0\u70e7\u5f55\u7b2c\u4e8c\u7cfb\u7edf\u524d\u5148\u5173\u95ed\u5b58\u50a8\u6269\u5c55\u3002\u4fdd\u7559\u73b0\u6709\u98ce\u6247\u3001Wi-Fi MAC\u3001\u53cc\u7cfb\u7edf\u5207\u6362\u53ca MT5700M \u7ba1\u7406\u529f\u80fd\uff1b\u4e0d\u542b\u539f\u5382 NR-OS APP \u4e0e\u591a\u5361\u5207\u6362\u754c\u9762\u3002",
+  "release_note": "仅写 eMMC 的 kernel_2nd / rootfs_2nd 第二系统槽。原厂 NROS 后台烧录第二系统前先关闭存储扩展。保留现有风扇、Wi-Fi MAC、双系统切换及 MT5700M 管理功能；不含原厂 NR-OS APP 与多卡切换界面。 Aurora 主题；C8 专用 OTA 与一键切回第一系统；适配 H5000M 风扇管理界面与 C8 PWM 温控。",
   "build_tag_file": "/etc/c8-688-build.tag",
   "required_files": [
     {
@@ -91,6 +100,93 @@
       "path": "/etc/uci-defaults/99-c8-688",
       "executable": true,
       "source": "Files/C8-688/etc/uci-defaults/99-c8-688"
+    },
+    {
+      "path": "/lib/functions/c8-system.sh",
+      "source": "Files/C8-688/lib/functions/c8-system.sh"
+    },
+    {
+      "path": "/usr/sbin/c8-688-ota",
+      "source": "Scripts/C8-688/ota/c8-688-ota",
+      "executable": true
+    },
+    {
+      "path": "/usr/share/c8-688-ota/runtime-abi",
+      "source": "Scripts/C8-688/ota/runtime-abi"
+    },
+    {
+      "path": "/etc/config/c8_688_ota",
+      "source": "Scripts/C8-688/ota/c8_688_ota.config"
+    },
+    {
+      "path": "/etc/init.d/c8-688-ota-boot",
+      "source": "Scripts/C8-688/ota/c8-688-ota-boot",
+      "executable": true
+    },
+    {
+      "path": "/etc/uci-defaults/99-c8-688-ota-cron",
+      "source": "Scripts/C8-688/ota/99-c8-688-ota-cron",
+      "executable": true
+    },
+    {
+      "path": "/etc/rc.d/S99c8-688-ota-boot",
+      "executable": true
+    },
+    {
+      "path": "/www/luci-static/resources/view/c8-688-ota/overview.js",
+      "source": "Scripts/C8-688/luci-app-c8-688-ota/htdocs/luci-static/resources/view/c8-688-ota/overview.js"
+    },
+    {
+      "path": "/usr/share/luci/menu.d/luci-app-c8-688-ota.json",
+      "source": "Scripts/C8-688/luci-app-c8-688-ota/root/usr/share/luci/menu.d/luci-app-c8-688-ota.json"
+    },
+    {
+      "path": "/usr/share/rpcd/acl.d/luci-app-c8-688-ota.json",
+      "source": "Scripts/C8-688/luci-app-c8-688-ota/root/usr/share/rpcd/acl.d/luci-app-c8-688-ota.json"
+    },
+    {
+      "path": "/usr/share/rpcd/ucode/c8-688-ota.uc",
+      "source": "Scripts/C8-688/luci-app-c8-688-ota/root/usr/share/rpcd/ucode/c8-688-ota.uc"
+    },
+    {
+      "path": "/usr/sbin/h5000m-fancontrol",
+      "executable": true,
+      "elf_machine": 183
+    },
+    {
+      "path": "/etc/init.d/h5000m-fancontrol",
+      "build_source": "package/luci-app-h5000m-fancontrol/root/etc/init.d/h5000m-fancontrol",
+      "executable": true
+    },
+    {
+      "path": "/etc/config/h5000m_fancontrol",
+      "build_source": "package/luci-app-h5000m-fancontrol/root/etc/config/h5000m_fancontrol"
+    },
+    {
+      "path": "/usr/sbin/h5000m-fancontrol-status",
+      "build_source": "package/luci-app-h5000m-fancontrol/root/usr/sbin/h5000m-fancontrol-status",
+      "executable": true
+    },
+    {
+      "path": "/usr/share/rpcd/acl.d/luci-app-h5000m-fancontrol.json",
+      "build_source": "package/luci-app-h5000m-fancontrol/root/usr/share/rpcd/acl.d/luci-app-h5000m-fancontrol.json"
+    },
+    {
+      "path": "/usr/share/luci/menu.d/luci-app-h5000m-fancontrol.json",
+      "build_source": "package/luci-app-h5000m-fancontrol/root/usr/share/luci/menu.d/luci-app-h5000m-fancontrol.json"
+    },
+    {
+      "path": "/etc/uci-defaults/91-h5000m-fancontrol-v3",
+      "build_source": "package/luci-app-h5000m-fancontrol/root/etc/uci-defaults/91-h5000m-fancontrol-v3",
+      "executable": true
+    },
+    {
+      "path": "/www/luci-static/resources/view/h5000m/fancontrol.js",
+      "build_source": "package/luci-app-h5000m-fancontrol/htdocs/luci-static/resources/view/h5000m/fancontrol.js"
+    },
+    {
+      "path": "/etc/rc.d/S98h5000m-fancontrol",
+      "executable": true
     }
   ],
   "root_partition": "rootfs_2nd",

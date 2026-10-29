@@ -1,79 +1,8 @@
 #!/bin/sh
-# C8-688 风扇曲线：PWM0 -> pwm-fan（hwmon），按 SoC 温度分档。
-# 由 /etc/init.d/c8-fan 启动；仓库位置 Files/C8-688/usr/sbin/c8-fan
-#
-# 原厂 fanctrl 默认：smartmin=30 temp1..4=50/60/70/80 protect=85，manual_pwm=127
-# 这里思路一致，但走内核 hwmon（pwm1 0..255 + pwm1_enable=1 手动模式）。
-
-INTERVAL=${INTERVAL:-10}
-HWMON=
-
-find_hwmon() {
-	for d in /sys/class/hwmon/hwmon*; do
-		[ -r "$d/name" ] || continue
-		[ "$(cat "$d/name" 2>/dev/null)" = "pwmfan" ] || continue
-		HWMON=$d
-		return 0
-	done
-	return 1
-}
-
-temp_mc() {
-	local type hottest= t
-	for z in /sys/class/thermal/thermal_zone*; do
-		type=$(cat "$z/type" 2>/dev/null)
-		case "$type" in cpu*|soc*|*cpu*thermal*|*soc*thermal*) ;; *) continue ;; esac
-		[ -r "$z/temp" ] || continue
-		t=$(cat "$z/temp" 2>/dev/null) || continue
-		case "$t" in ''|*[!0-9]*) continue ;; esac
-		[ "$t" -le 150000 ] || continue
-		if [ -z "$hottest" ] || [ "$t" -gt "$hottest" ]; then hottest=$t; fi
-	done
-	[ -n "$hottest" ] || return 1
-	printf '%s\n' "$hottest"
-}
-
-# 毫摄氏度 -> 0..255
-curve() {
-	t=$1
-	if   [ "$t" -lt 45000 ]; then echo 0
-	elif [ "$t" -lt 55000 ]; then echo 90
-	elif [ "$t" -lt 65000 ]; then echo 150
-	elif [ "$t" -lt 75000 ]; then echo 205
-	else                         echo 255
-	fi
-}
-
-apply() {
-	[ -n "$HWMON" ] || return 1
-	[ -w "$HWMON/pwm1" ] || return 1
-	v=$(curve "$1")
-	# pwm1_enable: 0=off 1=manual 2..=thermal；先切手动再写占空比
-	[ -w "$HWMON/pwm1_enable" ] && echo 1 > "$HWMON/pwm1_enable" 2>/dev/null
-	echo "$v" > "$HWMON/pwm1" 2>/dev/null || return 1
-	logger -t c8-fan "cpu=${1}mc pwm=${v}" 2>/dev/null
-}
-
+# SPDX-License-Identifier: MIT
+# Compatibility for existing operator commands; Rust daemon is the sole writer.
 case "${1:-}" in
-	once)
-		find_hwmon || exit 1
-		t=$(temp_mc) || { t=80000; logger -t c8-fan 'temperature unavailable; fan at full speed'; }
-		apply "$t"
-		;;
-	*)
-		i=0
-		while [ $i -lt 30 ]; do
-			find_hwmon && break
-			i=$((i + 1)); sleep 1
-		done
-		find_hwmon || { echo "c8-fan: pwmfan hwmon not found" >&2; exit 1; }
-		# 保守起步：先全速 5 秒带走积热
-		apply 80000 >/dev/null 2>&1
-		sleep 5
-		while :; do
-			t=$(temp_mc) || { t=80000; logger -t c8-fan 'temperature unavailable; fan at full speed'; }
-			apply "$t"
-			sleep "$INTERVAL"
-		done
-		;;
+ once) exec /usr/sbin/h5000m-fancontrol apply ;;
+ status) exec /usr/sbin/h5000m-fancontrol status ;;
+ *) echo '请使用 /etc/init.d/h5000m-fancontrol 或 LuCI 风扇管理' >&2; exit 2 ;;
 esac

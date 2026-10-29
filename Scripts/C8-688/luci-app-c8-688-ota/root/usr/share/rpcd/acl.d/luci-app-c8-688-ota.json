@@ -1,0 +1,30 @@
+{
+  "luci-app-c8-688-ota": {
+    "description": "Grant access to NRadio C8-688 OTA 鍗囩骇",
+    "read": {
+      "ubus": {
+        "luci.c8_688_ota": [
+          "status",
+          "check"
+        ]
+      },
+      "uci": [
+        "c8_688_ota"
+      ]
+    },
+    "write": {
+      "ubus": {
+        "luci.c8_688_ota": [
+          "download",
+          "upgrade",
+          "upgrade_tag",
+          "set_settings",
+          "official"
+        ]
+      },
+      "uci": [
+        "c8_688_ota"
+      ]
+    }
+  }
+}

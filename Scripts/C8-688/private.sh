@@ -116,5 +116,28 @@ fi
 # MT5700M packages are installed once from Profiles/packages.lock.json.
 test -f package/luci-app-mt5700m/Makefile
 test -f package/mt5700m-transport/Makefile
+
+# Reviewed fan plugin: preserve thermal policy and the original C8 full-speed
+# fail-safe. The legacy c8-fan service no longer owns PWM.
+python3 "$_c8_src/fancontrol/adapt.py" package/luci-app-h5000m-fancontrol
+
+# C8 OTA uses only the already-guarded second-slot sysupgrade adapter.
+_c8_bf=package/base-files/files
+mkdir -p "$_c8_bf/usr/share/c8-688-ota" "$_c8_bf/etc/config" \
+	"$_c8_bf/etc/rc.d" "$_c8_bf/etc/init.d" "$_c8_bf/etc/uci-defaults"
+install -m 0755 "$_c8_src/ota/c8-688-ota" "$_c8_bf/usr/sbin/c8-688-ota"
+install -m 0644 "$_c8_src/ota/runtime-abi" "$_c8_bf/usr/share/c8-688-ota/runtime-abi"
+install -m 0644 "$_c8_src/ota/c8_688_ota.config" "$_c8_bf/etc/config/c8_688_ota"
+install -m 0755 "$_c8_src/ota/c8-688-ota-boot" "$_c8_bf/etc/init.d/c8-688-ota-boot"
+install -m 0755 "$_c8_src/ota/99-c8-688-ota-cron" "$_c8_bf/etc/uci-defaults/99-c8-688-ota-cron"
+ln -sfn ../init.d/c8-688-ota-boot "$_c8_bf/etc/rc.d/S99c8-688-ota-boot"
+ln -sfn ../init.d/h5000m-fancontrol "$_c8_bf/etc/rc.d/S98h5000m-fancontrol"
+for _c8_keep in /etc/c8-688-pending /etc/c8-688-result; do
+	grep -qxF "$_c8_keep" "$_c8_bf/etc/sysupgrade.conf" 2>/dev/null ||
+		printf '%s\n' "$_c8_keep" >> "$_c8_bf/etc/sysupgrade.conf"
+done
+mkdir -p package/luci-app-c8-688-ota
+cp -a "$_c8_src/luci-app-c8-688-ota/." package/luci-app-c8-688-ota/
+
 printf '%s\n' "${WRT_RELEASE_TAG:?missing release tag}" > package/base-files/files/etc/c8-688-build.tag
 echo "C8-688: device source and overlay ready"

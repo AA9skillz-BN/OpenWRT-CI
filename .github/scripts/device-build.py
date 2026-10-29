@@ -205,18 +205,21 @@ def verify_image(tree, data, reports, repo=None):
     return image, manifest
 
 
-def package_ota_update(repo, upload, tag):
-    source = repo / "Scripts/AP3000M/ota"
+def package_ota_update(repo, upload, tag, name="AP3000M"):
+    model = {"AP3000M": "ap3000m", "C8-688": "c8-688"}[name]
+    source = repo / "Scripts" / name / "ota"
     abi = (source / "runtime-abi").read_text().strip()
     if not re.fullmatch(r"[0-9]+", abi):
         raise ValueError("invalid OTA runtime ABI")
-    script = (source / "ap3000m-ota").read_bytes()
-    (upload / "ap3000m-ota").write_bytes(script)
-    metadata = {"schema": 1, "model": "ap3000m", "runtime_abi": abi,
-                "tag": tag, "asset": "ap3000m-ota", "size": len(script),
+    script = (source / f"{model}-ota").read_bytes()
+    (upload / f"{model}-ota").write_bytes(script)
+    metadata = {"schema": 1, "model": model, "runtime_abi": abi,
+                "tag": tag, "asset": f"{model}-ota", "size": len(script),
                 "sha256": hashlib.sha256(script).hexdigest(),
                 "requires": ["curl", "jq", "sha256sum", "sysupgrade", "flock"]}
-    write(upload / "ap3000m-ota-update.json", json.dumps(metadata, indent=2) + "\n")
+    if name == "C8-688":
+        metadata["requires"] += ["fw_printenv", "fw_setenv"]
+    write(upload / f"{model}-ota-update.json", json.dumps(metadata, indent=2) + "\n")
 
 
 def package(tree, repo, name, data, reports):
@@ -230,9 +233,9 @@ def package(tree, repo, name, data, reports):
     outname = f"{image.stem}-{os.environ['WRT_INFO']}-{branch}-{os.environ['WRT_DATE']}.bin"
     shutil.copy2(image, upload / outname)
     shutil.copy2(manifest, upload / manifest.name)
-    if name == "AP3000M":
+    if name in ("AP3000M", "C8-688"):
         # verify_image has already checked these exact files in the squashfs.
-        package_ota_update(repo, upload, tag)
+        package_ota_update(repo, upload, tag, name)
     for file in reports.iterdir():
         if file.is_file() and file.name in ("source-commit.txt", "feeds.buildinfo", "packages.lock.json",
                                              "build-inputs.json", "image-metadata.json", "compatibility.txt", "ci-commit.txt",

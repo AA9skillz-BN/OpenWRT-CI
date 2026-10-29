@@ -38,12 +38,12 @@ CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y
 CONFIG_PACKAGE_luci=y
 CONFIG_PACKAGE_luci-ssl=y
 CONFIG_LUCI_LANG_zh_Hans=y
-CONFIG_PACKAGE_luci-theme-argon=y
-CONFIG_PACKAGE_luci-app-argon-config=y
+CONFIG_PACKAGE_luci-theme-aurora=y
+CONFIG_PACKAGE_luci-app-aurora-config=y
 CONFIG_PACKAGE_luci-i18n-base-zh-cn=y
 CONFIG_PACKAGE_luci-i18n-firewall-zh-cn=y
 CONFIG_PACKAGE_luci-i18n-package-manager-zh-cn=y
-CONFIG_PACKAGE_luci-i18n-argon-config-zh-cn=y
+CONFIG_PACKAGE_luci-i18n-aurora-config-zh-cn=y
 
 # 终端 / 运维
 CONFIG_PACKAGE_luci-app-ttyd=y
@@ -59,7 +59,13 @@ CONFIG_PACKAGE_usbutils=y
 CONFIG_PACKAGE_pciutils=y
 
 # 风扇（设备定义里已带 kmod-hwmon-pwmfan；曲线脚本在 Files/C8-688）
-CONFIG_PACKAGE_luci-app-fancontrol=y
+CONFIG_PACKAGE_luci-app-fancontrol=n
+CONFIG_PACKAGE_luci-app-h5000m-fancontrol=y
+CONFIG_PACKAGE_luci-i18n-h5000m-fancontrol-zh-cn=y
+
+# C8 第二系统 OTA（含 LuCI/RPC），与系统切换互斥
+CONFIG_PACKAGE_luci-app-c8-688-ota=y
+CONFIG_PACKAGE_rpcd-mod-ucode=y
 
 # 双系统切换：uboot-envtools + 首启自动探测的 /etc/fw_env.config
 #   fw_printenv boot_system   -> 0=原厂 / 1=第二系统
