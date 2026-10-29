@@ -51,7 +51,9 @@ jobs:
           cmake --build "$RUNNER_TEMP/ucode-build" --target ucode -j2
           echo "UCODE_TEST_BIN=$RUNNER_TEMP/ucode-build/ucode" >> "$GITHUB_ENV"
       - name: Test build gates, device runtime, OTA and actual images
-        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
+        run: |
+          rustup target add aarch64-unknown-linux-musl
+          python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
       - name: Check LuCI JavaScript syntax
         run: |
           node --check Scripts/AP3000M/luci-app-ap3000m-ota/htdocs/luci-static/resources/view/ap3000m-ota/overview.js

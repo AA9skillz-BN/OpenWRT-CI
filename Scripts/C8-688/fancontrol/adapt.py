@@ -73,7 +73,11 @@ def transform(name, text):
         text = text.replace('port_from_env("H5000M_FAN_MT5700M_RPC_PORT", 8765)',
                             'port_from_env("H5000M_FAN_MT5700M_RPC_PORT", 0)')
     elif name == "src/Makefile":
-        text = text.replace("--release --offline --target", "--release --locked --offline --target")
+        # luci.mk's src/* copy omits src/.cargo/config.toml. Set the linker
+        # explicitly so a prepared package cannot invoke the host C linker.
+        text = text.replace("--release --offline --target $(RUST_TARGET)",
+                            '--release --locked --offline --target $(RUST_TARGET) '
+                            '--config \'target.$(RUST_TARGET).linker="rust-lld"\'')
     elif name == "root/etc/init.d/h5000m-fancontrol":
         text = text.replace("start_service() {", '''start_service() {
 	[ "$(cat /tmp/sysinfo/board_name 2>/dev/null)" = 'nradio,c8-688' ] || return 1''')
