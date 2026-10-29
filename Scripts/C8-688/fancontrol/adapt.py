@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 
 HASHES = {
+    "Makefile": "d0d8995c3bba73a8ed48c2cef40cc2bef316d214981575923b491a1df44ac0d5",
     "src/src/sensor.rs": "c755b62e8526d4f41a79cf6c2ee669a7df4150fbe1df1fda34ac4f95016ee24b",
     "src/src/fan.rs": "5ac3fd9689a8fc9249bc376e1eab4ff293e505bd4218262c1ef931c83d115c2a",
     "src/src/safety.rs": "44f6391896bc0688f195c42d1058ed0d00a0aa297395d444ac95fbf373494091",
@@ -34,7 +35,12 @@ FLOOR = '''    // C8: retain every kernel map, with the previous controller's fu
 
 
 def transform(name, text):
-    if name == "src/src/sensor.rs":
+    if name == "Makefile":
+        # The actual-image gate compares the reviewed frontend bytes. Scope
+        # this to the ported package; other LuCI packages keep minification.
+        text = text.replace("LUCI_TITLE:=H5000M fan control",
+                            "LUCI_MINIFY_JS:=0\nLUCI_TITLE:=C8-688 fan control")
+    elif name == "src/src/sensor.rs":
         text = text.replace('&["mt799", "wifi", "radio"]', '&["mt799", "mt7915", "wifi", "radio"]')
     elif name == "src/src/fan.rs":
         # Never select an unrelated chip's PWM, even when pwmfan is missing.
