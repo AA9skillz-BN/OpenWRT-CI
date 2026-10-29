@@ -35,7 +35,7 @@ class C8PhyTests(unittest.TestCase):
     };
     modem_phy: ethernet-phy@15 {
      compatible = "ethernet-phy-ieee802.3-c45";
-     reg = <0x15>; reset-gpios = <&gpio 8 1>;
+     phandle = <0x21>; reg = <0x15>; reset-gpios = <&gpio 8 1>;
     };
     switch@1f { ports { port@5 {
      phy-mode = "2500base-x"; phy-handle = <&lan_phy>;
