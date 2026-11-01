@@ -184,6 +184,10 @@
       "path": "/www/luci-static/resources/view/h5000m/fancontrol.js",
       "build_source": "package/luci-app-h5000m-fancontrol/htdocs/luci-static/resources/view/h5000m/fancontrol.js"
     },
+      {
+        "path": "/www/luci-static/resources/view/h5000m/fancontrol-slider-v1.js",
+        "build_source": "package/luci-app-h5000m-fancontrol/htdocs/luci-static/resources/view/h5000m/fancontrol-slider-v1.js"
+      },
     {
       "path": "/etc/rc.d/S98h5000m-fancontrol",
       "executable": true

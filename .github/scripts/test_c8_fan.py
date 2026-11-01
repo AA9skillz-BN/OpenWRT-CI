@@ -49,6 +49,29 @@ class C8FanTests(unittest.TestCase):
             self.assertIsNotNone(node, "node required for real fan UI rendering")
             result = subprocess.run([node, "tests/frontend-smoke.js"], cwd=tree, text=True, capture_output=True, timeout=60)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            ui_test = str(Path(__file__).with_name("c8-fan-ui-test.js"))
+            original_view = tree / "original-view.js"
+            original_view.write_bytes((tree / ".c8-reviewed-originals" / (adapt.VIEW + ".original")).read_bytes())
+            broken = subprocess.run([node, ui_test, str(original_view)], text=True, capture_output=True, timeout=30)
+            self.assertNotEqual(broken.returncode, 0, "unpatched upstream must reproduce the broken input")
+            self.assertIn("TypeError", broken.stderr)
+            fixed = subprocess.run([node, ui_test, str(tree / adapt.VIEW_ALIAS)], text=True, capture_output=True, timeout=30)
+            self.assertEqual(fixed.returncode, 0, fixed.stdout + fixed.stderr)
+            self.assertIn("C8 slider/input/UCI regression passed", fixed.stdout)
+            menu = json.loads((tree / "root/usr/share/luci/menu.d/luci-app-h5000m-fancontrol.json").read_bytes())
+            self.assertEqual(menu["admin/system/h5000m_fancontrol"]["action"]["path"], adapt.MENU_VIEW)
+            self.assertEqual((tree / adapt.VIEW_ALIAS).read_bytes(), (tree / adapt.VIEW).read_bytes())
+            profile = json.loads((REPO / "Profiles/C8-688.json").read_bytes())
+            required = {f["path"]: f for f in profile["required_files"]}
+            self.assertEqual(required["/www/luci-static/resources/view/" + adapt.MENU_VIEW + ".js"]["build_source"],
+                             "package/luci-app-h5000m-fancontrol/" + adapt.VIEW_ALIAS)
+            alias = tree / adapt.VIEW_ALIAS
+            alias.write_bytes(alias.read_bytes() + b"\n")
+            before = {p: p.read_bytes() for p in tree.rglob("*") if p.is_file()}
+            with self.assertRaisesRegex(ValueError, "drift"):
+                adapt.adapt(tree)
+            self.assertEqual(before, {p: p.read_bytes() for p in tree.rglob("*") if p.is_file()})
+            alias.write_bytes(first[adapt.VIEW])
             file = tree / "src/src/safety.rs"
             file.write_bytes(file.read_bytes() + b"\n")
             with self.assertRaisesRegex(ValueError, "drift"):
@@ -170,6 +193,8 @@ $(eval $(Probe))
             frontend = "htdocs/luci-static/resources/view/h5000m/fancontrol.js"
             self.assertEqual((top / "rootfs/www" / Path(frontend).relative_to("htdocs")).read_bytes(),
                              (tree / frontend).read_bytes())
+            self.assertEqual((top / "rootfs/www" / Path(adapt.VIEW_ALIAS).relative_to("htdocs")).read_bytes(),
+                             (tree / adapt.VIEW).read_bytes())
 
 
 if __name__ == "__main__":

@@ -33,6 +33,10 @@ FLOOR = '''    // C8: retain every kernel map, with the previous controller's fu
 
 '''
 
+VIEW = "htdocs/luci-static/resources/view/h5000m/fancontrol.js"
+VIEW_ALIAS = "htdocs/luci-static/resources/view/h5000m/fancontrol-slider-v1.js"
+MENU_VIEW = "h5000m/fancontrol-slider-v1"
+
 
 def transform(name, text):
     if name == "Makefile":
@@ -85,11 +89,16 @@ def transform(name, text):
         text = text.replace("option temp_source 'max'", "option temp_source 'cpu'")
     elif name.endswith("fancontrol.js"):
         text = text.replace("H5000M cooling management", "C8-688 cooling management")
+        # sync() is a nested plain function; its `this` is undefined in the
+        # strict LuCI module. Bind it to the view before registering inputs.
+        text = text.replace("\t\t\tsync(range, box);\n\t\t\tsync(box, range);",
+                            "\t\t\tsync.call(this, range, box);\n\t\t\tsync.call(this, box, range);")
     elif name.endswith(".po"):
         text = text.replace("H5000M cooling management", "C8-688 cooling management")
         text = text.replace("H5000M 散热管理", "C8-688 散热管理")
     elif name.endswith(".json"):
         text = text.replace('"title": "Fan Control"', '"title": "C8 风扇管理"')
+        text = text.replace('"path": "h5000m/fancontrol"', '"path": "' + MENU_VIEW + '"')
     return text
 
 
@@ -110,10 +119,16 @@ def adapt(tree):
         if raw not in (original, patched) or patched == original:
             raise ValueError(f"{name}: source/patch drift; review the adaptation")
         changes.append((file, backup, original, patched))
+    frontend = next(patched for file, _, _, patched in changes if file == tree / VIEW)
+    alias = tree / VIEW_ALIAS
+    if alias.exists() and alias.read_bytes() != frontend:
+        raise ValueError(f"{VIEW_ALIAS}: source/patch drift; review the adaptation")
     for file, backup, original, patched in changes:
         backup.parent.mkdir(parents=True, exist_ok=True)
         backup.write_bytes(original)
         file.write_bytes(patched)
+    # A distinct menu URL also reaches browsers caching the old release view.
+    alias.write_bytes(frontend)
 
 
 if __name__ == "__main__":
