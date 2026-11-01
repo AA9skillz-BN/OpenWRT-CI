@@ -68,6 +68,14 @@
       "build_source": "package/luci-app-airpi3000m-fancontrol/luci-app-airpi-fancontrol/htdocs/luci-static/resources/view/airpi-fancontrol/fancontrol.js"
     },
     {
+      "path": "/www/luci-static/resources/view/airpi-fancontrol/fancontrol-10b9af7ae581.js",
+      "build_source": "package/luci-app-airpi3000m-fancontrol/luci-app-airpi-fancontrol/htdocs/luci-static/resources/view/airpi-fancontrol/fancontrol-10b9af7ae581.js"
+    },
+    {
+      "path": "/usr/share/luci/menu.d/luci-app-airpi-fancontrol.json",
+      "build_source": "package/luci-app-airpi3000m-fancontrol/luci-app-airpi-fancontrol/files/usr/share/luci/menu.d/luci-app-airpi-fancontrol.json"
+    },
+    {
       "path": "/etc/init.d/ap3000m-fm350-usb-compat",
       "source": "Scripts/AP3000M/ap3000m-fm350-usb-compat",
       "executable": true
