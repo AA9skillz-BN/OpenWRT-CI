@@ -61,6 +61,7 @@
     {
       "path": "/usr/sbin/fm350d",
       "build_source": "package/luci-app-fm350/rust/target/aarch64-unknown-linux-musl/release/fm350d",
+      "elf_machine": 183,
       "executable": true
     },
     {
