@@ -139,8 +139,8 @@ class WifiPatchTests(unittest.TestCase):
 @unittest.skipUnless(UCODE, "ucode runtime required (installed by Linux CI)")
 class WifiGeneratorTests(unittest.TestCase):
     def execute(self, source, saved=None, hardware=None):
-        # Replace only the actual fs/UCI reads, then execute all upstream radio
-        # discovery, existing-radio handling and UCI rendering in real ucode.
+        # Replace the actual fs/UCI reads and remove the loader's shebang before
+        # prepending fixtures. Execute all upstream discovery and UCI rendering.
         hardware = hardware or board()
         harness = """
 function readfile(path) {
@@ -151,6 +151,8 @@ function readfile(path) {
 const uci = { cursor: function() { return { get_all: function() { return SAVED; } }; } };
 """.replace("HARDWARE", json.dumps(json.dumps(hardware))).replace("SAVED", json.dumps(saved or {}))
         source = source.replace('import { readfile } from "fs";', "").replace("import * as uci from 'uci';", "")
+        if source.startswith("#!"):
+            source = source.split("\n", 1)[1]
         with tempfile.TemporaryDirectory() as directory:
             file = Path(directory) / "generate.uc"
             file.write_text(harness + source, encoding="utf-8", newline="\n")
