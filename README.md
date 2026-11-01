@@ -16,7 +16,9 @@ Actions 运行的 Artifact 中，验收后才另行发布。
 | AirPi AP3000M | [AP3000M](.github/workflows/AP3000M.yml) | [immortalwrt/immortalwrt](https://github.com/immortalwrt/immortalwrt) / `master` | `192.168.10.1` | `AP3000M` / `12345678` | [AP3000M](docs/AP3000M.md) |
 | NRadio / 鲲鹏无限 C8-688 | [C8-688](.github/workflows/C8-688.yml) | [immortalwrt/immortalwrt](https://github.com/immortalwrt/immortalwrt) / `master` | `192.168.66.1` | `C8-688` / `12345678` | [C8-688](docs/C8-688.md) |
 
-表中是新配置的默认值；保留配置升级时，后台地址和 Wi-Fi 等以恢复的用户配置为准。
+表中是当前代码生成新配置时的默认值：2.4G / 5G 使用 WPA2-PSK / AES（CCMP）。
+保留配置升级时，后台地址和 Wi-Fi 等以恢复的用户配置为准。
+旧固件曾因无线生成器格式变化而未写入密码；修复需重新构建后刷入，已有 Release 附件不会随 main 更新。
 三款默认均使用 Aurora 主题；C8-688 保留配置升级时会迁移旧 Argon / Bootstrap 默认主题。
 
 **TR3000 仅适用于已核对分区的 512MB 硬改机：UBI 起点 `0x5c0000`、长度 `0x1da40000`。** 原厂闪存或其他 U-Boot 布局不能直接使用；设备标识相同也不能证明分区兼容，`sysupgrade -T` 不能代替人工核对布局。

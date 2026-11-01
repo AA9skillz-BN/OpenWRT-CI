@@ -11,12 +11,20 @@ find ./feeds/luci/modules/luci-mod-system/ -type f -name "flash.js" -exec sed -i
 #添加编译日期标识
 find ./feeds/luci/modules/luci-mod-status/ -type f -name "10_system.js" -exec sed -i "s/(\(luciversion || ''\))/(\1) + (' \/ $WRT_MARK-$WRT_DATE')/g" {} +
 
-#修改默认WIFI账号密码
+# Single-device sources emit UCI assignments from ucode. The legacy sed below
+# matches neither their SSID/key expressions nor encryption=none.
 WIFI_UC="./package/network/config/wifi-scripts/files/lib/wifi/mac80211.uc"
 ROUTER_TOOL="./package/emortal/luci-app-router-tool/root/etc/config/router-tool"
-for file in "$ROUTER_TOOL" "$WIFI_UC"; do
-	[ -f "$file" ] && sed -i "s/ssid '.*'/ssid '$WRT_SSID'/g; s/key '.*'/key '$WRT_WORD'/g" "$file"
-done
+case "${WRT_PROFILE:-}" in
+	AP3000M|C8-688|TR3000-512)
+		python3 "$GITHUB_WORKSPACE/.github/scripts/wifi-defaults.py" --tree . || exit 1
+		;;
+	*)
+		# Preserve the independent generic workflows' historical source handling.
+		[ ! -f "$WIFI_UC" ] || sed -i "s/ssid '.*'/ssid '$WRT_SSID'/g; s/key '.*'/key '$WRT_WORD'/g" "$WIFI_UC"
+		;;
+esac
+[ ! -f "$ROUTER_TOOL" ] || sed -i "s/ssid '.*'/ssid '$WRT_SSID'/g; s/key '.*'/key '$WRT_WORD'/g" "$ROUTER_TOOL"
 
 CFG_FILE="./package/base-files/files/bin/config_generate"
 #修改默认IP地址

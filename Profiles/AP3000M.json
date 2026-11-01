@@ -142,6 +142,10 @@
     {
       "path": "/www/luci-static/resources/view/ap3000m-ota/overview.js",
       "source": "Scripts/AP3000M/luci-app-ap3000m-ota/htdocs/luci-static/resources/view/ap3000m-ota/overview.js"
+    },
+    {
+      "path": "/lib/wifi/mac80211.uc",
+      "build_source": "package/network/config/wifi-scripts/files/lib/wifi/mac80211.uc"
     }
   ]
 }
