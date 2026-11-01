@@ -1,11 +1,14 @@
 """Exercise the locked fan view with the LuCI APIs present on the router."""
 import hashlib
 import importlib.util
+import io
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 import urllib.request
@@ -32,9 +35,15 @@ class FanUiTests(unittest.TestCase):
             cls.menu = response.read()
         if hashlib.sha256(cls.menu).hexdigest() != fix.MENU_SHA256:
             raise AssertionError("locked fan menu hash mismatch")
+        url = ("https://raw.githubusercontent.com/LianXia233/luci-app-airpi3000m-fancontrol/"
+               "f931c4681f7c401bd4702351fd4a3ba821105340/" + fix.RECIPE)
+        with urllib.request.urlopen(url, timeout=60) as response:
+            cls.recipe = response.read()
+        if hashlib.sha256(cls.recipe).hexdigest() != fix.RECIPE_SHA256:
+            raise AssertionError("locked fan recipe hash mismatch")
 
     def package_fixture(self, root):
-        for name, data in ((fix.VIEW, self.original), (fix.MENU, self.menu)):
+        for name, data in ((fix.VIEW, self.original), (fix.MENU, self.menu), (fix.RECIPE, self.recipe)):
             path = root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
@@ -65,7 +74,7 @@ class FanUiTests(unittest.TestCase):
                 self.assertEqual(required[installed]["build_source"], expected)
 
     def test_menu_or_alias_drift_fails_before_any_files_are_written(self):
-        for bad in ("menu", "partial_menu", "alias"):
+        for bad in ("menu", "partial_menu", "alias", "recipe", "patched_recipe"):
             with self.subTest(bad=bad), tempfile.TemporaryDirectory() as temp:
                 root = Path(temp)
                 self.package_fixture(root)
@@ -74,12 +83,86 @@ class FanUiTests(unittest.TestCase):
                 elif bad == "partial_menu":
                     (root / fix.MENU).write_bytes(self.menu.replace(
                         b'airpi-fancontrol/fancontrol"', b'airpi-fancontrol/fancontrol-stale"'))
-                else:
+                elif bad == "alias":
                     (root / fix.VIEW).with_name("fancontrol-10b9af7ae581.js").write_bytes(b"old view")
+                elif bad == "recipe":
+                    (root / fix.RECIPE).write_bytes(self.recipe + b"\n")
+                else:
+                    fix.patch_package(root)
+                    recipe = root / fix.RECIPE
+                    recipe.write_bytes(recipe.read_bytes().replace(b"$(INSTALL_DATA)", b"false"))
                 before = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
                 with self.assertRaises(ValueError):
                     fix.patch_package(root)
                 self.assertEqual(before, {p: p.read_bytes() for p in root.rglob("*") if p.is_file()})
+
+    @unittest.skipIf(os.name == "nt", "actual package install regression runs on Linux")
+    def test_actual_locked_install_packages_the_view_selected_by_menu(self):
+        lock = json.loads((REPO / "Profiles/packages.lock.json").read_bytes())["fancontrol"]
+        self.assertEqual(lock["url"], "https://github.com/LianXia233/luci-app-airpi3000m-fancontrol.git")
+        with urllib.request.urlopen("https://codeload.github.com/LianXia233/luci-app-airpi3000m-fancontrol/tar.gz/" +
+                                    lock["commit"], timeout=60) as response:
+            source = response.read()
+        with tempfile.TemporaryDirectory() as directory:
+            top = Path(directory)
+            root = top / "package/luci-app-airpi3000m-fancontrol"
+            with tarfile.open(fileobj=io.BytesIO(source)) as archive:
+                for member in archive.getmembers():
+                    if not member.isfile():
+                        continue
+                    relative = Path(*Path(member.name).parts[1:])
+                    self.assertNotIn("..", relative.parts)
+                    file = root / relative
+                    file.parent.mkdir(parents=True, exist_ok=True)
+                    file.write_bytes(archive.extractfile(member).read())
+            self.assertEqual((root / fix.RECIPE).read_bytes(), self.recipe)
+            # Reproduce the earlier hook: it generated view/menu files but left
+            # the real upstream install macro selecting only fancontrol.js.
+            view_name = fix.patch_package(root)
+            (root / fix.RECIPE).write_bytes(self.recipe)
+            (top / "include").mkdir()
+            (top / "include/package.mk").touch()
+            (top / "rules.mk").write_text('''
+INCLUDE_DIR:=$(TOPDIR)/include
+PKG_INSTALL_DIR:=$(TOPDIR)/installed
+INSTALL_DIR:=install -d
+INSTALL_BIN:=install -m0755
+INSTALL_DATA:=install -m0644
+INSTALL_CONF:=install -m0600
+AIRPI_PREBUILT:=1
+AIRPI_PREBUILT_BIN:=/bin/true
+''')
+            package = (root / fix.RECIPE).parent
+            (package / "probe.mk").write_text('''
+include Makefile
+.PHONY: compile install
+compile:
+\t$(Build/Compile)
+install:
+\t$(call Package/$(PKG_NAME)/install,$(TOPDIR)/rootfs)
+''')
+            # Exercise the upstream prebuilt branch to isolate frontend install
+            # behavior; this test does not claim to compile the fan controller.
+            command = ["make", "--no-print-directory", "-f", "probe.mk", f"TOPDIR={top}", "compile", "install"]
+            before = subprocess.run(command, cwd=package, text=True, capture_output=True, timeout=30)
+            self.assertEqual(before.returncode, 0, before.stdout + before.stderr)
+            installed = top / "rootfs"
+            alias = installed / ("www/luci-static/resources/view/" + view_name + ".js")
+            self.assertFalse(alias.exists(), "original install must reproduce the missing view")
+            fix.patch_package(root)
+            after = subprocess.run(command, cwd=package, text=True, capture_output=True, timeout=30)
+            self.assertEqual(after.returncode, 0, after.stdout + after.stderr)
+            menu = installed / "usr/share/luci/menu.d/luci-app-airpi-fancontrol.json"
+            selected = json.loads(menu.read_bytes())["admin/status/airpi-fancontrol"]["action"]["path"]
+            self.assertEqual(selected, view_name)
+            self.assertEqual(alias.read_bytes(), fix.patch_view(self.original))
+            self.assertEqual(menu.read_bytes(), (root / fix.MENU).read_bytes())
+            self.assertEqual(alias.stat().st_mode & 0o777, 0o644)
+            legacy = alias.with_name("fancontrol.js")
+            self.assertEqual(legacy.read_bytes(), alias.read_bytes())
+            for name in ("etc/config/airpi-fan", "usr/share/rpcd/acl.d/luci-app-airpi-fancontrol.json"):
+                self.assertEqual((installed / name).read_bytes(), (package / "files" / name).read_bytes())
+            print("AP fan real package install: missing versioned view reproduced; repaired menu selects exact installed JS")
 
     def test_patch_is_exact_repeatable_and_rejects_source_drift(self):
         patched = fix.patch_view(self.original)

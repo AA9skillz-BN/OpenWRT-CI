@@ -7,7 +7,12 @@ UPSTREAM_SHA256 = "4f7b69a80afb5a2b53e61ede686c026d83e6715f8a60d4c081648282b1374
 VIEW = "luci-app-airpi-fancontrol/htdocs/luci-static/resources/view/airpi-fancontrol/fancontrol.js"
 MENU = "luci-app-airpi-fancontrol/files/usr/share/luci/menu.d/luci-app-airpi-fancontrol.json"
 MENU_SHA256 = "7da0abd2352126f39b794ad49c08023fd854238ba80a9fe4872252741e73f2e9"
+RECIPE = "luci-app-airpi-fancontrol/Makefile"
+RECIPE_SHA256 = "099091082301cca8cae61046a0b78ec76d595c8020b01dbcbba9415f2d4e1dfa"
 VIEW_NAME = b"airpi-fancontrol/fancontrol"
+INSTALL_VIEW = '''\t$(INSTALL_DATA) ./htdocs/luci-static/resources/view/airpi-fancontrol/fancontrol.js \\
+\t\t$(1)/www/luci-static/resources/view/airpi-fancontrol/fancontrol.js
+'''
 
 HELPER = """/* LuCI ui exposes showModal/hideModal, not a Promise-based confirm(). */
 function confirmAction(title, children) {
@@ -65,14 +70,27 @@ def patch_menu(data, view_name):
     return original.replace(old, new)
 
 
+def patch_recipe(data, alias_name):
+    extra = ("\t$(INSTALL_DATA) ./htdocs/luci-static/resources/view/airpi-fancontrol/" + alias_name + " \\\n"
+             "\t\t$(1)/www/luci-static/resources/view/airpi-fancontrol/" + alias_name + "\n")
+    text = data.decode("utf-8")
+    original = text.replace(INSTALL_VIEW + extra, INSTALL_VIEW)
+    if hashlib.sha256(original.encode("utf-8")).hexdigest() != RECIPE_SHA256:
+        raise ValueError("fan recipe differs from the reviewed locked source")
+    if original.count(INSTALL_VIEW) != 1:
+        raise ValueError("fan recipe install anchor changed")
+    return original.replace(INSTALL_VIEW, INSTALL_VIEW + extra).encode("utf-8")
+
+
 def patch_package(root):
     root = Path(root)
-    view, menu = root / VIEW, root / MENU
+    view, menu, recipe = root / VIEW, root / MENU, root / RECIPE
     data = patch_view(view.read_bytes())
     digest = hashlib.sha256(data).hexdigest()[:12]
     view_name = VIEW_NAME.decode("ascii") + "-" + digest
     alias = view.with_name("fancontrol-" + digest + ".js")
     menu_data = patch_menu(menu.read_bytes(), view_name)
+    recipe_data = patch_recipe(recipe.read_bytes(), alias.name)
     # Validate all inputs before changing any file. A repeated hook may reuse
     # only the exact reviewed alias, never silently overwrite different bytes.
     if alias.is_symlink() or (alias.exists() and alias.read_bytes() != data):
@@ -80,6 +98,7 @@ def patch_package(root):
     view.write_bytes(data)
     alias.write_bytes(data)
     menu.write_bytes(menu_data)
+    recipe.write_bytes(recipe_data)
     return view_name
 
 
