@@ -9,6 +9,10 @@ MENU = "luci-app-airpi-fancontrol/files/usr/share/luci/menu.d/luci-app-airpi-fan
 MENU_SHA256 = "7da0abd2352126f39b794ad49c08023fd854238ba80a9fe4872252741e73f2e9"
 RECIPE = "luci-app-airpi-fancontrol/Makefile"
 RECIPE_SHA256 = "099091082301cca8cae61046a0b78ec76d595c8020b01dbcbba9415f2d4e1dfa"
+# Reviewed 7.0.3 changes only the version and explanatory comments in this
+# recipe. Its install macro is identical to the locked 7.0.2 implementation.
+RECIPE_HASHES = {RECIPE_SHA256,
+                 "2b81809c45d7e825e69a83064ca3a6a3f1fb0efbb0e7a09ffdb7c57042a49ffc"}
 VIEW_NAME = b"airpi-fancontrol/fancontrol"
 INSTALL_VIEW = '''\t$(INSTALL_DATA) ./htdocs/luci-static/resources/view/airpi-fancontrol/fancontrol.js \\
 \t\t$(1)/www/luci-static/resources/view/airpi-fancontrol/fancontrol.js
@@ -75,7 +79,7 @@ def patch_recipe(data, alias_name):
              "\t\t$(1)/www/luci-static/resources/view/airpi-fancontrol/" + alias_name + "\n")
     text = data.decode("utf-8")
     original = text.replace(INSTALL_VIEW + extra, INSTALL_VIEW)
-    if hashlib.sha256(original.encode("utf-8")).hexdigest() != RECIPE_SHA256:
+    if hashlib.sha256(original.encode("utf-8")).hexdigest() not in RECIPE_HASHES:
         raise ValueError("fan recipe differs from the reviewed locked source")
     if original.count(INSTALL_VIEW) != 1:
         raise ValueError("fan recipe install anchor changed")

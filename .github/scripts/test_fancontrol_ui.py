@@ -103,6 +103,18 @@ class FanUiTests(unittest.TestCase):
         with urllib.request.urlopen("https://codeload.github.com/LianXia233/luci-app-airpi3000m-fancontrol/tar.gz/" +
                                     lock["commit"], timeout=60) as response:
             source = response.read()
+        self.check_actual_install(source, fix.RECIPE_SHA256)
+
+    @unittest.skipIf(os.name == "nt", "actual package install regression runs on Linux")
+    def test_actual_reviewed_latest_install_packages_the_view_selected_by_menu(self):
+        # Exact plugin snapshot from the failed latest-mode build. Fetching a
+        # moving branch here would hide later upstream drift from the review.
+        with urllib.request.urlopen("https://codeload.github.com/LianXia233/luci-app-airpi3000m-fancontrol/"
+                                    "tar.gz/7f12c388a1185d0af95603108f4fa18792211335", timeout=60) as response:
+            source = response.read()
+        self.check_actual_install(source, "2b81809c45d7e825e69a83064ca3a6a3f1fb0efbb0e7a09ffdb7c57042a49ffc")
+
+    def check_actual_install(self, source, expected_recipe_hash):
         with tempfile.TemporaryDirectory() as directory:
             top = Path(directory)
             root = top / "package/luci-app-airpi3000m-fancontrol"
@@ -115,11 +127,12 @@ class FanUiTests(unittest.TestCase):
                     file = root / relative
                     file.parent.mkdir(parents=True, exist_ok=True)
                     file.write_bytes(archive.extractfile(member).read())
-            self.assertEqual((root / fix.RECIPE).read_bytes(), self.recipe)
+            recipe = (root / fix.RECIPE).read_bytes()
+            self.assertEqual(hashlib.sha256(recipe).hexdigest(), expected_recipe_hash)
             # Reproduce the earlier hook: it generated view/menu files but left
             # the real upstream install macro selecting only fancontrol.js.
             view_name = fix.patch_package(root)
-            (root / fix.RECIPE).write_bytes(self.recipe)
+            (root / fix.RECIPE).write_bytes(recipe)
             (top / "include").mkdir()
             (top / "include/package.mk").touch()
             (top / "rules.mk").write_text('''
