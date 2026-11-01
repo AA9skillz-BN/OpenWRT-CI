@@ -186,7 +186,7 @@ class DeviceContractTests(unittest.TestCase):
         env = {"WRT_RELEASE_TAG": "AP3000M-test-123-1", "WRT_BRANCH": "feature/test",
                "WRT_INFO": "immortalwrt", "WRT_DATE": "26.10.27-12.00.00", "WRT_REPO": "https://example.test/source",
                "WRT_IP": "192.168.10.1", "WRT_NAME": "AP3000M"}
-        for file in ("source-commit.txt", "feeds.buildinfo", "packages.lock.json", "build-inputs.json"):
+        for file in ("source-commit.txt", "feeds.buildinfo", "packages.lock.json", "build-inputs.json", "plugin-resolution.json"):
             build.write(self.reports / file, "test\n")
         with patch.dict(os.environ, env), patch.object(build, "run", return_value="a" * 40), \
              patch.object(build.subprocess, "run", side_effect=self.fwtool), patch.object(build, "verify_payload"):
@@ -205,6 +205,8 @@ class DeviceContractTests(unittest.TestCase):
         self.assertIn("  ap3000m-ota-update.json\n", sums)
         self.assertIn(self.manifest.name, assets)
         self.assertIn("feeds.buildinfo", assets)
+        self.assertEqual((upload / "plugin-resolution.json").read_bytes(),
+                         (self.reports / "plugin-resolution.json").read_bytes())
         for line in (self.tree / "upload/sha256sums").read_text().splitlines():
             digest, file = line.split("  ", 1)
             self.assertEqual(digest, build.hashlib.sha256((self.tree / "upload" / file).read_bytes()).hexdigest())

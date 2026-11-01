@@ -55,6 +55,11 @@ name: DEVICE-CORE
         default: locked
         required: false
         type: string
+      WRT_PLUGIN_MODE:
+        description: Use locked plugin revisions, or resolve current plugin branch commits
+        default: locked
+        required: false
+        type: string
 env:
   WRT_PROFILE: ${{inputs.WRT_PROFILE}}
   WRT_CONFIG: ${{inputs.WRT_CONFIG}}
@@ -70,6 +75,7 @@ env:
   WRT_PACKAGE: ${{inputs.WRT_PACKAGE}}
   WRT_TEST: ${{inputs.WRT_TEST}}
   WRT_SOURCE_MODE: ${{inputs.WRT_SOURCE_MODE}}
+  WRT_PLUGIN_MODE: ${{inputs.WRT_PLUGIN_MODE}}
 jobs:
   core:
     name: ${{inputs.WRT_SOURCE}}

@@ -37,6 +37,11 @@ on:
         type: choice
         options: [locked, latest]
         default: locked
+      PLUGIN_MODE:
+        description: 'locked 使用插件版本锁；latest 跟随插件分支，保留适配检查。'
+        type: choice
+        options: [locked, latest]
+        default: locked
       BUILD_ONLY:
         description: '编译并校验固件，只上传 Artifact，不发布 Release。'
         default: false
@@ -74,6 +79,7 @@ jobs:
       #编译配置
       WRT_CONFIG: ${{ matrix.CONFIG }}
       WRT_SOURCE_MODE: ${{ inputs.SOURCE_MODE || 'locked' }}
+      WRT_PLUGIN_MODE: ${{ inputs.PLUGIN_MODE || 'locked' }}
       WRT_PUBLISH: ${{ !inputs.BUILD_ONLY }}
       WRT_PROFILE: AP3000M
       #默认主题

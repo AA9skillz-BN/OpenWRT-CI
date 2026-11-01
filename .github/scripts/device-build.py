@@ -70,14 +70,52 @@ def remove_package(path):
         shutil.rmtree(path, onerror=writable_remove)
 
 
+def resolve_plugin(key, item, mode):
+    revision = item["commit"]
+    if not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise ValueError(f"{key}: expected a full commit SHA")
+    branch = None
+    if mode == "latest":
+        branch = item.get("branch")
+        if branch is not None:
+            if not isinstance(branch, str) or not branch:
+                raise ValueError(f"{key}: invalid plugin branch")
+            ref = "refs/heads/" + branch
+            subprocess.run(["git", "check-ref-format", ref], check=True)
+            listing = run("git", "ls-remote", "--exit-code", "--refs", "--", item["url"], ref)
+        else:
+            listing = run("git", "ls-remote", "--symref", "--", item["url"], "HEAD")
+            refs = re.findall(r"^ref: (refs/heads/[^\s]+)\tHEAD$", listing, re.MULTILINE)
+            if len(refs) != 1:
+                raise ValueError(f"{key}: cannot resolve the default plugin branch; set branch explicitly")
+            branch = refs[0].removeprefix("refs/heads/")
+            ref = "HEAD"
+        commits = re.findall(r"^([0-9a-f]{40})\t" + re.escape(ref) + r"$", listing, re.MULTILINE)
+        if len(commits) != 1:
+            raise ValueError(f"{key}: plugin branch did not resolve to one full commit SHA")
+        revision = commits[0]
+    resolved = dict(item, commit=revision)
+    return resolved, {"url": item["url"], "branch": branch,
+                      "locked_commit": item["commit"], "resolved_commit": revision}
+
+
 def install_packages(repo, tree, data, reports):
+    mode = os.environ.get("WRT_PLUGIN_MODE", "locked")
+    if mode not in ("locked", "latest"):
+        raise ValueError("plugin mode must be locked or latest")
     locks = json.loads((repo / "Profiles/packages.lock.json").read_text(encoding="utf-8"))
+    # Resolve each moving branch once, then fetch that exact SHA. A branch
+    # advancing during checkout must not change this run's snapshot or records.
+    resolved, resolution = {}, {}
+    for key in data["packages"]:
+        resolved[key], resolution[key] = resolve_plugin(key, locks[key], mode)
+    write(reports / "plugin-resolution.json", json.dumps({"schema": 1, "mode": mode,
+          "plugins": resolution}, indent=2) + "\n")
     provenance = {}
     for key in data["packages"]:
-        item = locks[key]
+        item = resolved[key]
         revision = item["commit"]
-        if not re.fullmatch(r"[0-9a-f]{40}", revision):
-            raise ValueError(f"{key}: expected a full commit SHA")
+        print(f"Plugin {key}: {mode} {resolution[key]['branch'] or 'commit'} @ {revision}", flush=True)
         # Remove exact conflicting package directories and installed feed links.
         # Never use substring matches: e.g. 'argon' must not delete unrelated packages.
         for name in item["replaces"]:
@@ -97,7 +135,7 @@ def install_packages(repo, tree, data, reports):
         run("git", "-C", str(dest), "remote", "add", "origin", item["url"])
         subprocess.run(["git", "-C", str(dest), "fetch", "--depth=1", "origin", revision], check=True)
         run("git", "-C", str(dest), "checkout", "--detach", "FETCH_HEAD")
-        if run("git", "-C", str(dest), "rev-parse", "HEAD") != revision:
+        if run("git", "-C", str(dest), "rev-parse", "HEAD^{commit}") != revision:
             raise ValueError(f"{key}: fetched revision mismatch")
         subdirs = item.get("subdirectories", [item["subdirectory"]] if item.get("subdirectory") else [])
         if subdirs:
@@ -237,7 +275,7 @@ def package(tree, repo, name, data, reports):
         # verify_image has already checked these exact files in the squashfs.
         package_ota_update(repo, upload, tag, name)
     for file in reports.iterdir():
-        if file.is_file() and file.name in ("source-commit.txt", "feeds.buildinfo", "packages.lock.json",
+        if file.is_file() and file.name in ("source-commit.txt", "feeds.buildinfo", "packages.lock.json", "plugin-resolution.json",
                                              "build-inputs.json", "image-metadata.json", "compatibility.txt", "ci-commit.txt",
                                              "config-resolution.json", "source-lock.json", "verified-payload.json",
                                              "toolchain-inputs.json", "toolchain-cache.json"):

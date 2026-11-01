@@ -10,8 +10,9 @@ README 不作为构建配置来源。
 2. 默认 `SOURCE_MODE=locked`，按 `Profiles/sources.lock.json` 拉取源码和
    feeds 的完整提交 SHA。拉取失败、URL 不一致或版本不一致直接失败。
    在 feeds 更新前排除未启用的 video、PON feeds。
-3. 根据 `Profiles/<机型>.json` 只拉需要的第三方仓库，使用
-   `Profiles/packages.lock.json` 中的完整提交 SHA。插件只安装一次。
+3. 根据 `Profiles/<机型>.json` 只拉需要的第三方仓库。独立的 `PLUGIN_MODE`
+   默认 `locked`，使用 `Profiles/packages.lock.json` 中的完整提交 SHA；
+   `latest` 解析插件分支当前提交后仍按确切 SHA 拉取。插件只安装一次。
 4. 通过独立 bash 进程执行机型 `private.sh`，投放补丁、首启脚本等。
    必需文件缺失或复制失败立即终止，不通过 source 共享 shell 状态。
 5. 按“基础及功能片段 → 机型 → PRIVATE.txt → 手动 PACKAGE”合并配置，
@@ -73,6 +74,37 @@ Samba、USB 网卡、存储工具等功能。可在每个 profile 的 `config_fr
 增加或更新插件时，修改 lock 中的提交及精确替换目录，必要时更新 profile。
 保留 TR3000 原来审阅过的 Aurora/OpenClash/TurboACC 提交；其余插件在迁移时
 锁定当前提交。主源码和 feeds 独立锁定在 `Profiles/sources.lock.json`。
+
+### 独立选择插件版本
+
+三个机型的 Run workflow 都提供 `PLUGIN_MODE=locked/latest`，默认 `locked`。
+它与 `SOURCE_MODE` 独立，四种组合均可使用：
+
+| SOURCE_MODE | PLUGIN_MODE | 主源码 / feeds | 单独拉取的第三方插件 |
+| --- | --- | --- | --- |
+| locked | locked | 版本锁 | 插件版本锁 |
+| locked | latest | 版本锁 | 插件分支最新提交 |
+| latest | locked | 所选上游 | 插件版本锁 |
+| latest | latest | 所选上游 | 插件分支最新提交 |
+
+`PLUGIN_MODE=latest` 默认跟随每个仓库的默认分支，也支持在插件 lock 条目中
+增加可选的 `"branch": "分支名"`。这里的 latest 指分支最新提交，不是最新 Release。
+一次构建中每个插件只解析一次分支，然后 fetch 得到的确切 SHA；后续分支移动
+不改变本次快照。分支不存在、默认分支无法解析、拉取失败或提交不一致时直接失败，
+不会悄悄改用旧 lock。选择 latest 不会改写仓库内的插件锁。
+
+`build-reports/plugin-resolution.json` 记录模式、仓库、解析分支、原锁和实际提交；
+报告中的 `packages.lock.json` 记录实际使用的插件快照。这两份记录随固件打包并纳入
+sha256sums，`build-inputs.json` 和下载缓存使用实际插件提交及适配后的配方。
+工具链缓存仍按自身真实依赖计算，ccache 继续自行校验编译器与源内容。
+
+AP 的 FM350/风扇及 C8 风扇适配仍检查审阅过的上游内容。新版改变这些内容时，
+必须先审查并更新适配及测试；latest 不绕过检查，也不保证每个上游提交都兼容。
+本仓库自带的 OTA 和设备脚本随本仓库提交，feeds 内的软件包由 SOURCE_MODE 控制。
+该开关只影响后续编译，不会自动更新已刷设备上的插件。
+
+### 主源码版本
+
 锁模式下修改 SOURCE/BRANCH 而不更新对应锁会失败；要试验其他源码，显式选择
 `SOURCE_MODE=latest`，此时才跟随所选上游。无论哪种模式都保存实际版本。
 
