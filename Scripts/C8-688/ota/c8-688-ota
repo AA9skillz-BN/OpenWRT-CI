@@ -204,13 +204,16 @@ asset_url() {
 	printf 'https://github.com/%s/releases/download/%s/%s' "$(repo)" "$1" "$2"
 }
 
-mirror_list() {
+mirror_list() (
 	[ "$(use_mirror)" = "1" ] || return 0
 	[ -f /lib/functions.sh ] || return 0
+	# OpenWrt config helpers read optional unset variables (e.g. IPKG_INSTROOT).
+	# Isolate their shell options and globals from the strict OTA caller.
+	set +u
 	. /lib/functions.sh
 	config_load c8_688_ota 2>/dev/null || return 0
 	config_list_foreach main mirror echo
-}
+)
 
 human_mb() {
 	awk -v b="${1:-0}" 'BEGIN{ printf "%.2f MB", b/1048576 }'
