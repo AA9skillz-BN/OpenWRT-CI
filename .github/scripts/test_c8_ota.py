@@ -17,6 +17,40 @@ OTA = OTA.rsplit('\nmain "$@"', 1)[0].replace('. /lib/functions/c8-system.sh || 
 TAG = "C8-688-immortalwrt-master-test"
 
 
+class C8MenuPackagingTests(unittest.TestCase):
+    @unittest.skipIf(os.name == 'nt', 'actual OTA Make installation runs on Linux')
+    def test_actual_ota_recipe_installs_every_split_menu_view_and_image_gate(self):
+        package = REPO / 'Scripts/C8-688/luci-app-c8-688-ota'
+        with tempfile.TemporaryDirectory() as directory:
+            top = Path(directory)
+            (top / 'include').mkdir()
+            (top / 'include/package.mk').touch()
+            (top / 'rules.mk').write_text('''INCLUDE_DIR:=$(TOPDIR)/include
+INSTALL_DIR:=install -d
+INSTALL_DATA:=install -m 0644
+''')
+            probe = top / 'probe.mk'
+            probe.write_text('include Makefile\ninstall:\n\t$(call Package/$(PKG_NAME)/install,$(TOPDIR)/rootfs)\n')
+            result = subprocess.run(['make', '-f', str(probe), 'install', f'TOPDIR={top}'],
+                                    cwd=package, capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            root = top / 'rootfs'
+            menu = json.loads((root / 'usr/share/luci/menu.d/luci-app-c8-688-ota.json').read_bytes())
+            self.assertEqual(set(menu), {'admin/system/c8-688-ota', 'admin/system/c8-688-switch'})
+            required = {item['path']: item for item in
+                        json.loads((REPO / 'Profiles/C8-688.json').read_bytes())['required_files']}
+            for route, item in menu.items():
+                self.assertEqual(len(route.split('/')), 3, 'both entries must be second-level menus')
+                self.assertEqual(item['depends']['acl'], ['luci-app-c8-688-ota'])
+                view_path = '/www/luci-static/resources/view/' + item['action']['path'] + '.js'
+                installed = root / view_path.lstrip('/')
+                self.assertEqual(installed.read_bytes(), (REPO / required[view_path]['source']).read_bytes())
+                self.assertEqual(installed.stat().st_mode & 0o777, 0o644)
+            self.assertLess(70, menu['admin/system/c8-688-ota']['order'])
+            self.assertLess(menu['admin/system/c8-688-ota']['order'], menu['admin/system/c8-688-switch']['order'])
+            self.assertLess(menu['admin/system/c8-688-switch']['order'], 90)
+
+
 @unittest.skipUnless(BASH and JQ, "bash and jq required")
 class C8OtaTests(unittest.TestCase):
     def setUp(self):

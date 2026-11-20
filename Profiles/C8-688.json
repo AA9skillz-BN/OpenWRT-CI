@@ -163,6 +163,10 @@
       "source": "Scripts/C8-688/luci-app-c8-688-ota/htdocs/luci-static/resources/view/c8-688-ota/overview.js"
     },
     {
+      "path": "/www/luci-static/resources/view/c8-688-ota/switch.js",
+      "source": "Scripts/C8-688/luci-app-c8-688-ota/htdocs/luci-static/resources/view/c8-688-ota/switch.js"
+    },
+    {
       "path": "/usr/share/luci/menu.d/luci-app-c8-688-ota.json",
       "source": "Scripts/C8-688/luci-app-c8-688-ota/root/usr/share/luci/menu.d/luci-app-c8-688-ota.json"
     },

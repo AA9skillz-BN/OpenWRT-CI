@@ -8,7 +8,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-c8-688-ota
 PKG_VERSION:=1.0.0
-PKG_RELEASE:=2
+PKG_RELEASE:=3
 
 PKG_LICENSE:=MIT
 PKG_MAINTAINER:=AA9skillz-BN
@@ -46,6 +46,8 @@ define Package/$(PKG_NAME)/install
 	$(INSTALL_DIR) $(1)/www/luci-static/resources/view/c8-688-ota
 	$(INSTALL_DATA) ./htdocs/luci-static/resources/view/c8-688-ota/overview.js \
 		$(1)/www/luci-static/resources/view/c8-688-ota/overview.js
+	$(INSTALL_DATA) ./htdocs/luci-static/resources/view/c8-688-ota/switch.js \
+		$(1)/www/luci-static/resources/view/c8-688-ota/switch.js
 
 	$(INSTALL_DIR) $(1)/usr/share/luci/menu.d
 	$(INSTALL_DATA) ./root/usr/share/luci/menu.d/luci-app-c8-688-ota.json \

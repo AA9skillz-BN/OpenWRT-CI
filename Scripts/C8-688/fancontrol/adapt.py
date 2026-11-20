@@ -98,6 +98,7 @@ def transform(name, text):
         text = text.replace("H5000M 散热管理", "C8-688 散热管理")
     elif name.endswith(".json"):
         text = text.replace('"title": "Fan Control"', '"title": "C8 风扇管理"')
+        text = text.replace('"order": 90', '"order": 65')
         text = text.replace('"path": "h5000m/fancontrol"', '"path": "' + MENU_VIEW + '"')
     return text
 

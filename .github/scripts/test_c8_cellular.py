@@ -104,7 +104,16 @@ class SourceTests(unittest.TestCase):
         self.assertNotIn('admin/modem', menu)
         self.assertEqual(len(menu), 9)
         for name in ('status', 'connection', 'network', 'sms', 'system', 'terminal', 'advanced', 'settings'):
-            self.assertIn('admin/network/c8_cellular/maintenance/' + name, menu)
+            self.assertIn('admin/modem/maintenance/' + name, menu)
+        root_menu = json.loads((PACKAGE / 'root/usr/share/luci/menu.d/luci-app-c8-cellular.json').read_bytes())
+        self.assertIn('admin/modem', root_menu)
+        self.assertNotIn('admin/network/c8_cellular', root_menu)
+        merged = dict(root_menu, **menu)
+        for route in menu:
+            self.assertIn(route.rsplit('/', 1)[0], merged, 'a relocated child needs a registered parent')
+        self.assertLess(root_menu['admin/modem/overview']['order'], menu['admin/modem/maintenance']['order'])
+        info = (self.web / 'files/www/5700/p__CPE__System__Info__index.a04926af.async.js').read_text(encoding='utf-8')
+        self.assertIn('/cgi-bin/luci/admin/modem/maintenance/settings', info)
 
     def test_execute_pinned_frontend_sms_response_handler(self):
         adapt.adapt(self.manager, self.web)

@@ -10,8 +10,6 @@ var callUpgrade = rpc.declare({ object: 'luci.c8_688_ota', method: 'upgrade', pa
 var callUpgradeTag = rpc.declare({ object: 'luci.c8_688_ota', method: 'upgrade_tag', params: [ 'tag', 'keep' ], expect: {} });
 var callSettings = rpc.declare({ object: 'luci.c8_688_ota', method: 'set_settings', params: [ 'keep_config', 'use_mirror' ], expect: {} });
 
-var callOfficial = rpc.declare({ object: 'luci.c8_688_ota', method: 'official', params: [ 'confirm' ], expect: {} });
-
 function mb(bytes) {
 	return (Number(bytes || 0) / 1048576).toFixed(2) + ' MB';
 }
@@ -44,8 +42,6 @@ return view.extend({
 		var noteVal  = E('div', { 'class': 'cbi-value-description' }, '');
 		var sizeVal  = E('span', {}, '—');
 		var stateVal = E('span', {}, '空闲');
-		var bootVal = E('div', { 'class': 'cbi-value-description' }, '');
-		var btnOfficial = E('button', { 'class': 'cbi-button cbi-button-remove', 'disabled': 'disabled' }, '切回第一系统（原厂）');
 		var msgVal   = E('div', { 'class': 'cbi-value-description' }, '');
 
 		var barFill = E('div', { 'style': 'height:100%;width:0%;background:#2b8cf0;transition:width .3s' }, '');
@@ -89,7 +85,6 @@ return view.extend({
 
 			var imgs = localImages();
 			btnRollback.disabled = disabled || imgs.length === 0 || downloading || st.ota_ready !== true;
-			btnOfficial.disabled = disabled || downloading || !st.boot || !st.boot.ready;
 		}
 
 		function rebuildRollback() {
@@ -112,9 +107,6 @@ return view.extend({
 			st = s || {};
 			prefix = st.tag_prefix || prefix;
 			curVal.textContent = st.current || '未知';
-			bootVal.textContent = st.boot && st.boot.ready ?
-				('当前运行：第二系统；下次启动：' + (st.boot.system === '0' ? '第一系统（原厂）' : '第二系统') + '。') :
-				((st.boot && st.boot.error) || st.error || '无法确认启动环境，系统切换和升级已禁用。');
 
 			if (st.downloading) {
 				var pct = st.download_size > 0 ? Math.floor(st.download_bytes * 100 / st.download_size) : 0;
@@ -180,11 +172,6 @@ return view.extend({
 			});
 		});
 
-		btnOfficial.addEventListener('click', function() {
-			if (!confirm('切回第一系统（原厂）并重启？\n\n这会切换启动系统，当前连接将断开。原厂系统需要仍然完好，启动后的地址和密码以原厂配置为准。')) return;
-			callOfficial(true).then(function(r) { taskAccepted(r, 'official'); }).catch(taskFailed);
-		});
-
 		btnDownload.addEventListener('click', function() {
 			if (!latest) return;
 			callDownload(latest.latest).then(function(r) { taskAccepted(r, 'download'); }).catch(taskFailed);
@@ -205,7 +192,7 @@ return view.extend({
 				return;
 			}
 			st.operation = { state: 'running', action: action || 'upgrade' };
-			setMsg(action === 'official' ? '系统切换任务已启动，成功后设备将重启。' : action === 'download' ? '后台下载任务已启动，完成后会校验镜像。' : '后台任务已启动，正在校验；通过后才会提交升级。');
+			setMsg(action === 'download' ? '后台下载任务已启动，完成后会校验镜像。' : '后台任务已启动，正在校验；通过后才会提交升级。');
 			refreshButtons();
 		}
 
@@ -236,7 +223,7 @@ return view.extend({
 		applyStatus(st);
 
 		return E([], [
-			E('h2', {}, 'C8-688 固件升级与系统切换'),
+			E('h2', {}, 'C8-688 在线升级'),
 			E('div', { 'class': 'cbi-section' }, [
 				E('div', { 'class': 'cbi-value' }, [
 					E('label', { 'class': 'cbi-value-title' }, '当前版本'),
@@ -266,12 +253,6 @@ return view.extend({
 				]),
 				msgVal,
 				st.last_result ? E('div', { 'class': 'cbi-value-description' }, '上次升级结果：' + st.last_result) : ''
-			]),
-			E('div', { 'class': 'cbi-section' }, [
-				E('h3', {}, '第一系统（原厂）'),
-				bootVal,
-				E('p', {}, 'OTA 只更新第二系统；此按钮选择已有的原厂系统后重启。'),
-				btnOfficial
 			]),
 			E('div', { 'class': 'cbi-section' }, [
 				E('h3', {}, '选项'),

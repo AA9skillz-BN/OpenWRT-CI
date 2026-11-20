@@ -83,7 +83,7 @@ c8_profile_query() {
 \texport MT5700M_ACTION_LOCKED=1''')
     name = 'root/usr/share/luci/menu.d/luci-app-mt5700m.json'
     menu = json.loads(original[name])
-    old, new = 'admin/modem/mt5700m', 'admin/network/c8_cellular/maintenance'
+    old, new = 'admin/modem/mt5700m', 'admin/modem/maintenance'
     menu.pop('admin/modem')
     menu = {k.replace(old, new, 1): v for k, v in menu.items()}
     menu[new].update(title='兼容维护', order=90)
@@ -131,7 +131,7 @@ c8_profile_query() {
     end = info.index(card, start + len(card))
     info = (info[:start] + card + '"模组连接",style:{marginBottom:"16px",height:"100%"},'
             'children:(0,e.jsxs)("div",{children:["使用当前已登录的管理会话。串口与网络 AT 连接参数请在兼容维护中设置。",'
-            '(0,e.jsx)("p",{children:(0,e.jsx)("a",{href:"/cgi-bin/luci/admin/network/c8_cellular/maintenance/settings",'
+            '(0,e.jsx)("p",{children:(0,e.jsx)("a",{href:"/cgi-bin/luci/admin/modem/maintenance/settings",'
             'target:"_top",children:"打开连接设置"})})]})})}),' + info[end:])
     start = info.index('$u=function()')
     end = info.index(',wr=function()', start)

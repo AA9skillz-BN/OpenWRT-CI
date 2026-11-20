@@ -60,6 +60,7 @@ class C8FanTests(unittest.TestCase):
             self.assertIn("C8 slider/input/UCI regression passed", fixed.stdout)
             menu = json.loads((tree / "root/usr/share/luci/menu.d/luci-app-h5000m-fancontrol.json").read_bytes())
             self.assertEqual(menu["admin/system/h5000m_fancontrol"]["action"]["path"], adapt.MENU_VIEW)
+            self.assertEqual(menu["admin/system/h5000m_fancontrol"]["order"], 65)
             self.assertEqual((tree / adapt.VIEW_ALIAS).read_bytes(), (tree / adapt.VIEW).read_bytes())
             profile = json.loads((REPO / "Profiles/C8-688.json").read_bytes())
             required = {f["path"]: f for f in profile["required_files"]}

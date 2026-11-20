@@ -1,7 +1,7 @@
 {
 	"admin/system/c8-688-ota": {
-		"title": "固件升级",
-		"order": 90,
+		"title": "在线升级",
+		"order": 75,
 		"action": {
 			"type": "view",
 			"path": "c8-688-ota/overview"
@@ -9,5 +9,11 @@
 		"depends": {
 			"acl": [ "luci-app-c8-688-ota" ]
 		}
+	},
+	"admin/system/c8-688-switch": {
+		"title": "切换系统",
+		"order": 80,
+		"action": { "type": "view", "path": "c8-688-ota/switch" },
+		"depends": { "acl": [ "luci-app-c8-688-ota" ] }
 	}
 }
