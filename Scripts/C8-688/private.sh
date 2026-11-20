@@ -138,6 +138,8 @@ for _c8_keep in /etc/c8-688-pending /etc/c8-688-result; do
 done
 mkdir -p package/luci-app-c8-688-ota
 cp -a "$_c8_src/luci-app-c8-688-ota/." package/luci-app-c8-688-ota/
+mkdir -p package/luci-app-c8-688-status
+cp -a "$_c8_src/luci-app-c8-688-status/." package/luci-app-c8-688-status/
 
 printf '%s\n' "${WRT_RELEASE_TAG:?missing release tag}" > package/base-files/files/etc/c8-688-build.tag
 echo "C8-688: device source and overlay ready"

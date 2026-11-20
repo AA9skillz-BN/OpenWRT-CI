@@ -91,3 +91,4 @@ CONFIG_PACKAGE_audio-support=y
 # Official firewall4 uses nft-fullcone; the old SONIC symbol is absent.
 CONFIG_PACKAGE_fullconenat-sonic=n
 CONFIG_PACKAGE_kmod-nft-fullcone=y
+CONFIG_PACKAGE_luci-app-c8-688-status=y

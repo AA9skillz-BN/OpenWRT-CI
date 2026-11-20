@@ -1,0 +1,8 @@
+{
+  "luci-app-c8-688-status": {
+    "description": "Read C8 device status without configuration or hardware writes",
+    "read": {
+      "ubus": { "luci.c8_688_status": [ "status" ] }
+    }
+  }
+}

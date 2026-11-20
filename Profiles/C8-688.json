@@ -58,11 +58,28 @@
     "curl",
     "ca-bundle",
     "flock",
-    "rpcd-mod-ucode"
+    "rpcd-mod-ucode",
+    "luci-app-c8-688-status"
   ],
   "release_note": "仅写 eMMC 的 kernel_2nd / rootfs_2nd 第二系统槽。原厂 NROS 后台烧录第二系统前先关闭存储扩展。保留现有风扇、Wi-Fi MAC、双系统切换及 MT5700M 管理功能；不含原厂 NR-OS APP 与多卡切换界面。 Aurora 主题；C8 专用 OTA 与一键切回第一系统；适配 H5000M 风扇管理界面与 C8 PWM 温控。",
   "build_tag_file": "/etc/c8-688-build.tag",
   "required_files": [
+    {
+      "path": "/www/luci-static/resources/view/c8-688-status/overview.js",
+      "source": "Scripts/C8-688/luci-app-c8-688-status/htdocs/luci-static/resources/view/c8-688-status/overview.js"
+    },
+    {
+      "path": "/usr/share/rpcd/ucode/c8-688-status.uc",
+      "source": "Scripts/C8-688/luci-app-c8-688-status/root/usr/share/rpcd/ucode/c8-688-status.uc"
+    },
+    {
+      "path": "/usr/share/rpcd/acl.d/luci-app-c8-688-status.json",
+      "source": "Scripts/C8-688/luci-app-c8-688-status/root/usr/share/rpcd/acl.d/luci-app-c8-688-status.json"
+    },
+    {
+      "path": "/usr/share/luci/menu.d/luci-app-c8-688-status.json",
+      "source": "Scripts/C8-688/luci-app-c8-688-status/root/usr/share/luci/menu.d/luci-app-c8-688-status.json"
+    },
     {
       "path": "/lib/upgrade/c8-688.sh",
       "source": "Files/C8-688/lib/upgrade/c8-688.sh"
