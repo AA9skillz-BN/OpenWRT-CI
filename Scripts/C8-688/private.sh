@@ -116,6 +116,10 @@ fi
 # MT5700M packages are installed once from Profiles/packages.lock.json.
 test -f package/luci-app-mt5700m/Makefile
 test -f package/mt5700m-transport/Makefile
+test -f package/at-webserver/Makefile
+python3 "$_c8_src/cellular/adapt.py" package/luci-app-mt5700m package/at-webserver
+mkdir -p package/luci-app-c8-cellular
+cp -a "$_c8_src/luci-app-c8-cellular/." package/luci-app-c8-cellular/
 
 # Reviewed fan plugin: preserve thermal policy and the original C8 full-speed
 # fail-safe. The legacy c8-fan service no longer owns PWM.
@@ -132,6 +136,7 @@ install -m 0755 "$_c8_src/ota/c8-688-ota-boot" "$_c8_bf/etc/init.d/c8-688-ota-bo
 install -m 0755 "$_c8_src/ota/99-c8-688-ota-cron" "$_c8_bf/etc/uci-defaults/99-c8-688-ota-cron"
 ln -sfn ../init.d/c8-688-ota-boot "$_c8_bf/etc/rc.d/S99c8-688-ota-boot"
 ln -sfn ../init.d/h5000m-fancontrol "$_c8_bf/etc/rc.d/S98h5000m-fancontrol"
+ln -sfn ../init.d/c8-cellular "$_c8_bf/etc/rc.d/S81c8-cellular"
 for _c8_keep in /etc/c8-688-pending /etc/c8-688-result; do
 	grep -qxF "$_c8_keep" "$_c8_bf/etc/sysupgrade.conf" 2>/dev/null ||
 		printf '%s\n' "$_c8_keep" >> "$_c8_bf/etc/sysupgrade.conf"

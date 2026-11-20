@@ -1,0 +1,13 @@
+{
+  "admin/network/c8_cellular": {
+    "title": "蜂窝设置",
+    "order": 25,
+    "action": {"type": "firstchild"},
+    "depends": {"acl": ["luci-app-c8-cellular"]}
+  },
+  "admin/network/c8_cellular/overview": {
+    "title": "模组管理",
+    "order": 10,
+    "action": {"type": "view", "path": "c8-cellular/overview"}
+  }
+}

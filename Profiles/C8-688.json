@@ -30,7 +30,8 @@
     "mt5700m",
     "aurora",
     "aurora-config",
-    "c8-fancontrol"
+    "c8-fancontrol",
+    "c8-cellular-webui"
   ],
   "required_packages": [
     "kmod-mt7915e",
@@ -59,9 +60,17 @@
     "ca-bundle",
     "flock",
     "rpcd-mod-ucode",
-    "luci-app-c8-688-status"
+    "luci-app-c8-688-status",
+    "luci-app-c8-cellular",
+    "c8-cellular-webui",
+    "python3-light",
+    "python3-asyncio",
+    "python3-urllib",
+    "python3-codecs",
+    "python3-logging",
+    "python3-openssl"
   ],
-  "release_note": "仅写 eMMC 的 kernel_2nd / rootfs_2nd 第二系统槽。原厂 NROS 后台烧录第二系统前先关闭存储扩展。保留现有风扇、Wi-Fi MAC、双系统切换及 MT5700M 管理功能；不含原厂 NR-OS APP 与多卡切换界面。 Aurora 主题；C8 专用 OTA 与一键切回第一系统；适配 H5000M 风扇管理界面与 C8 PWM 温控。",
+  "release_note": "仅写 eMMC 的 kernel_2nd / rootfs_2nd 第二系统槽。原厂 NROS 后台烧录第二系统前先关闭存储扩展。保留现有风扇、Wi-Fi MAC、双系统切换及 MT5700M 管理功能；不含原厂 NR-OS APP。蜂窝设置采用已审查 WEBUI，后台按 C8 Ethernet/USB 与三卡槽适配，具体硬件验收范围见机型文档。 Aurora 主题；C8 专用 OTA 与一键切回第一系统；适配 H5000M 风扇管理界面与 C8 PWM 温控。",
   "build_tag_file": "/etc/c8-688-build.tag",
   "required_files": [
     {
@@ -201,10 +210,10 @@
       "path": "/www/luci-static/resources/view/h5000m/fancontrol.js",
       "build_source": "package/luci-app-h5000m-fancontrol/htdocs/luci-static/resources/view/h5000m/fancontrol.js"
     },
-      {
-        "path": "/www/luci-static/resources/view/h5000m/fancontrol-slider-v1.js",
-        "build_source": "package/luci-app-h5000m-fancontrol/htdocs/luci-static/resources/view/h5000m/fancontrol-slider-v1.js"
-      },
+    {
+      "path": "/www/luci-static/resources/view/h5000m/fancontrol-slider-v1.js",
+      "build_source": "package/luci-app-h5000m-fancontrol/htdocs/luci-static/resources/view/h5000m/fancontrol-slider-v1.js"
+    },
     {
       "path": "/etc/rc.d/S98h5000m-fancontrol",
       "executable": true
@@ -212,6 +221,284 @@
     {
       "path": "/lib/wifi/mac80211.uc",
       "build_source": "package/network/config/wifi-scripts/files/lib/wifi/mac80211.uc"
+    },
+    {
+      "path": "/etc/config/c8_cellular",
+      "source": "Scripts/C8-688/luci-app-c8-cellular/root/etc/config/c8_cellular"
+    },
+    {
+      "path": "/etc/init.d/c8-cellular",
+      "source": "Scripts/C8-688/luci-app-c8-cellular/root/etc/init.d/c8-cellular",
+      "executable": true
+    },
+    {
+      "path": "/etc/uci-defaults/94-c8-cellular",
+      "source": "Scripts/C8-688/luci-app-c8-cellular/root/etc/uci-defaults/94-c8-cellular",
+      "executable": true
+    },
+    {
+      "path": "/usr/libexec/c8-cellular/action",
+      "source": "Scripts/C8-688/luci-app-c8-cellular/root/usr/libexec/c8-cellular/action",
+      "executable": true
+    },
+    {
+      "path": "/usr/libexec/c8-cellular/broker.py",
+      "source": "Scripts/C8-688/luci-app-c8-cellular/root/usr/libexec/c8-cellular/broker.py"
+    },
+    {
+      "path": "/usr/libexec/c8-cellular/diagnostics.py",
+      "source": "Scripts/C8-688/luci-app-c8-cellular/root/usr/libexec/c8-cellular/diagnostics.py"
+    },
+    {
+      "path": "/usr/libexec/c8-cellular/notify.py",
+      "source": "Scripts/C8-688/luci-app-c8-cellular/root/usr/libexec/c8-cellular/notify.py"
+    },
+    {
+      "path": "/usr/libexec/rpcd/luci.c8_cellular",
+      "source": "Scripts/C8-688/luci-app-c8-cellular/root/usr/libexec/rpcd/luci.c8_cellular",
+      "executable": true
+    },
+    {
+      "path": "/usr/share/c8-cellular/network.sh",
+      "source": "Scripts/C8-688/luci-app-c8-cellular/root/usr/share/c8-cellular/network.sh"
+    },
+    {
+      "path": "/usr/share/c8-cellular/slots.sh",
+      "source": "Scripts/C8-688/luci-app-c8-cellular/root/usr/share/c8-cellular/slots.sh"
+    },
+    {
+      "path": "/usr/share/luci/menu.d/luci-app-c8-cellular.json",
+      "source": "Scripts/C8-688/luci-app-c8-cellular/root/usr/share/luci/menu.d/luci-app-c8-cellular.json"
+    },
+    {
+      "path": "/usr/share/rpcd/acl.d/luci-app-c8-cellular.json",
+      "source": "Scripts/C8-688/luci-app-c8-cellular/root/usr/share/rpcd/acl.d/luci-app-c8-cellular.json"
+    },
+    {
+      "path": "/www/5700/c8-bridge.js",
+      "source": "Scripts/C8-688/luci-app-c8-cellular/htdocs/5700/c8-bridge.js"
+    },
+    {
+      "path": "/www/luci-static/resources/view/c8-cellular/overview.js",
+      "source": "Scripts/C8-688/luci-app-c8-cellular/htdocs/luci-static/resources/view/c8-cellular/overview.js"
+    },
+    {
+      "path": "/www/5700/119.752c6590.async.js",
+      "build_source": "package/at-webserver/files/www/5700/119.752c6590.async.js"
+    },
+    {
+      "path": "/www/5700/20.86918292.async.js",
+      "build_source": "package/at-webserver/files/www/5700/20.86918292.async.js"
+    },
+    {
+      "path": "/www/5700/232.045a4da0.async.js",
+      "build_source": "package/at-webserver/files/www/5700/232.045a4da0.async.js"
+    },
+    {
+      "path": "/www/5700/298.0c98d1cf.async.js",
+      "build_source": "package/at-webserver/files/www/5700/298.0c98d1cf.async.js"
+    },
+    {
+      "path": "/www/5700/385.777b3b38.async.js",
+      "build_source": "package/at-webserver/files/www/5700/385.777b3b38.async.js"
+    },
+    {
+      "path": "/www/5700/39.9693c39f.async.js",
+      "build_source": "package/at-webserver/files/www/5700/39.9693c39f.async.js"
+    },
+    {
+      "path": "/www/5700/390.83388097.async.js",
+      "build_source": "package/at-webserver/files/www/5700/390.83388097.async.js"
+    },
+    {
+      "path": "/www/5700/393.67051290.async.js",
+      "build_source": "package/at-webserver/files/www/5700/393.67051290.async.js"
+    },
+    {
+      "path": "/www/5700/395.1dfbe829.async.js",
+      "build_source": "package/at-webserver/files/www/5700/395.1dfbe829.async.js"
+    },
+    {
+      "path": "/www/5700/45.ff01a86d.async.js",
+      "build_source": "package/at-webserver/files/www/5700/45.ff01a86d.async.js"
+    },
+    {
+      "path": "/www/5700/703.7af7dcb4.async.js",
+      "build_source": "package/at-webserver/files/www/5700/703.7af7dcb4.async.js"
+    },
+    {
+      "path": "/www/5700/756.40d8eb6e.async.js",
+      "build_source": "package/at-webserver/files/www/5700/756.40d8eb6e.async.js"
+    },
+    {
+      "path": "/www/5700/842.f80c09e0.async.js",
+      "build_source": "package/at-webserver/files/www/5700/842.f80c09e0.async.js"
+    },
+    {
+      "path": "/www/5700/997.3434530c.async.js",
+      "build_source": "package/at-webserver/files/www/5700/997.3434530c.async.js"
+    },
+    {
+      "path": "/www/5700/at/index.html",
+      "build_source": "package/at-webserver/files/www/5700/at/index.html"
+    },
+    {
+      "path": "/www/5700/CNAME",
+      "build_source": "package/at-webserver/files/www/5700/CNAME"
+    },
+    {
+      "path": "/www/5700/favicon.ico",
+      "build_source": "package/at-webserver/files/www/5700/favicon.ico"
+    },
+    {
+      "path": "/www/5700/icons/icon-128x128.png",
+      "build_source": "package/at-webserver/files/www/5700/icons/icon-128x128.png"
+    },
+    {
+      "path": "/www/5700/icons/icon-192x192.png",
+      "build_source": "package/at-webserver/files/www/5700/icons/icon-192x192.png"
+    },
+    {
+      "path": "/www/5700/icons/icon-512x512.png",
+      "build_source": "package/at-webserver/files/www/5700/icons/icon-512x512.png"
+    },
+    {
+      "path": "/www/5700/icons/logo.png",
+      "build_source": "package/at-webserver/files/www/5700/icons/logo.png"
+    },
+    {
+      "path": "/www/5700/index.html",
+      "build_source": "package/at-webserver/files/www/5700/index.html"
+    },
+    {
+      "path": "/www/5700/logo.svg",
+      "build_source": "package/at-webserver/files/www/5700/logo.svg"
+    },
+    {
+      "path": "/www/5700/network/dial/index.html",
+      "build_source": "package/at-webserver/files/www/5700/network/dial/index.html"
+    },
+    {
+      "path": "/www/5700/network/index.html",
+      "build_source": "package/at-webserver/files/www/5700/network/index.html"
+    },
+    {
+      "path": "/www/5700/network/info/index.html",
+      "build_source": "package/at-webserver/files/www/5700/network/info/index.html"
+    },
+    {
+      "path": "/www/5700/network/setting/index.html",
+      "build_source": "package/at-webserver/files/www/5700/network/setting/index.html"
+    },
+    {
+      "path": "/www/5700/p__CPE__AT__Terminal__index.2ff1b893.async.js",
+      "build_source": "package/at-webserver/files/www/5700/p__CPE__AT__Terminal__index.2ff1b893.async.js"
+    },
+    {
+      "path": "/www/5700/p__CPE__Network__Dial__index.a360ac4c.async.js",
+      "build_source": "package/at-webserver/files/www/5700/p__CPE__Network__Dial__index.a360ac4c.async.js"
+    },
+    {
+      "path": "/www/5700/p__CPE__Network__Info__index.30901ff8.async.js",
+      "build_source": "package/at-webserver/files/www/5700/p__CPE__Network__Info__index.30901ff8.async.js"
+    },
+    {
+      "path": "/www/5700/p__CPE__Network__Settings__index.893ddec9.async.js",
+      "build_source": "package/at-webserver/files/www/5700/p__CPE__Network__Settings__index.893ddec9.async.js"
+    },
+    {
+      "path": "/www/5700/p__CPE__SMS__Center__index.88186f3e.async.js",
+      "build_source": "package/at-webserver/files/www/5700/p__CPE__SMS__Center__index.88186f3e.async.js"
+    },
+    {
+      "path": "/www/5700/p__CPE__SMS__Settings__index.c3a79efc.async.js",
+      "build_source": "package/at-webserver/files/www/5700/p__CPE__SMS__Settings__index.c3a79efc.async.js"
+    },
+    {
+      "path": "/www/5700/p__CPE__System__Info__index.a04926af.async.js",
+      "build_source": "package/at-webserver/files/www/5700/p__CPE__System__Info__index.a04926af.async.js"
+    },
+    {
+      "path": "/www/5700/p__CPE__System__Upgrade__index.d7af163b.async.js",
+      "build_source": "package/at-webserver/files/www/5700/p__CPE__System__Upgrade__index.d7af163b.async.js"
+    },
+    {
+      "path": "/www/5700/preload_helper.66ca4a74.js",
+      "build_source": "package/at-webserver/files/www/5700/preload_helper.66ca4a74.js"
+    },
+    {
+      "path": "/www/5700/pro_icon.svg",
+      "build_source": "package/at-webserver/files/www/5700/pro_icon.svg"
+    },
+    {
+      "path": "/www/5700/scripts/loading.js",
+      "build_source": "package/at-webserver/files/www/5700/scripts/loading.js"
+    },
+    {
+      "path": "/www/5700/sms/center/index.html",
+      "build_source": "package/at-webserver/files/www/5700/sms/center/index.html"
+    },
+    {
+      "path": "/www/5700/sms/index.html",
+      "build_source": "package/at-webserver/files/www/5700/sms/index.html"
+    },
+    {
+      "path": "/www/5700/sms/settings/index.html",
+      "build_source": "package/at-webserver/files/www/5700/sms/settings/index.html"
+    },
+    {
+      "path": "/www/5700/system/index.html",
+      "build_source": "package/at-webserver/files/www/5700/system/index.html"
+    },
+    {
+      "path": "/www/5700/system/info/index.html",
+      "build_source": "package/at-webserver/files/www/5700/system/info/index.html"
+    },
+    {
+      "path": "/www/5700/system/upgrade/index.html",
+      "build_source": "package/at-webserver/files/www/5700/system/upgrade/index.html"
+    },
+    {
+      "path": "/www/5700/t__plugin-layout__Layout.5012e1ab.chunk.css",
+      "build_source": "package/at-webserver/files/www/5700/t__plugin-layout__Layout.5012e1ab.chunk.css"
+    },
+    {
+      "path": "/www/5700/t__plugin-layout__Layout.e0c9df77.async.js",
+      "build_source": "package/at-webserver/files/www/5700/t__plugin-layout__Layout.e0c9df77.async.js"
+    },
+    {
+      "path": "/www/5700/umi.31851818.css",
+      "build_source": "package/at-webserver/files/www/5700/umi.31851818.css"
+    },
+    {
+      "path": "/www/5700/umi.ec9b4b52.js",
+      "build_source": "package/at-webserver/files/www/5700/umi.ec9b4b52.js"
+    },
+    {
+      "path": "/usr/sbin/mt5700m-manager",
+      "build_source": "package/luci-app-mt5700m/root/usr/sbin/mt5700m-manager",
+      "executable": true
+    },
+    {
+      "path": "/etc/uci-defaults/90-mt5700m",
+      "build_source": "package/luci-app-mt5700m/root/etc/uci-defaults/90-mt5700m",
+      "executable": true
+    },
+    {
+      "path": "/usr/share/mt5700m/profile.sh",
+      "build_source": "package/luci-app-mt5700m/root/usr/share/mt5700m/profile.sh"
+    },
+    {
+      "path": "/usr/share/mt5700m/lock.sh",
+      "build_source": "package/luci-app-mt5700m/root/usr/share/mt5700m/lock.sh"
+    },
+    {
+      "path": "/usr/share/luci/menu.d/luci-app-mt5700m.json",
+      "build_source": "package/luci-app-mt5700m/root/usr/share/luci/menu.d/luci-app-mt5700m.json"
+    },
+    {
+      "path": "/etc/rc.d/S81c8-cellular",
+      "executable": true
     }
   ],
   "root_partition": "rootfs_2nd",

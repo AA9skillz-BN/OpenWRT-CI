@@ -135,5 +135,16 @@
     "replaces": [
       "luci-app-h5000m-fancontrol"
     ]
+  },
+  "c8-cellular-webui": {
+    "url": "https://github.com/inotdream/mt5700webui-openwrt-server.git",
+    "commit": "7abccd44c81442b13dbf974ad9a0aa67cf527e90",
+    "directory": "c8-cellular-webui-source",
+    "replaces": [
+      "c8-cellular-webui",
+      "at-webserver",
+      "luci-app-at-webserver"
+    ],
+    "subdirectory": "at-webserver"
   }
 }

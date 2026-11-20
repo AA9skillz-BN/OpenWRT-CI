@@ -1,0 +1,3 @@
+config notify 'notify'
+	option enabled '0'
+	option url ''

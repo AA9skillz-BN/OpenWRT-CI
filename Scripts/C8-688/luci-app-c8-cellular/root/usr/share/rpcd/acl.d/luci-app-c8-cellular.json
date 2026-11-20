@@ -1,0 +1,7 @@
+{
+  "luci-app-c8-cellular": {
+    "description": "C8 cellular controller (AT, SMS and SIM writes require write permission)",
+    "read": { "ubus": { "luci.c8_cellular": ["result"] } },
+    "write": { "ubus": { "luci.c8_cellular": ["submit"] } }
+  }
+}
