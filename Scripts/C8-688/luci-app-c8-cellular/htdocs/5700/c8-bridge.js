@@ -6,6 +6,19 @@
     'use strict';
     const nativeFetch = window.fetch.bind(window);
     let sequence = 0;
+    let activeSocket = null;
+    function pdcpSample(response) {
+        if (!response.success || typeof response.data !== 'string') return null;
+        const line = response.data.split(/[\r\n]+/).find(x => /^\^PDCPDATAINFO:\s*\d+(?:,\s*\d+){13,15}\s*$/.test(x));
+        if (!line) return null;
+        const values = line.split(':')[1].trim().split(',').map(Number);
+        if (!values.every(Number.isSafeInteger)) return null;
+        const fields = ['id', 'pduSessionId', 'discardTimerLen', 'avgDelay', 'minDelay', 'maxDelay',
+            'highPriQueMaxBuffTime', 'lowPriQueMaxBuffTime', 'highPriQueBuffPktNums', 'lowPriQueBuffPktNums',
+            'ulPdcpRate', 'dlPdcpRate', 'ulDiscardCnt', 'dlDiscardCnt', 'timestamp1', 'timestamp2'];
+        return Object.fromEntries(fields.slice(0, values.length).map((field, i) =>
+            [field, i >= 3 && i <= 7 ? values[i] / 10 : values[i]]));
+    }
     function session() {
         try {
             if (window.parent === window || window.parent.location.origin !== window.location.origin)
@@ -64,6 +77,9 @@
             this.url = url;
             this.readyState = LuCIWebSocket.CONNECTING;
             this.chain = Promise.resolve();
+            this.pending = 0;
+            this.pdcpTimer = null;
+            this.pdcpGeneration = 0;
             // The socket is a compatibility object only. Its URL is never used
             // for a network connection, including on HTTPS LuCI installations.
             setTimeout(async () => {
@@ -73,6 +89,7 @@
                     if (!response.success) throw new Error(response.error);
                     if (this.readyState !== LuCIWebSocket.CONNECTING) return;
                     this.readyState = LuCIWebSocket.OPEN;
+                    activeSocket = this;
                     this.emit('open', new Event('open'));
                 } catch (_) { this.fail(); }
             }, 0);
@@ -87,8 +104,7 @@
                 setTimeout(() => this.emit('message', new MessageEvent('message', { data: 'pong' })), 0);
                 return;
             }
-            this.chain = this.chain.then(async () => {
-                if (this.readyState !== LuCIWebSocket.OPEN) return;
+            this.enqueue(async () => {
                 try {
                     const response = await job('at', command);
                     if (this.readyState === LuCIWebSocket.OPEN)
@@ -97,7 +113,49 @@
                     // No late answer may satisfy the next pending AT command.
                     this.fail();
                 }
+            }).catch(() => this.fail());
+        }
+        enqueue(task) {
+            ++this.pending;
+            const result = this.chain.then(() => {
+                if (this.readyState !== LuCIWebSocket.OPEN) throw new Error('cellular adapter closed');
+                return task();
             });
+            this.chain = result.catch(() => {}).finally(() => { --this.pending; });
+            return result;
+        }
+        async pdcpReport(enabled, interval) {
+            const generation = ++this.pdcpGeneration;
+            clearTimeout(this.pdcpTimer);
+            if (!enabled) return { success: true, data: 'OK', error: null };
+            const period = Math.max(5000, Math.min(65535, Number(interval) || 5000));
+            const sample = async () => {
+                const response = await job('at', 'AT^PDCPDATAINFO?');
+                const data = pdcpSample(response);
+                if (!data) throw new Error(response.error || 'modem_has_no_pdcp_sample');
+                if (generation === this.pdcpGeneration && this.readyState === LuCIWebSocket.OPEN)
+                    this.emit('message', new MessageEvent('message', { data: JSON.stringify({ type: 'pdcp_data', data }) }));
+            };
+            const schedule = () => {
+                if (generation !== this.pdcpGeneration || this.readyState !== LuCIWebSocket.OPEN) return;
+                this.pdcpTimer = setTimeout(async () => {
+                    try {
+                        // Do not build a telemetry backlog behind SMS, scans or writes.
+                        if (this.pending === 0) await this.enqueue(sample);
+                        schedule();
+                    } catch (_) { this.fail(); }
+                }, period);
+            };
+            try {
+                await this.enqueue(sample);
+                if (generation !== this.pdcpGeneration || this.readyState !== LuCIWebSocket.OPEN)
+                    throw new Error('pdcp_sampling_cancelled');
+                schedule();
+                return { success: true, data: 'OK', error: null };
+            } catch (e) {
+                // Never report an enabled speed display without an actual sample.
+                return { success: false, data: null, error: e.message };
+            }
         }
         fail() {
             this.emit('error', new Event('error'));
@@ -106,12 +164,20 @@
         close() {
             if (this.readyState === LuCIWebSocket.CLOSED) return;
             this.readyState = LuCIWebSocket.CLOSED;
+            ++this.pdcpGeneration;
+            clearTimeout(this.pdcpTimer);
+            if (activeSocket === this) activeSocket = null;
             this.emit('close', new Event('close'));
         }
     }
     Object.assign(LuCIWebSocket, { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 });
     Object.assign(LuCIWebSocket.prototype, { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 });
     window.WebSocket = LuCIWebSocket;
+    window.c8PDCPReport = function (enabled, interval) {
+        if (!activeSocket || activeSocket.readyState !== LuCIWebSocket.OPEN)
+            return Promise.resolve({ success: false, data: null, error: 'cellular_adapter_closed' });
+        return activeSocket.pdcpReport(enabled, interval);
+    };
     window.c8SwitchSlot = async function (slot) {
         const names = { 0: '外置卡 1（正面）', 6: '外置卡 2（反面）', 1: '内置卡' };
         if (!names[slot] || !window.confirm('切换到' + names[slot] + '将暂时中断蜂窝网络，确认继续？')) return false;

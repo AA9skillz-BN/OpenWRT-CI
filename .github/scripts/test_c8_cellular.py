@@ -447,7 +447,7 @@ class ShellTests(unittest.TestCase):
         script = self.root / 'run.sh'
         script.write_text(('TASK_TMP=$(cygpath -u "$TASK_TMP")\n' if os.name == 'nt' else '') +
                           source + '\n' + body, encoding='utf-8', newline='\n')
-        return subprocess.run([BASH, script.as_posix()], capture_output=True, text=True, encoding='utf-8',
+        return subprocess.run([*getattr(self, 'shell_executable', [BASH]), script.as_posix()], capture_output=True, text=True, encoding='utf-8',
                               env=dict(os.environ, TASK_TMP=self.root.as_posix(), **env), timeout=30)
 
     def slot(self, body, failure=''):
@@ -466,8 +466,8 @@ export C8_GPIO_ROOT="$TASK_TMP/gpio"
 log_message() { :; }; sleep() { :; }; sync() { :; }
 slot_at() {
     case "$1" in
-        'AT^SCICHG?') printf '^SCICHG: %s\\nOK\\n' "$(cat "$TASK_TMP/sci")"; return;;
-        'AT+CFUN?') printf '+CFUN: %s\\nOK\\n' "$(cat "$TASK_TMP/fun")"; return;;
+        'AT^SCICHG?') printf '^SCICHG: %s\\nOK\\n' "$(cat "$TASK_TMP/sci")"; return 0;;
+        'AT+CFUN?') printf '+CFUN: %s\\nOK\\n' "$(cat "$TASK_TMP/fun")"; return 0;;
     esac
     printf '%s\\n' "$1" >> "$TASK_TMP/writes"
     if [ "$1" = "$FAILURE" ] && [ ! -f "$TASK_TMP/failed" ]; then touch "$TASK_TMP/failed"; return 1; fi
@@ -478,7 +478,7 @@ slot_at() {
     printf 'OK\\n'
 }
 '''
-        return self.shell(source, setup + 'set -x\n' + body, FAILURE=failure)
+        return self.shell(source, setup + body, FAILURE=failure)
 
     def test_all_three_slot_values_and_noop_are_readback_checked(self):
         for target, expected in [('0', '0 1 0 1 1'), ('6', '1 1 0 1 1'), ('1', '1 1 1 0 1')]:
@@ -520,13 +520,24 @@ slot_recover && exit 94
         result = self.slot('''
 printf() {
     if [ "$1" = '0\\n' ] && [ ! -f "$TASK_TMP/failed" ]; then touch "$TASK_TMP/failed"; return 1; fi
-    builtin printf "$@"
+    command printf "$@"
 }
 slot_switch 0 && exit 90
 [ "$(slot_snapshot)" = '1 1 1 0 1' ] || exit 91
 [ ! -f "$SLOT_JOURNAL" ]
 ''')
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    @unittest.skipIf(os.name == 'nt', 'real BusyBox ash on Linux')
+    def test_slot_transactions_and_each_failure_under_real_busybox_ash(self):
+        # A query helper is an external process in production and reports its
+        # own explicit exit status. Bare `return` in a Bash EXIT trap instead
+        # inherits the original failing status on Linux, corrupting that mock.
+        self.shell_executable = [shutil.which('busybox'), 'ash']
+        self.test_all_three_slot_values_and_noop_are_readback_checked()
+        self.test_failure_at_each_modem_write_restores_original_under_conditional_call()
+        (self.root / 'failed').unlink(missing_ok=True)
+        self.test_gpio_write_failure_does_not_continue_to_modem_changes()
 
     def test_ethernet_preserves_network_policy_disabled_state_and_usb_selection(self):
         source = (PACKAGE / 'root/usr/share/c8-cellular/network.sh').read_text(encoding='utf-8')

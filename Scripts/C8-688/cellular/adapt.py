@@ -100,6 +100,11 @@ c8_profile_query() {
         'this.smsCollecting=false;this.smsResolve=null;this.smsBuffer=[];this.smsTimer=null}'
         'this.pendingCommands')
     main = replace_once(main, '},1e4);var J=N.endsWith', '},240e3);var J=N.endsWith')
+    # The transport is shared with the original manager. Use serialized queries
+    # instead of enabling a continuous unsolicited stream with no sole reader.
+    main = replace_once(main,
+        'B=N?"AT^PDCPDATAINFO=1".concat(L?",".concat(L):""):"AT^PDCPDATAINFO=0",oe.abrupt("return",this.sendCommand(B))',
+        'oe.abrupt("return",window.c8PDCPReport(N,L))')
     # Complete JSON results must not be interpreted as SMS payload substrings.
     main = replace_once(main, 'if(this.smsCollecting){try{var B=S;',
         'if(this.smsCollecting){try{var c8=JSON.parse(S);if(typeof c8.success==="boolean")'
@@ -110,6 +115,13 @@ c8_profile_query() {
     start, end = main.index('_r().setup({timeout:"100-600"})'), main.index('var Ll=!1,Nl=')
     main = main[:start] + main[end:]
     wchanged[name] = main.encode()
+    name = 'files/www/5700/p__CPE__Network__Info__index.30901ff8.async.js'
+    network = woriginal[name].decode('utf-8')
+    network = replace_once(network, 'min:200,max:65535,step:100,value:xn',
+                           'min:5000,max:65535,step:1000,value:xn')
+    network = network.replace('useState)(500)', 'useState)(5000)')
+    network = replace_once(network, r'200-65535ms', r'5000-65535ms')
+    wchanged[name] = network.encode()
     name = 'files/www/5700/p__CPE__System__Info__index.a04926af.async.js'
     info = woriginal[name].decode('utf-8')
     # The original server-address card describes a daemon we do not install.
