@@ -125,7 +125,7 @@ class WifiPatchTests(unittest.TestCase):
                 result = subprocess.run([BASH, "-ec", command], cwd=tree, env=env,
                                         text=True, capture_output=True, encoding="utf-8")
                 self.assertEqual(result.returncode, 0, result.stderr)
-                expected = wifi.patch_generator(source, options["WRT_SSID"], str(options["WRT_WORD"]))
+                expected = wifi.patch_generator(source, options["WRT_SSID"], str(options["WRT_WORD"]), profile == "C8-688")
                 self.assertEqual(generator.read_text(encoding="utf-8"), expected)
                 # Settings.sh must not hide a missing/changed upstream generator.
                 config_before_failure = (tree / ".config").read_bytes()
@@ -138,6 +138,16 @@ class WifiPatchTests(unittest.TestCase):
 
 @unittest.skipUnless(UCODE, "ucode runtime required (installed by Linux CI)")
 class WifiGeneratorTests(unittest.TestCase):
+    def test_c8_reference_band_names_and_existing_settings(self):
+        data = yaml.safe_load((REPO / '.github/workflows/C8-688.yml').read_text(encoding='utf-8'))
+        options = next(iter(data['jobs'].values()))['with']
+        source = wifi.patch_generator(upstreams()['AP3000M'], options['WRT_SSID'], str(options['WRT_WORD']), True)
+        generated = assignments(self.execute(source))
+        self.assertEqual(generated['wireless.default_radio0.ssid'], 'NRadio-C8-688-2.4G')
+        self.assertEqual(generated['wireless.default_radio1.ssid'], 'NRadio-C8-688-5G')
+        saved = {f'radio{i}': {'.type': 'wifi-device', 'path': f'platform/test/radio{i}'} for i in (0, 1)}
+        self.assertEqual(self.execute(source, saved), '')
+
     def execute(self, source, saved=None, hardware=None):
         # Replace the actual fs/UCI reads and remove the loader's shebang before
         # prepending fixtures. Execute all upstream discovery and UCI rendering.
