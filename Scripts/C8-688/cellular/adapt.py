@@ -112,6 +112,15 @@ c8_profile_query() {
     wchanged[name] = main.encode()
     name = 'files/www/5700/p__CPE__System__Info__index.a04926af.async.js'
     info = woriginal[name].decode('utf-8')
+    # The original server-address card describes a daemon we do not install.
+    # Point users to the actual retained transport settings instead.
+    card = '(0,e.jsx)(D.Z,{xs:24,sm:24,md:12,lg:12,children:(0,e.jsx)($.Z,{title:'
+    start = info.index(card + '"AT')
+    end = info.index(card, start + len(card))
+    info = (info[:start] + card + '"模组连接",style:{marginBottom:"16px",height:"100%"},'
+            'children:(0,e.jsxs)("div",{children:["使用当前已登录的管理会话。串口与网络 AT 连接参数请在兼容维护中设置。",'
+            '(0,e.jsx)("p",{children:(0,e.jsx)("a",{href:"/cgi-bin/luci/admin/network/c8_cellular/maintenance/settings",'
+            'target:"_top",children:"打开连接设置"})})]})})}),' + info[end:])
     start = info.index('$u=function()')
     end = info.index(',wr=function()', start)
     wchanged[name] = (info[:start] + '$u=function(n){return window.c8SwitchSlot(n).then(function(ok){if(ok)Ar()})}' + info[end:]).encode()

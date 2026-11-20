@@ -458,6 +458,8 @@ class ShellTests(unittest.TestCase):
         (self.root / 'sci').write_text('1,0')
         (self.root / 'fun').write_text('1')
         source = (PACKAGE / 'root/usr/share/c8-cellular/slots.sh').read_text(encoding='utf-8')
+        # Keep EXIT rollback traces in captured stderr, including on Linux.
+        source = source.replace('slot_recover >/dev/null 2>&1 || true', 'slot_recover || true')
         setup = '''
 SLOT_JOURNAL="$TASK_TMP/slot-rollback"
 export C8_GPIO_ROOT="$TASK_TMP/gpio"
@@ -476,7 +478,7 @@ slot_at() {
     printf 'OK\\n'
 }
 '''
-        return self.shell(source, setup + body, FAILURE=failure)
+        return self.shell(source, setup + 'set -x\n' + body, FAILURE=failure)
 
     def test_all_three_slot_values_and_noop_are_readback_checked(self):
         for target, expected in [('0', '0 1 0 1 1'), ('6', '1 1 0 1 1'), ('1', '1 1 1 0 1')]:
