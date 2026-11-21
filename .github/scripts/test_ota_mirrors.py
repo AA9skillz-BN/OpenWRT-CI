@@ -135,7 +135,7 @@ case "$-" in *u*) ;; *) exit 92;; esac
                 self.assertEqual(len(urls), 2)
                 self.assertTrue(urls[0].startswith("https://one.invalid/https://github.com/"))
                 self.assertTrue(urls[1].startswith("https://two.invalid/https://github.com/"))
-                self.assertIn("sha256 鏍￠獙閫氳繃", result.stderr)
+                self.assertIn("sha256 校验通过", result.stderr)
 
     def test_disabled_missing_or_empty_mirror_config_falls_back_to_direct(self):
         for model in ("C8-688", "AP3000M", "TR3000-512"):
@@ -157,7 +157,7 @@ case "$-" in *u*) ;; *) exit 92;; esac
             with self.subTest(model=model):
                 result = self.run_download(model, corrupt=True)
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn("sha256 鏍￠獙澶辫触", result.stderr)
+                self.assertIn("sha256 校验失败", result.stderr)
                 tag = "TR3000-512-VIKINGYFY-owrt-test" if model == "TR3000-512" else model + "-immortalwrt-master-test"
                 self.assertFalse((self.root / (tag + ".bin")).exists())
 
