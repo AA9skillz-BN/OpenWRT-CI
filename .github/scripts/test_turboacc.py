@@ -174,7 +174,7 @@ const cursor = {
  rename: function(c,s,n) { store[c][n]=store[c][s]; delete store[c][s]; }
 };
 const uci = { cursor: function() { return cursor; } };
-function command(p) {
+function simulate_system(p) {
  push(commands,p);
  if (p == 'modprobe tcp_bbr 2>/dev/null') files['/proc/sys/net/ipv4/tcp_available_congestion_control']='cubic reno bbr';
  if (index(p, 'turboacc_probe') >= 0) return SONIC && index(p, 'masquerade fullcone') >= 0 ? 0 : 1;
@@ -182,7 +182,7 @@ function command(p) {
 }
 '''.replace("STORE", json.dumps(store)).replace("FILES", json.dumps(files)).replace("SONIC", "true" if sonic else "false")
         core = core.replace("import * as fs from 'fs';", "").replace("import * as uci from 'uci';", "")
-        core = core.replace("export { detect, apply, stop, defaults, status };", "").replace("system(", "command(")
+        core = core.replace("export { detect, apply, stop, defaults, status };", "").replace("system(", "simulate_system(")
         script = self.top / "runtime.uc"
         script.write_text(harness + core + "\n" + actions + "\nprintf('%J', {store,files,commands,writes,commits});\n", encoding="utf8", newline="\n")
         result = subprocess.run([UCODE, str(script)], text=True, capture_output=True, timeout=15)
