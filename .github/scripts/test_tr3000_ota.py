@@ -281,6 +281,12 @@ class TrOtaInstallationTests(unittest.TestCase):
             self.assertEqual((base / "etc/rc.d/S99tr3000-ota-boot").readlink().as_posix(), "../init.d/tr3000-ota-boot")
 
     def test_release_attachments_bind_verified_layout_image_and_guard(self):
+        # The real TR upstream disables the BusyBox od applet by default.
+        # Require its packaged provider instead of relying on a host test tool.
+        profile = json.loads((REPO / "Profiles/TR3000-512.json").read_bytes())
+        self.assertIn("coreutils-od", profile["required_packages"])
+        self.assertIn("CONFIG_PACKAGE_coreutils-od=y", (REPO / "Config/TR3000-512.txt").read_text())
+        self.assertIn("+coreutils-od", (OTA_DIR.parent / "luci-app-tr3000-ota/Makefile").read_text())
         spec = importlib.util.spec_from_file_location("tr_build", Path(__file__).with_name("device-build.py"))
         build = importlib.util.module_from_spec(spec); spec.loader.exec_module(build)
         with tempfile.TemporaryDirectory() as directory:

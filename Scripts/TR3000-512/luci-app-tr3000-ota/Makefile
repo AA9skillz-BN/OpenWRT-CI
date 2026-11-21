@@ -20,7 +20,7 @@ define Package/$(PKG_NAME)
   CATEGORY:=LuCI
   SUBMENU:=3. Applications
   TITLE:=Cudy TR3000 512MB OTA 升级
-  DEPENDS:=+luci-base +rpcd-mod-ucode +jq +flock +curl +ca-bundle
+  DEPENDS:=+luci-base +rpcd-mod-ucode +jq +flock +curl +ca-bundle +coreutils-od
   PKGARCH:=all
 endef
 

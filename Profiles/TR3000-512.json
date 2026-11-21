@@ -29,7 +29,8 @@
     "curl",
     "ca-bundle",
     "jq",
-    "flock"
+    "flock",
+    "coreutils-od"
   ],
   "packages": [
     "mini-diskmanager",
