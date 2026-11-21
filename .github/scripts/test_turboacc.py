@@ -141,6 +141,7 @@ class TurboAccTests(unittest.TestCase):
             adapt.configure(self.package)
             core = (self.package / adapt.CORE).read_text()
         files = {"/proc/sys/kernel/osrelease": "6.18.55", "/usr/share/ucode/fw4.uc": self.fw4,
+                 "/usr/sbin/nft": "executable provided by required nftables-json package",
                  "/proc/device-tree/compatible": "cudy,tr3000-v1\u0000mediatek,mt7981\u0000",
                  "/proc/sys/net/ipv4/tcp_available_congestion_control": "cubic reno",
                  "/proc/sys/net/ipv4/tcp_congestion_control": "cubic",
