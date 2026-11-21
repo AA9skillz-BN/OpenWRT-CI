@@ -12,6 +12,17 @@ TEST 和 BUILD_ONLY 不创建标签。构建失败只清理本轮新建、仍指
 Release 的标签；已验证固件的标签保留，以便重试发布。仅重跑发布任务时，下载名称
 使用成功编译任务输出的 Artifact 名称，不跟随新的 `run_attempt` 查找不存在的固件。
 
+创建 Release 时只使用已经预留并核对过提交的标签，不再重复传入历史
+`target_commitish`；编译期间 main 前进后，重复传入历史提交可能被 GitHub 的集成权限检查拒绝。
+上传完成后，公开前逐一核对远端附件清单、大小和 SHA-256；缺失或不一致即保留失败状态。
+
+若旧运行的发布任务失败，可手动运行 `Publish existing device artifact`
+（`RELEASE-EXISTING.yml`），填写原始 `run_id`。该入口只接受本仓库 main 的三款设备手动运行，
+要求原编译、镜像验证和固件上传成功，并且只有一份未过期固件 Artifact。
+它核对归档 API 摘要、构建提交、机型标签、预留 Git 标签和文件校验和后补发相同字节，
+不重新编译、不移动 Git 标签，也不覆盖已有 Release。存在多份 Artifact、已有 Release
+或未预留标签时应先人工核对，不通过猜测或覆盖继续。
+
 ## 阶段和失败条件
 
 1. 固定使用 Ubuntu 24.04，安装依赖；不执行整机 full-upgrade。
