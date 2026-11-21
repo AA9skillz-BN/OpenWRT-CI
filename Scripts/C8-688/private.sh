@@ -26,6 +26,8 @@ _c8_dst="./target/linux/mediatek"
 
 _c8_die() { echo "::error::C8-688 注入失败：$*" >&2; exit 1; }
 
+python3 "$GITHUB_WORKSPACE/.github/scripts/c8-turboacc.py" package/luci-app-turboacc
+
 # Source selection is complete. Keep upstream firewall4 patches intact.
 # auto follows SOURCE_MODE; fullcone was repaired upstream in 21ae803c.
 

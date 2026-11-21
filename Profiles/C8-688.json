@@ -31,7 +31,8 @@
     "aurora",
     "aurora-config",
     "c8-fancontrol",
-    "c8-cellular-webui"
+    "c8-cellular-webui",
+    "turboacc"
   ],
   "required_packages": [
     "kmod-mt7915e",
@@ -68,7 +69,17 @@
     "python3-urllib",
     "python3-codecs",
     "python3-logging",
-    "python3-openssl"
+    "python3-openssl",
+    "luci-app-turboacc",
+    "luci-i18n-turboacc-zh-cn",
+    "firewall4",
+    "nftables-json",
+    "ucode",
+    "ucode-mod-fs",
+    "ucode-mod-uci",
+    "luci-base",
+    "kmod-nft-offload",
+    "kmod-tcp-bbr"
   ],
   "release_note": "仅写 eMMC 的 kernel_2nd / rootfs_2nd 第二系统槽。原厂 NROS 后台烧录第二系统前先关闭存储扩展。保留现有风扇、Wi-Fi MAC、双系统切换及 MT5700M 管理功能；不含原厂 NR-OS APP。蜂窝设置采用已审查 WEBUI，后台按 C8 Ethernet/USB 与三卡槽适配，具体硬件验收范围见机型文档。 Aurora 主题；C8 专用 OTA 与一键切回第一系统；适配 H5000M 风扇管理界面与 C8 PWM 温控。",
   "build_tag_file": "/etc/c8-688-build.tag",
@@ -503,6 +514,69 @@
     {
       "path": "/etc/rc.d/S81c8-cellular",
       "executable": true
+    },
+    {
+      "path": "/etc/init.d/ucitrack",
+      "build_source": "feeds/luci/modules/luci-base/root/etc/init.d/ucitrack",
+      "executable": true
+    },
+    {
+      "path": "/etc/rc.d/S80ucitrack",
+      "executable": true
+    },
+    {
+      "path": "/etc/config/turboacc",
+      "build_source": "package/luci-app-turboacc/root/etc/config/turboacc"
+    },
+    {
+      "path": "/etc/init.d/turboacc",
+      "build_source": "package/luci-app-turboacc/root/etc/init.d/turboacc",
+      "executable": true
+    },
+    {
+      "path": "/etc/uci-defaults/90-turboacc",
+      "build_source": "package/luci-app-turboacc/root/etc/uci-defaults/90-turboacc",
+      "executable": true
+    },
+    {
+      "path": "/usr/share/luci/menu.d/luci-app-turboacc.json",
+      "build_source": "package/luci-app-turboacc/root/usr/share/luci/menu.d/luci-app-turboacc.json"
+    },
+    {
+      "path": "/usr/share/rpcd/acl.d/luci-app-turboacc.json",
+      "build_source": "package/luci-app-turboacc/root/usr/share/rpcd/acl.d/luci-app-turboacc.json"
+    },
+    {
+      "path": "/usr/share/rpcd/ucode/luci.turboacc",
+      "build_source": "package/luci-app-turboacc/root/usr/share/rpcd/ucode/luci.turboacc"
+    },
+    {
+      "path": "/usr/share/ucitrack/luci-app-turboacc.json",
+      "build_source": "package/luci-app-turboacc/root/usr/share/ucitrack/luci-app-turboacc.json"
+    },
+    {
+      "path": "/usr/share/ucode/turboacc/core.uc",
+      "build_source": "package/luci-app-turboacc/root/usr/share/ucode/turboacc/core.uc"
+    },
+    {
+      "path": "/usr/share/ucode/turboacc/main.uc",
+      "build_source": "package/luci-app-turboacc/root/usr/share/ucode/turboacc/main.uc"
+    },
+    {
+      "path": "/www/luci-static/resources/turboacc/utils.js",
+      "build_source": "package/luci-app-turboacc/htdocs/luci-static/resources/turboacc/utils.js"
+    },
+    {
+      "path": "/www/luci-static/resources/view/turboacc/turboacc.css",
+      "build_source": "package/luci-app-turboacc/htdocs/luci-static/resources/view/turboacc/turboacc.css"
+    },
+    {
+      "path": "/www/luci-static/resources/view/turboacc.js",
+      "build_source": "package/luci-app-turboacc/htdocs/luci-static/resources/view/turboacc.js"
+    },
+    {
+      "path": "/etc/rc.d/S90turboacc",
+      "executable": true
     }
   ],
   "root_partition": "rootfs_2nd",
@@ -521,5 +595,11 @@
       "mode": "2500base-x",
       "reset_gpio": 7
     }
+  ],
+  "forbidden_files": [
+    "/etc/uci-defaults/luci-turboacc",
+    "/usr/lib/lua/luci/controller/turboacc.lua",
+    "/usr/lib/lua/luci/model/cbi/turboacc.lua",
+    "/usr/lib/lua/luci/view/turboacc/turboacc_status.htm"
   ]
 }
