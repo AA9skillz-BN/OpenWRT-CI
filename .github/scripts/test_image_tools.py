@@ -77,6 +77,18 @@ class ImageToolTests(unittest.TestCase):
             with tarfile.open(image) as archive, patch.dict(os.environ, {"WRT_RELEASE_TAG": "fixture-tag"}):
                 verify_payload(archive, *archive.getmembers(), data, temp, temp)
             self.assertTrue((temp / "verified-payload.json").is_file())
+            data["forbidden_files"] = ["/etc/init.d/tr3000-bbr", "/old-turboacc.lua"]
+            with tarfile.open(image) as archive, patch.dict(os.environ, {"WRT_RELEASE_TAG": "fixture-tag"}):
+                verify_payload(archive, *archive.getmembers(), data, temp, temp)
+            self.assertEqual(json.loads((temp / "verified-payload.json").read_text())["verified_absent_files"],
+                             data["forbidden_files"])
+            # Real squashfs listing must also reject a retired path which is a
+            # symlink, rather than checking only extracted required files.
+            data["forbidden_files"].append("/etc/rc.d/S99helper")
+            with tarfile.open(image) as archive, patch.dict(os.environ, {"WRT_RELEASE_TAG": "fixture-tag"}), \
+                 self.assertRaisesRegex(ValueError, "retired conflicting files"):
+                verify_payload(archive, *archive.getmembers(), data, temp, temp)
+            del data["forbidden_files"]
             # The adapted platform file must be the exact bytes in squashfs.
             adapted = temp / "adapted/helper.sh"
             adapted.parent.mkdir()

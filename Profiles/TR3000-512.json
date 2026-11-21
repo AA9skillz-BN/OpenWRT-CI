@@ -18,7 +18,13 @@
     "luci-app-turboacc",
     "audio-support",
     "kmod-sound-core",
-    "kmod-usb-audio"
+    "kmod-usb-audio",
+    "ucode",
+    "ucode-mod-fs",
+    "ucode-mod-uci",
+    "rpcd-mod-ucode",
+    "ucitrack",
+    "luci-i18n-turboacc-zh-cn"
   ],
   "packages": [
     "mini-diskmanager",
@@ -54,11 +60,6 @@
   "build_tag_file": "/etc/tr3000-build.tag",
   "required_files": [
     {
-      "path": "/etc/init.d/tr3000-bbr",
-      "source": "Files/TR3000-512/etc/init.d/tr3000-bbr",
-      "executable": true
-    },
-    {
       "path": "/etc/init.d/tr3000-usbwan",
       "source": "Files/TR3000-512/etc/init.d/tr3000-usbwan",
       "executable": true
@@ -79,10 +80,6 @@
       "source": "Files/TR3000-512/etc/hotplug.d/net/20-tr3000-usbwan"
     },
     {
-      "path": "/etc/rc.d/S99tr3000-bbr",
-      "executable": true
-    },
-    {
       "path": "/etc/rc.d/S99tr3000-usbwan",
       "executable": true
     },
@@ -93,10 +90,69 @@
     {
       "path": "/etc/nftables.d/90-tr3000-ra-medium.nft",
       "source": "Files/TR3000-512/etc/nftables.d/90-tr3000-ra-medium.nft"
+    },
+    {
+      "path": "/etc/config/turboacc",
+      "build_source": "package/luci-app-turboacc/root/etc/config/turboacc"
+    },
+    {
+      "path": "/etc/init.d/turboacc",
+      "build_source": "package/luci-app-turboacc/root/etc/init.d/turboacc",
+      "executable": true
+    },
+    {
+      "path": "/etc/uci-defaults/90-turboacc",
+      "build_source": "package/luci-app-turboacc/root/etc/uci-defaults/90-turboacc",
+      "executable": true
+    },
+    {
+      "path": "/usr/share/luci/menu.d/luci-app-turboacc.json",
+      "build_source": "package/luci-app-turboacc/root/usr/share/luci/menu.d/luci-app-turboacc.json"
+    },
+    {
+      "path": "/usr/share/rpcd/acl.d/luci-app-turboacc.json",
+      "build_source": "package/luci-app-turboacc/root/usr/share/rpcd/acl.d/luci-app-turboacc.json"
+    },
+    {
+      "path": "/usr/share/rpcd/ucode/luci.turboacc",
+      "build_source": "package/luci-app-turboacc/root/usr/share/rpcd/ucode/luci.turboacc"
+    },
+    {
+      "path": "/usr/share/ucitrack/luci-app-turboacc.json",
+      "build_source": "package/luci-app-turboacc/root/usr/share/ucitrack/luci-app-turboacc.json"
+    },
+    {
+      "path": "/usr/share/ucode/turboacc/core.uc",
+      "build_source": "package/luci-app-turboacc/root/usr/share/ucode/turboacc/core.uc"
+    },
+    {
+      "path": "/usr/share/ucode/turboacc/main.uc",
+      "build_source": "package/luci-app-turboacc/root/usr/share/ucode/turboacc/main.uc"
+    },
+    {
+      "path": "/www/luci-static/resources/turboacc/utils.js",
+      "build_source": "package/luci-app-turboacc/htdocs/luci-static/resources/turboacc/utils.js"
+    },
+    {
+      "path": "/www/luci-static/resources/view/turboacc/turboacc.css",
+      "build_source": "package/luci-app-turboacc/htdocs/luci-static/resources/view/turboacc/turboacc.css"
+    },
+    {
+      "path": "/www/luci-static/resources/view/turboacc.js",
+      "build_source": "package/luci-app-turboacc/htdocs/luci-static/resources/view/turboacc.js"
     }
   ],
   "ubi_reg": [
     6029312,
     497287168
+  ],
+  "forbidden_files": [
+    "/etc/init.d/tr3000-bbr",
+    "/etc/rc.d/S99tr3000-bbr",
+    "/etc/rc.d/K10tr3000-bbr",
+    "/etc/uci-defaults/luci-turboacc",
+    "/usr/lib/lua/luci/controller/turboacc.lua",
+    "/usr/lib/lua/luci/model/cbi/turboacc.lua",
+    "/usr/lib/lua/luci/view/turboacc/turboacc_status.htm"
   ]
 }

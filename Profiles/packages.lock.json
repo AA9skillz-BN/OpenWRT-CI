@@ -81,13 +81,12 @@
     "subdirectory": "luci-app-openclash"
   },
   "turboacc": {
-    "url": "https://github.com/chenmozhijin/turboacc.git",
-    "commit": "530092c532839efb96e9f328d34dbf3adff4b557",
-    "directory": "turboacc-source",
+    "url": "https://github.com/Arthur97172/luci-app-turboacc.git",
+    "commit": "d10cc9337a2a04dcdadd42ceac04aa272c780454",
+    "directory": "luci-app-turboacc",
     "replaces": [
       "luci-app-turboacc"
-    ],
-    "subdirectory": "luci-app-turboacc"
+    ]
   },
   "fm350": {
     "url": "https://github.com/LianXia233/luci-app-fm350.git",

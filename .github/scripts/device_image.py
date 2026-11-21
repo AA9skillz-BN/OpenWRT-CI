@@ -71,6 +71,14 @@ def verify_payload(archive, kernel, root, data, repo, reports, tree=None):
         subprocess.run(["dumpimage", "-T", "flat_dt", "-p", str(images.index(fdt)),
                         "-o", str(dtb), str(kernel_file)], check=True)
         compatible = check_dtb(dtb, data)
+        forbidden = data.get("forbidden_files", [])
+        if forbidden:
+            listed = output("unsquashfs", "-l", str(root_file)).splitlines()
+            present = {line.split(" -> ", 1)[0].removeprefix("squashfs-root")
+                       for line in listed if line.startswith("squashfs-root/")}
+            conflicts = sorted(set(forbidden) & present)
+            if conflicts:
+                raise ValueError(f"rootfs contains retired conflicting files: {conflicts}")
         paths = [item["path"].lstrip("/") for item in data["required_files"]]
         paths.append(data["build_tag_file"].lstrip("/"))
         extracted = temp / "root"
@@ -99,4 +107,6 @@ def verify_payload(archive, kernel, root, data, repo, reports, tree=None):
         report = {"dtb_compatible": compatible, "ubi_reg": data.get("ubi_reg"),
                   "ethernet_links": data.get("ethernet_links", []),
                   "root_partition": data.get("root_partition"), "verified_files": paths}
+        if forbidden:
+            report["verified_absent_files"] = forbidden
         (reports / "verified-payload.json").write_text(json.dumps(report, indent=2) + "\n")

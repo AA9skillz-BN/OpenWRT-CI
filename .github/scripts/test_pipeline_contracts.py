@@ -22,7 +22,6 @@ def module(name):
 
 
 sources = module("device-sources")
-defaults = module("tr3000-defaults")
 
 
 class PipelineTests(unittest.TestCase):
@@ -91,13 +90,6 @@ class PipelineTests(unittest.TestCase):
     def test_tr3000_defaults_do_not_reconfigure_restored_user_settings(self):
         for file in ("99-tr3000-local-settings", "99-tr3000-flow-offload"):
             self.assertFalse((REPO / "Files/TR3000-512/etc/uci-defaults" / file).exists())
-        with tempfile.TemporaryDirectory() as directory:
-            config = Path(directory) / "turboacc"
-            config.write_text("config turboacc 'config'\n" + "".join(
-                f"\toption {key} '0'\n" for key in ("sw_flow", "hw_flow", "sfe_flow", "hw_wed", "bbr_cca", "fullcone_nat")))
-            defaults.configure(config)
-            self.assertIn("option hw_flow '1'", config.read_text())
-            self.assertIn("option sfe_flow '0'", config.read_text())
 
     def test_wrong_final_ubi_partition_is_rejected(self):
         data = {"supported_device": "cudy,tr3000-v1", "ubi_reg": [0x5c0000, 0x1da40000]}
@@ -119,18 +111,10 @@ class PipelineTests(unittest.TestCase):
         with patch.object(device_image, "output", side_effect=fdt):
             self.assertIn("cudy,tr3000-v1", device_image.check_dtb(Path("fixture.dtb"), data))
 
-    def test_bbr_service_respects_saved_disabled_setting(self):
-        import shutil
-        import subprocess
-        bash = shutil.which("bash") or ("C:/Program Files/Git/bin/bash.exe" if os.name == "nt" else None)
-        if not bash:
-            self.skipTest("bash unavailable")
-        with tempfile.TemporaryDirectory() as directory:
-            script = Path(directory) / "bbr.sh"
-            service = (REPO / "Files/TR3000-512/etc/init.d/tr3000-bbr").read_text(encoding="utf-8")
-            script.write_text(service + '\nuci() { printf 0; }\nmodprobe() { exit 91; }\nstart\n', encoding="utf-8", newline="\n")
-            result = subprocess.run([bash, script.as_posix()], capture_output=True, text=True)
-            self.assertEqual(result.returncode, 0, result.stderr)
+    def test_bbr_is_owned_by_the_new_turboacc_only(self):
+        self.assertFalse((REPO / "Files/TR3000-512/etc/init.d/tr3000-bbr").exists())
+        profile = json.loads((REPO / "Profiles/TR3000-512.json").read_bytes())
+        self.assertIn("/etc/init.d/tr3000-bbr", profile["forbidden_files"])
 
     def test_c8_bootargs_must_use_second_system(self):
         data = {"supported_device": "nradio,c8-688", "root_partition": "rootfs_2nd"}

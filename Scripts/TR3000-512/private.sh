@@ -72,9 +72,9 @@ mkdir -p files/etc/rc.d
 ln -sf ../init.d/tr3000-usbwan files/etc/rc.d/S99tr3000-usbwan
 chmod 0755 files/etc/tr3000-usbwan.sh
 
-# BBR：必须排在 S90turboacc 之后（turboacc 只认 tcp_bbr.ko，会把内置 BBR 强设回 cubic）
-ln -sf ../init.d/tr3000-bbr files/etc/rc.d/S99tr3000-bbr
-chmod 0755 files/etc/init.d/tr3000-bbr
+# Arthur applies the chosen TCP algorithm after loading BBR when needed.
+# Retire exact generated outputs if this tree previously used the old hook.
+rm -f files/etc/rc.d/S99tr3000-bbr files/etc/init.d/tr3000-bbr
 
 # ---------------------------------------------------------------- 4. 构建标签
 BUILD_TAG="${WRT_RELEASE_TAG:?missing release tag}"
