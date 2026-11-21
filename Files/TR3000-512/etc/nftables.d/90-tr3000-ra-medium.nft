@@ -1,0 +1,25 @@
+# TR3000: preserve IPv6 relay, but advertise high upstream preference as medium.
+# Applies only to locally emitted, link-local LAN RAs with Prf=high.
+# Byte 5 loses 0x08; checksum increases by 8 with one's-complement carry.
+# Raw nft payload writes do not repair ICMPv6 checksums: do it explicitly.
+# Exhaustively verified against full packet checksums (65536 values, 4 flag sets).
+chain tr3000_ra_medium {
+    icmpv6 checksum >= 0xfff7 icmpv6 checksum set icmpv6 checksum map { 0xfff7 : 0x0000, 0xfff8 : 0x0001, 0xfff9 : 0x0002, 0xfffa : 0x0003, 0xfffb : 0x0004, 0xfffc : 0x0005, 0xfffd : 0x0006, 0xfffe : 0x0007, 0xffff : 0x0008 } @th,40,8 set @th,40,8 & 0xf7 counter return
+    icmpv6 checksum & 0x0008 == 0x0000 icmpv6 checksum set icmpv6 checksum ^ 0x0008 @th,40,8 set @th,40,8 & 0xf7 counter return
+    icmpv6 checksum & 0x0018 == 0x0008 icmpv6 checksum set icmpv6 checksum ^ 0x0018 @th,40,8 set @th,40,8 & 0xf7 counter return
+    icmpv6 checksum & 0x0038 == 0x0018 icmpv6 checksum set icmpv6 checksum ^ 0x0038 @th,40,8 set @th,40,8 & 0xf7 counter return
+    icmpv6 checksum & 0x0078 == 0x0038 icmpv6 checksum set icmpv6 checksum ^ 0x0078 @th,40,8 set @th,40,8 & 0xf7 counter return
+    icmpv6 checksum & 0x00f8 == 0x0078 icmpv6 checksum set icmpv6 checksum ^ 0x00f8 @th,40,8 set @th,40,8 & 0xf7 counter return
+    icmpv6 checksum & 0x01f8 == 0x00f8 icmpv6 checksum set icmpv6 checksum ^ 0x01f8 @th,40,8 set @th,40,8 & 0xf7 counter return
+    icmpv6 checksum & 0x03f8 == 0x01f8 icmpv6 checksum set icmpv6 checksum ^ 0x03f8 @th,40,8 set @th,40,8 & 0xf7 counter return
+    icmpv6 checksum & 0x07f8 == 0x03f8 icmpv6 checksum set icmpv6 checksum ^ 0x07f8 @th,40,8 set @th,40,8 & 0xf7 counter return
+    icmpv6 checksum & 0x0ff8 == 0x07f8 icmpv6 checksum set icmpv6 checksum ^ 0x0ff8 @th,40,8 set @th,40,8 & 0xf7 counter return
+    icmpv6 checksum & 0x1ff8 == 0x0ff8 icmpv6 checksum set icmpv6 checksum ^ 0x1ff8 @th,40,8 set @th,40,8 & 0xf7 counter return
+    icmpv6 checksum & 0x3ff8 == 0x1ff8 icmpv6 checksum set icmpv6 checksum ^ 0x3ff8 @th,40,8 set @th,40,8 & 0xf7 counter return
+    icmpv6 checksum & 0x7ff8 == 0x3ff8 icmpv6 checksum set icmpv6 checksum ^ 0x7ff8 @th,40,8 set @th,40,8 & 0xf7 counter return
+    icmpv6 checksum & 0xfff8 == 0x7ff8 icmpv6 checksum set icmpv6 checksum ^ 0xfff8 @th,40,8 set @th,40,8 & 0xf7 counter return
+}
+chain tr3000_ra_medium_out {
+    type filter hook output priority mangle; policy accept;
+    oifname "br-lan" ip6 saddr fe80::/10 ip6 hoplimit 255 meta l4proto ipv6-icmp icmpv6 type nd-router-advert icmpv6 code 0 @th,40,8 & 0x18 == 0x08 counter jump tr3000_ra_medium
+}

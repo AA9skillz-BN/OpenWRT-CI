@@ -53,6 +53,7 @@ python3 "$WRT_REPO_ROOT/.github/scripts/tr3000-defaults.py"
 log "投放 Files/TR3000-512 到源码 files/"
 mkdir -p files
 cp -a "$WRT_REPO_ROOT/Files/TR3000-512/." files/
+chmod 0644 files/etc/nftables.d/90-tr3000-ra-medium.nft
 
 # 万一某个脚本被 Windows 侧 checkout 成 CRLF，路由器上的 /bin/sh 会直接
 # 报 "bad interpreter: /bin/sh^M"，这里统一清一遍（.gitattributes 是第一道防线）。
