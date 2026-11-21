@@ -1,0 +1,14 @@
+#!/bin/sh /etc/rc.common
+# SPDX-License-Identifier: MIT
+START=99
+STOP=10
+USE_PROCD=1
+
+start_service() {
+	procd_open_instance
+	procd_set_param command /bin/sh /etc/tr3000-wan-boot-guard.sh
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	# Deliberately no respawn: only observe the first 180 seconds of a boot.
+	procd_close_instance
+}

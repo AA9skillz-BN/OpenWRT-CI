@@ -71,6 +71,8 @@ done < <(find files/etc/uci-defaults files/etc/hotplug.d files/etc/init.d -type 
 mkdir -p files/etc/rc.d
 ln -sf ../init.d/tr3000-usbwan files/etc/rc.d/S99tr3000-usbwan
 chmod 0755 files/etc/tr3000-usbwan.sh
+ln -sf ../init.d/tr3000-wan-boot-guard files/etc/rc.d/S99tr3000-wan-boot-guard
+chmod 0755 files/etc/tr3000-wan-boot-guard.sh
 
 # Arthur applies the chosen TCP algorithm after loading BBR when needed.
 # Retire exact generated outputs if this tree previously used the old hook.

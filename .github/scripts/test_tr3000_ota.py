@@ -123,6 +123,20 @@ curl() {
         self.assertNotEqual(self.shell("tr_check_layout").returncode, 0)
         self.assertFalse(self.root.joinpath("sysupgrade").exists())
 
+    @unittest.skipUnless(os.name != 'nt', 'symlink requires Linux')
+    def test_actual_proc_device_tree_symlink_and_duplicate_layout_rejection(self):
+        (self.root / 'dt').rename(self.root / 'actual-dt')
+        (self.root / 'dt').symlink_to('actual-dt', target_is_directory=True)
+        shells = [[BASH]]
+        if shutil.which('busybox'):
+            shells.append([shutil.which('busybox'), 'ash'])
+        for shell in shells:
+            self.assertEqual(self.shell('tr_check_layout', shell=shell).returncode, 0)
+        shutil.copytree(self.root / 'actual-dt/part', self.root / 'actual-dt/duplicate')
+        for shell in shells:
+            self.assertNotEqual(self.shell('tr_check_layout', shell=shell).returncode, 0)
+        self.assertFalse((self.root / 'sysupgrade').exists())
+
     def test_channel_requires_single_correct_image_and_512_descriptor(self):
         good = self.release()
         bads = [dict(good, tag_name="AP3000M-immortalwrt-master-test"), dict(good, tag_name="TR3000-512-immortalwrt-master-test"),

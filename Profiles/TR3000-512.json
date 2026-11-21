@@ -66,6 +66,20 @@
   "build_tag_file": "/etc/tr3000-build.tag",
   "required_files": [
     {
+      "path": "/etc/tr3000-wan-boot-guard.sh",
+      "source": "Files/TR3000-512/etc/tr3000-wan-boot-guard.sh",
+      "executable": true
+    },
+    {
+      "path": "/etc/init.d/tr3000-wan-boot-guard",
+      "source": "Files/TR3000-512/etc/init.d/tr3000-wan-boot-guard",
+      "executable": true
+    },
+    {
+      "path": "/etc/rc.d/S99tr3000-wan-boot-guard",
+      "executable": true
+    },
+    {
       "path": "/etc/init.d/ucitrack",
       "build_source": "feeds/luci/modules/luci-base/root/etc/init.d/ucitrack",
       "executable": true

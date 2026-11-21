@@ -24,7 +24,11 @@ tr_check_layout() (
 	[ "$(cat "$TR_SYS_MTD/$mtd/size" 2>/dev/null)" = 497287168 ] &&
 	[ "$(cat "$TR_SYS_MTD/$mtd/erasesize" 2>/dev/null)" = 131072 ] &&
 	[ "$(cat "$TR_SYS_MTD/$mtd/writesize" 2>/dev/null)" = 2048 ] || { tr_error 'NAND 容量、页或擦除块不匹配'; exit 1; }
-	labels=$(find "$TR_DT" -name label -type f 2>/dev/null) || exit 1
+	# /proc/device-tree is a symlink on the real router. BusyBox find does not
+	# traverse a symlink supplied as its root without resolving it first.
+	dt=$(readlink -f "$TR_DT") || exit 1
+	[ -d "$dt" ] || { tr_error '运行设备树不可读'; exit 1; }
+	labels=$(find "$dt" -name label -type f 2>/dev/null) || exit 1
 	found=0
 	while IFS= read -r label; do
 		[ -n "$label" ] || continue
