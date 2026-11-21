@@ -84,7 +84,7 @@ curl() {
   */tr3000-ota-image.json) cp "$TASK_TMP/descriptor" "$dest";;
   */tr3000-ota-update.json) cp "$TASK_TMP/update-meta" "$dest";;
   */tr3000-ota) cp "$TASK_TMP/candidate" "$dest";;
-  *) if [ -f "$TASK_TMP/corrupt" ]; then printf evil > "$dest"; else printf good > "$dest"; fi;;
+  *) if [ -f "$TASK_TMP/short" ]; then printf bad > "$dest"; elif [ -f "$TASK_TMP/corrupt" ]; then printf evil > "$dest"; else printf good > "$dest"; fi;;
  esac
 }
 '''
@@ -177,6 +177,18 @@ curl() {
         result = self.shell('cmd_upgrade --image /tmp/unverified.bin --yes')
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((self.root / "sysupgrade").exists())
+
+    def test_failed_inline_upgrade_download_clears_progress_for_retry(self):
+        self.root.joinpath("short").touch()
+        result = self.shell("run_operation upgrade --yes", [self.release()])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.root.joinpath("dl.tag").exists())
+        self.assertFalse(self.root.joinpath(TAG + ".bin.part").exists())
+        self.assertEqual(json.loads(self.root.joinpath("op.json").read_bytes())["state"], "failed")
+        self.assertFalse(self.root.joinpath("sysupgrade").exists())
+        self.root.joinpath("short").unlink()
+        result = self.shell("run_operation upgrade --yes", [self.release()])
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_bad_download_and_legacy_metadata_cannot_become_valid_offline_copy(self):
         self.root.joinpath("corrupt").touch()
