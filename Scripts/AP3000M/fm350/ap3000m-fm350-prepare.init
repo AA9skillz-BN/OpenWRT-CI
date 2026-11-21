@@ -1,0 +1,8 @@
+#!/bin/sh /etc/rc.common
+# Complete one targeted cold-start repair before S95 fm350d owns the AT port.
+START=94
+STOP=09
+
+start() {
+	/usr/sbin/ap3000m-fm350-prepare || logger -t fm350-prepare 'Preparation did not confirm activation; dial daemon retains normal retry control'
+}

@@ -86,6 +86,20 @@
       "executable": true
     },
     {
+      "path": "/usr/sbin/ap3000m-fm350-prepare",
+      "source": "Scripts/AP3000M/fm350/ap3000m-fm350-prepare",
+      "executable": true
+    },
+    {
+      "path": "/etc/init.d/ap3000m-fm350-prepare",
+      "source": "Scripts/AP3000M/fm350/ap3000m-fm350-prepare.init",
+      "executable": true
+    },
+    {
+      "path": "/etc/rc.d/S94ap3000m-fm350-prepare",
+      "executable": true
+    },
+    {
       "path": "/usr/share/ap3000m-ota/runtime-abi",
       "source": "Scripts/AP3000M/ota/runtime-abi"
     },

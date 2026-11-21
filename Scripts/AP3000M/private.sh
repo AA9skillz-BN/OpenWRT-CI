@@ -90,6 +90,14 @@ cp -f "$_ap3000m_usb_compat" "$_ap3000m_bf/etc/init.d/ap3000m-fm350-usb-compat"
 chmod 0755 "$_ap3000m_bf/etc/init.d/ap3000m-fm350-usb-compat"
 ln -sf ../init.d/ap3000m-fm350-usb-compat "$_ap3000m_bf/etc/rc.d/S90ap3000m-fm350-usb-compat"
 
+# Prepare the observed inactive PDP before S95 starts the normal AT owner.
+_ap3000m_prepare="$GITHUB_WORKSPACE/Scripts/AP3000M/fm350"
+cp -f "$_ap3000m_prepare/ap3000m-fm350-prepare" "$_ap3000m_bf/usr/sbin/ap3000m-fm350-prepare"
+chmod 0755 "$_ap3000m_bf/usr/sbin/ap3000m-fm350-prepare"
+cp -f "$_ap3000m_prepare/ap3000m-fm350-prepare.init" "$_ap3000m_bf/etc/init.d/ap3000m-fm350-prepare"
+chmod 0755 "$_ap3000m_bf/etc/init.d/ap3000m-fm350-prepare"
+ln -sf ../init.d/ap3000m-fm350-prepare "$_ap3000m_bf/etc/rc.d/S94ap3000m-fm350-prepare"
+
 # 8) 开机 RNDIS 卡死自愈
 #    历史真机复现：eth2 有地址但 rx_packets=0、tx_errors 增长。
 #    模组重启并非每次有效；恢复结果仍须实际探测，失败不能当作联网成功。

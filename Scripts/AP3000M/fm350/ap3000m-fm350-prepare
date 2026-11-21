@@ -1,0 +1,118 @@
+#!/bin/sh
+# Recover the observed registered-but-inactive FM350 context before its daemon.
+set -u
+
+log() { logger -t fm350-prepare "$*"; }
+enabled() {
+	[ "$(uci -q get fm350.main.enabled)" != 0 ] &&
+	[ "$(uci -q get fm350.main.auto_dial)" != 0 ] &&
+	[ "$(uci -q get fm350.main.boot_recovery)" != 0 ]
+}
+at() {
+	local response
+	response=$(timeout 15 fm350d at "$1") || return 1
+	printf '%s\n' "$response" | jq -er 'select(.ok == true) | .result | select(type == "string")'
+}
+ok() { printf '%s\n' "$1" | grep -q '^OK$'; }
+active() {
+	local response
+	response=$(at 'AT+CGACT?') || return 1
+	printf '%s\n' "$response" | grep -qE "^\+CGACT: $cid,1$"
+}
+registered() {
+	local response
+	response=$(at 'AT+CEREG?') || return 1
+	printf '%s\n' "$response" | grep -qE '^\+CEREG: [0-9]+,[15](,|$)'
+}
+wait_registered() {
+	local n
+	for n in 1 2 3 4 5 6 7 8 9 10; do
+		enabled || return 1
+		registered && return 0
+		sleep 3
+	done
+	return 1
+}
+radio_off=0
+restore_radio() {
+	if [ "$radio_off" = 1 ]; then
+		at 'AT+CFUN=1' >/dev/null 2>&1 || true
+	fi
+}
+
+main() {
+	enabled || return 0
+	[ "$(cat /tmp/sysinfo/board_name)" = airpi,ap3000m ] || return 1
+	command -v fm350d >/dev/null && command -v jq >/dev/null || return 1
+	mkdir -p /var/lock
+	exec 9>/var/lock/ap3000m-fm350-prepare.lock
+	flock -n 9 || return 0
+	[ ! -f /tmp/ap3000m-fm350-prepare.done ] || return 0
+	# A manual start must not compete with an already running AT owner.
+	if pgrep -f '^/usr/sbin/fm350d daemon$' >/dev/null; then
+		log 'Dial daemon already running; preparation deferred to next boot'
+		return 0
+	fi
+	log 'Checking modem readiness before normal dial service'
+	local port cid n usb vendor product response
+	port=$(uci -q get fm350.main.at_port) || return 1
+	cid=$(uci -q get fm350.main.cid) || return 1
+	case "$port" in /dev/ttyUSB[0-9]|/dev/ttyUSB[0-9][0-9]) ;; *) return 1 ;; esac
+	case "$cid" in [1-9]|1[0-6]) ;; *) return 1 ;; esac
+	for n in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+		enabled || return 0
+		[ -c "$port" ] && break
+		sleep 2
+	done
+	[ -c "$port" ] || { log 'AT port did not enumerate; leaving retry to dial daemon'; return 1; }
+	usb=$(readlink -f "/sys/class/tty/${port##*/}/device")
+	while [ "$usb" != / ] && [ ! -f "$usb/idVendor" ]; do usb=${usb%/*}; [ -n "$usb" ] || usb=/; done
+	[ -f "$usb/idVendor" ] || return 1
+	vendor=$(cat "$usb/idVendor") product=$(cat "$usb/idProduct")
+	case "$vendor:$product" in 0e8d:7126|0e8d:7127) ;; *) log 'Unreviewed modem; leaving it unchanged'; return 1 ;; esac
+	response=$(at 'AT+CPIN?') || return 1
+	printf '%s\n' "$response" | grep -q '^+CPIN: READY$' || { log 'SIM not ready; leaving normal dial retry enabled'; return 1; }
+	# The existing auto-dial implementation restores CFUN=4 after modem boot.
+	# Delegate that policy to it, including APN/auth setup, before our checks.
+	response=$(at 'AT+CFUN?') || return 1
+	if printf '%s\n' "$response" | grep -q '^+CFUN: 4$'; then
+		log 'Modem starts offline; running existing automatic dial preparation'
+		timeout 70 fm350d dial >/dev/null 2>&1 || true
+		response=$(at 'AT+CFUN?') || return 1
+	fi
+	printf '%s\n' "$response" | grep -q '^+CFUN: 1$' || { log 'Modem remains offline; no radio cycle attempted'; return 0; }
+	wait_registered || { log 'Not registered; no radio reset attempted'; return 1; }
+	if active; then
+		log 'Target PDP already active; leaving radio unchanged'
+		: > /tmp/ap3000m-fm350-prepare.done
+		return 0
+	fi
+	response=$(at "AT+CGACT=1,$cid") || return 1
+	if ok "$response"; then active || return 1; : > /tmp/ap3000m-fm350-prepare.done; return 0; fi
+	printf '%s\n' "$response" | grep -q '^+CME ERROR: 5702$' || return 1
+	sleep 2
+	response=$(at "AT+CGACT=1,$cid") || return 1
+	if ok "$response"; then active || return 1; : > /tmp/ap3000m-fm350-prepare.done; return 0; fi
+	printf '%s\n' "$response" | grep -q '^+CME ERROR: 5702$' || return 1
+	enabled && registered || return 1
+	: > /tmp/ap3000m-fm350-prepare.done
+	log 'Registered target PDP returned 5702 twice; rebuilding radio context once before dial daemon'
+	radio_off=1
+	trap restore_radio EXIT
+	trap 'exit 1' HUP INT TERM
+	response=$(at 'AT+CFUN=0') || return 1
+	ok "$response" || return 1
+	sleep 3
+	response=$(at 'AT+CFUN=1') || return 1
+	ok "$response" || return 1
+	radio_off=0
+	wait_registered || return 1
+	if ! active; then
+		response=$(at "AT+CGACT=1,$cid") || return 1
+		ok "$response" || return 1
+	fi
+	active || return 1
+	log 'Target PDP activation confirmed; starting normal dial service next'
+}
+
+main "$@"
