@@ -1,0 +1,13 @@
+{
+	"admin/system/tr3000-ota": {
+		"title": "固件升级",
+		"order": 90,
+		"action": {
+			"type": "view",
+			"path": "tr3000-ota/overview"
+		},
+		"depends": {
+			"acl": [ "luci-app-tr3000-ota" ]
+		}
+	}
+}

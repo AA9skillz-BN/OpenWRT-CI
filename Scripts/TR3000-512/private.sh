@@ -82,4 +82,7 @@ printf '%s\n' "$BUILD_TAG" > files/etc/tr3000-build.tag
 chmod 0644 files/etc/tr3000-build.tag
 log "构建标签: $BUILD_TAG"
 
+# TR-specific OTA: reviewed 512MB guard, runtime, page and boot result hook.
+bash "$TR_DIR/ota/install.sh"
+
 log "扩展准备完成"

@@ -55,3 +55,8 @@ CONFIG_PACKAGE_kmod-tcp-bbr=y
 
 # Required by sound-core and USB audio on current upstream.
 CONFIG_PACKAGE_audio-support=y
+
+# TR3000 512MB OTA page and verified download runtime.
+CONFIG_PACKAGE_luci-app-tr3000-ota=y
+CONFIG_PACKAGE_jq=y
+CONFIG_PACKAGE_flock=y

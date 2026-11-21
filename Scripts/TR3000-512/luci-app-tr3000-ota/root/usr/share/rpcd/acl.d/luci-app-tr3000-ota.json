@@ -1,0 +1,17 @@
+{
+	"luci-app-tr3000-ota": {
+		"description": "Grant access to Cudy TR3000 512MB OTA 升级",
+		"read": {
+			"ubus": {
+				"luci.tr3000_ota": [ "status", "check" ]
+			},
+			"uci": [ "tr3000_ota" ]
+		},
+		"write": {
+			"ubus": {
+				"luci.tr3000_ota": [ "download", "upgrade", "upgrade_tag", "set_settings" ]
+			},
+			"uci": [ "tr3000_ota" ]
+		}
+	}
+}

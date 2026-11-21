@@ -15,9 +15,9 @@ BASH = shutil.which("bash") or ("C:/Program Files/Git/bin/bash.exe" if os.name =
 JQ = os.environ.get("OTA_TEST_JQ") or shutil.which("jq")
 
 
-@lru_cache(maxsize=1)
-def libraries():
-    lock = json.loads((REPO / "Profiles/sources.lock.json").read_text(encoding="utf-8"))["C8-688"]
+@lru_cache(maxsize=3)
+def libraries(model="C8-688"):
+    lock = json.loads((REPO / "Profiles/sources.lock.json").read_text(encoding="utf-8"))[model]
     slug = lock["url"].removeprefix("https://github.com/").removesuffix(".git")
     base = f"https://raw.githubusercontent.com/{slug}/{lock['commit']}/"
     data = {}
@@ -39,10 +39,11 @@ class OtaMirrorTests(unittest.TestCase):
         self.root = Path(self.temp.name)
 
     def run_download(self, model, *, mode="mirrors", broken=False, corrupt=False, shell=None):
-        device = "c8-688" if model == "C8-688" else "ap3000m"
-        config = "c8_688_ota" if model == "C8-688" else "ap3000m_ota"
+        device = {"C8-688": "c8-688", "AP3000M": "ap3000m", "TR3000-512": "tr3000"}[model]
+        config = {"C8-688": "c8_688_ota", "AP3000M": "ap3000m_ota", "TR3000-512": "tr3000_ota"}[model]
         source = (REPO / f"Scripts/{model}/ota/{device}-ota").read_text(encoding="utf-8")
         source = source.rsplit('\nmain "$@"', 1)[0].replace('. /lib/functions/c8-system.sh || exit 1', '')
+        source = source.replace('. /lib/functions/tr3000-system.sh || exit 1', '')
         # Redirect only filesystem boundaries; execute the actual upstream helpers.
         source = source.replace('/lib/functions.sh', '"$TASK_TMP/functions.sh"')
         if broken:
@@ -55,20 +56,27 @@ class OtaMirrorTests(unittest.TestCase):
     config_list_foreach main mirror echo
 }}
 ''' + source[end:]
-        lib = libraries()["lib/functions.sh"].replace('/lib/config/uci.sh', '"$TASK_TMP/uci.sh"')
+        lib = libraries(model)["lib/functions.sh"].replace('/lib/config/uci.sh', '"$TASK_TMP/uci.sh"')
         (self.root / "functions.sh").write_text(lib, encoding="utf-8", newline="\n")
-        uci = libraries()["lib/config/uci.sh"].replace('/sbin/uci', 'uci_fixture')
+        uci = libraries(model)["lib/config/uci.sh"].replace('/sbin/uci', 'uci_fixture')
         (self.root / "uci.sh").write_text(uci, encoding="utf-8", newline="\n")
         tag = model + "-immortalwrt-master-test"
         name = "immortalwrt-nradio_c8-688-squashfs-sysupgrade.bin" if model == "C8-688" else "ap3000m-sysupgrade.bin"
+        if model == "TR3000-512":
+            tag = "TR3000-512-VIKINGYFY-owrt-test"
+            name = "immortalwrt-cudy_tr3000-v1-squashfs-sysupgrade.bin"
         api = [{"tag_name": tag, "draft": False, "prerelease": False, "assets": [
             {"name": name, "size": 4, "digest": "sha256:" + hashlib.sha256(b"good").hexdigest()}]}]
+        if model == "TR3000-512":
+            api[0]["assets"].append({"name": "tr3000-ota-image.json"})
         (self.root / "api.json").write_text(json.dumps(api), encoding="utf-8")
         fixture = '''
 unset IPKG_INSTROOT CONFIG_LIST_STATE NO_CALLBACK
 jq() { "$OTA_TEST_JQ" "$@"; }
 use_mirror() { if [ "$TEST_MODE" = disabled ]; then echo 0; else echo 1; fi; }
 cfg() { return 1; }
+tr_check_layout() { :; }
+require_release_contract() { :; }
 need_tools() { :; }
 work_dir() { printf '%s' "$TASK_TMP"; }
 free_kb() { echo 999999; }
@@ -110,7 +118,7 @@ case "$-" in *u*) ;; *) exit 92;; esac
                               capture_output=True, text=True, encoding="utf-8", timeout=30)
 
     def test_old_helper_reproduces_real_library_abort_before_any_download(self):
-        for model in ("C8-688", "AP3000M"):
+        for model in ("C8-688", "AP3000M", "TR3000-512"):
             with self.subTest(model=model):
                 result = self.run_download(model, broken=True)
                 self.assertNotEqual(result.returncode, 0)
@@ -118,7 +126,7 @@ case "$-" in *u*) ;; *) exit 92;; esac
                 self.assertFalse((self.root / "uci-calls").exists())
 
     def test_both_downloaders_try_configured_mirrors_and_retain_strict_caller(self):
-        for model in ("C8-688", "AP3000M"):
+        for model in ("C8-688", "AP3000M", "TR3000-512"):
             with self.subTest(model=model):
                 (self.root / "download-urls").unlink(missing_ok=True)
                 result = self.run_download(model)
@@ -127,10 +135,10 @@ case "$-" in *u*) ;; *) exit 92;; esac
                 self.assertEqual(len(urls), 2)
                 self.assertTrue(urls[0].startswith("https://one.invalid/https://github.com/"))
                 self.assertTrue(urls[1].startswith("https://two.invalid/https://github.com/"))
-                self.assertIn("sha256 校验通过", result.stderr)
+                self.assertIn("sha256 鏍￠獙閫氳繃", result.stderr)
 
     def test_disabled_missing_or_empty_mirror_config_falls_back_to_direct(self):
-        for model in ("C8-688", "AP3000M"):
+        for model in ("C8-688", "AP3000M", "TR3000-512"):
             for mode in ("disabled", "missing", "empty"):
                 with self.subTest(model=model, mode=mode):
                     for pattern in ("*.bin*", "download-urls", "uci-calls"):
@@ -145,18 +153,19 @@ case "$-" in *u*) ;; *) exit 92;; esac
                         self.assertFalse((self.root / "uci-calls").exists())
 
     def test_mirror_bytes_still_require_the_release_digest(self):
-        for model in ("C8-688", "AP3000M"):
+        for model in ("C8-688", "AP3000M", "TR3000-512"):
             with self.subTest(model=model):
                 result = self.run_download(model, corrupt=True)
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn("sha256 校验失败", result.stderr)
-                self.assertFalse((self.root / (model + "-immortalwrt-master-test.bin")).exists())
+                self.assertIn("sha256 鏍￠獙澶辫触", result.stderr)
+                tag = "TR3000-512-VIKINGYFY-owrt-test" if model == "TR3000-512" else model + "-immortalwrt-master-test"
+                self.assertFalse((self.root / (tag + ".bin")).exists())
 
     @unittest.skipIf(os.name == "nt", "BusyBox ash executes on Linux")
     def test_real_busybox_ash_download_with_openwrt_config_helpers(self):
         busybox = shutil.which("busybox")
         self.assertIsNotNone(busybox, "busybox required to verify the router shell")
-        for model in ("C8-688", "AP3000M"):
+        for model in ("C8-688", "AP3000M", "TR3000-512"):
             with self.subTest(model=model):
                 result = self.run_download(model, shell=[busybox, "ash"])
                 self.assertEqual(result.returncode, 0, result.stderr)

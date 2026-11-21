@@ -19,6 +19,9 @@ class OtaRpcTests(unittest.TestCase):
     def test_c8_rpc_contract_and_explicit_switch_confirmation(self):
         self.exercise_device("C8-688", "c8-688")
 
+    def test_tr3000_rpc_contract(self):
+        self.exercise_device("TR3000-512", "tr3000")
+
     def exercise_device(self, device, cli):
         source = (REPO / f"Scripts/{device}/luci-app-{cli}-ota/root/usr/share/rpcd/ucode/{cli}-ota.uc").read_text(encoding="utf-8")
         source = re.sub(r"^import .*?;$", "", source, flags=re.M)
@@ -75,6 +78,8 @@ assert(index(calls[-1], 'official --background --yes') >= 0);
 is_enabled = '0';
 assert(api.official.call({ args: { confirm: true } }).error != null);
 """
+        if device == "TR3000-512":
+            harness = harness.replace("luci.ap3000m_ota", "luci.tr3000_ota").replace("AP3000M", "TR3000-512-VIKINGYFY-owrt")
         with tempfile.TemporaryDirectory() as directory:
             script = Path(directory) / "rpc.uc"
             script.write_text(harness, encoding="utf-8", newline="\n")

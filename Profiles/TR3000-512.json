@@ -24,7 +24,12 @@
     "ucode-mod-uci",
     "rpcd-mod-ucode",
     "luci-base",
-    "luci-i18n-turboacc-zh-cn"
+    "luci-i18n-turboacc-zh-cn",
+    "luci-app-tr3000-ota",
+    "curl",
+    "ca-bundle",
+    "jq",
+    "flock"
   ],
   "packages": [
     "mini-diskmanager",
@@ -149,6 +154,57 @@
     {
       "path": "/www/luci-static/resources/view/turboacc.js",
       "build_source": "package/luci-app-turboacc/htdocs/luci-static/resources/view/turboacc.js"
+    },
+    {
+      "path": "/usr/sbin/tr3000-ota",
+      "source": "Scripts/TR3000-512/ota/tr3000-ota",
+      "executable": true
+    },
+    {
+      "path": "/lib/functions/tr3000-system.sh",
+      "source": "Scripts/TR3000-512/ota/tr3000-system.sh"
+    },
+    {
+      "path": "/usr/share/tr3000-ota/runtime-abi",
+      "source": "Scripts/TR3000-512/ota/runtime-abi"
+    },
+    {
+      "path": "/etc/sysupgrade.conf",
+      "build_source": "package/base-files/files/etc/sysupgrade.conf"
+    },
+    {
+      "path": "/etc/config/tr3000_ota",
+      "source": "Scripts/TR3000-512/ota/tr3000_ota.config"
+    },
+    {
+      "path": "/etc/init.d/tr3000-ota-boot",
+      "source": "Scripts/TR3000-512/ota/tr3000-ota-boot",
+      "executable": true
+    },
+    {
+      "path": "/etc/uci-defaults/99-tr3000-ota-cron",
+      "source": "Scripts/TR3000-512/ota/99-tr3000-ota-cron",
+      "executable": true
+    },
+    {
+      "path": "/etc/rc.d/S99tr3000-ota-boot",
+      "executable": true
+    },
+    {
+      "path": "/usr/share/luci/menu.d/luci-app-tr3000-ota.json",
+      "source": "Scripts/TR3000-512/luci-app-tr3000-ota/root/usr/share/luci/menu.d/luci-app-tr3000-ota.json"
+    },
+    {
+      "path": "/usr/share/rpcd/acl.d/luci-app-tr3000-ota.json",
+      "source": "Scripts/TR3000-512/luci-app-tr3000-ota/root/usr/share/rpcd/acl.d/luci-app-tr3000-ota.json"
+    },
+    {
+      "path": "/usr/share/rpcd/ucode/tr3000-ota.uc",
+      "source": "Scripts/TR3000-512/luci-app-tr3000-ota/root/usr/share/rpcd/ucode/tr3000-ota.uc"
+    },
+    {
+      "path": "/www/luci-static/resources/view/tr3000-ota/overview.js",
+      "source": "Scripts/TR3000-512/luci-app-tr3000-ota/htdocs/luci-static/resources/view/tr3000-ota/overview.js"
     }
   ],
   "ubi_reg": [

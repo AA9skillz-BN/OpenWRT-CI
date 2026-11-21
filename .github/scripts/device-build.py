@@ -244,7 +244,7 @@ def verify_image(tree, data, reports, repo=None):
 
 
 def package_ota_update(repo, upload, tag, name="AP3000M"):
-    model = {"AP3000M": "ap3000m", "C8-688": "c8-688"}[name]
+    model = {"AP3000M": "ap3000m", "C8-688": "c8-688", "TR3000-512": "tr3000"}[name]
     source = repo / "Scripts" / name / "ota"
     abi = (source / "runtime-abi").read_text().strip()
     if not re.fullmatch(r"[0-9]+", abi):
@@ -257,7 +257,24 @@ def package_ota_update(repo, upload, tag, name="AP3000M"):
                 "requires": ["curl", "jq", "sha256sum", "sysupgrade", "flock"]}
     if name == "C8-688":
         metadata["requires"] += ["fw_printenv", "fw_setenv"]
+    if name == "TR3000-512":
+        metadata["model"] = "tr3000-512"
+        metadata["requires"] += ["od"]
+        metadata["guard_sha256"] = hashlib.sha256((source / "tr3000-system.sh").read_bytes()).hexdigest()
     write(upload / f"{model}-ota-update.json", json.dumps(metadata, indent=2) + "\n")
+
+
+def package_tr3000_contract(upload, image, tag, data, reports):
+    verified = json.loads((reports / "verified-payload.json").read_text())
+    if (data["supported_device"] != "cudy,tr3000-v1" or
+            verified.get("ubi_reg") != [0x5c0000, 0x1da40000] or
+            "cudy,tr3000-v1" not in verified.get("dtb_compatible", [])):
+        raise ValueError("TR3000 OTA requires verified actual 512MB DTB layout")
+    metadata = {"schema": 1, "model": "tr3000-512", "board": "cudy,tr3000-v1",
+                "layout": "ubi-005c0000-1da40000", "ubi_reg": verified["ubi_reg"],
+                "format": "sysupgrade-tar", "tag": tag, "asset": image.name,
+                "size": image.stat().st_size, "sha256": hashlib.sha256(image.read_bytes()).hexdigest()}
+    write(upload / "tr3000-ota-image.json", json.dumps(metadata, indent=2) + "\n")
 
 
 def package(tree, repo, name, data, reports):
@@ -271,9 +288,11 @@ def package(tree, repo, name, data, reports):
     outname = f"{image.stem}-{os.environ['WRT_INFO']}-{branch}-{os.environ['WRT_DATE']}.bin"
     shutil.copy2(image, upload / outname)
     shutil.copy2(manifest, upload / manifest.name)
-    if name in ("AP3000M", "C8-688"):
+    if name in ("AP3000M", "C8-688", "TR3000-512"):
         # verify_image has already checked these exact files in the squashfs.
         package_ota_update(repo, upload, tag, name)
+    if name == "TR3000-512":
+        package_tr3000_contract(upload, upload / outname, tag, data, reports)
     for file in reports.iterdir():
         if file.is_file() and file.name in ("source-commit.txt", "feeds.buildinfo", "packages.lock.json", "plugin-resolution.json",
                                              "build-inputs.json", "image-metadata.json", "compatibility.txt", "ci-commit.txt",
