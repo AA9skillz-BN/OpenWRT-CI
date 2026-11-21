@@ -15,6 +15,9 @@ _ap3000m_log() { echo "==> [AP3000M] $*"; }
 
 # Rust and locked plugin installation are handled by the common build stages.
 
+# Same reviewed Arthur source as TR, with AP-owned settings import/cleanup.
+python3 "$GITHUB_WORKSPACE/.github/scripts/ap3000m-turboacc.py" package/luci-app-turboacc
+
 # Adapt the reviewed, locked fan plugin without changing its source lock.
 python3 "$GITHUB_WORKSPACE/Scripts/AP3000M/fancontrol/fix-confirm.py" \
 	package/luci-app-airpi3000m-fancontrol
@@ -138,7 +141,7 @@ else
 	exit 1
 fi
 
-# 10) RNDIS 数据面调优（RPS/XPS + txqueuelen + MTU 实测 + BBR sysctl + flow offload）
+# 10) RNDIS 数据面调优（RPS/XPS + txqueuelen + MTU 实测；拥塞控制交 TurboACC）
 _ap3000m_tune="$GITHUB_WORKSPACE/Scripts/AP3000M/net-tune"
 if [ -d "$_ap3000m_tune" ]; then
 	mkdir -p "$_ap3000m_bf/usr/sbin" "$_ap3000m_bf/etc/hotplug.d/net" \
@@ -151,10 +154,7 @@ if [ -d "$_ap3000m_tune" ]; then
 	chmod 0755 "$_ap3000m_bf/etc/hotplug.d/net/20-ap3000m-net-tune"
 
 	cp -f "$_ap3000m_tune/99-ap3000m-tune.conf" "$_ap3000m_bf/etc/sysctl.d/99-ap3000m-tune.conf"
-	cp -f "$_ap3000m_tune/99-ap3000m-flowoffload" "$_ap3000m_bf/etc/uci-defaults/99-ap3000m-flowoffload"
-	chmod 0755 "$_ap3000m_bf/etc/uci-defaults/99-ap3000m-flowoffload"
-
-	_ap3000m_log "已投放 RNDIS 调优（hotplug + sysctl + flow offload）"
+	_ap3000m_log "已投放 RNDIS 调优（hotplug + sysctl；分载及 BBR 由 TurboACC 管理）"
 else
 	echo "Missing required network tuning" >&2
 	exit 1

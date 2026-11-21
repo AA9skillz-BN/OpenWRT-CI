@@ -23,7 +23,16 @@
     "kmod-sound-core",
     "kmod-usb-audio",
     "flock",
-    "kmod-nft-fullcone"
+    "kmod-nft-fullcone",
+    "luci-app-turboacc",
+    "luci-i18n-turboacc-zh-cn",
+    "firewall4",
+    "nftables-json",
+    "ucode",
+    "ucode-mod-fs",
+    "ucode-mod-uci",
+    "rpcd-mod-ucode",
+    "ucitrack"
   ],
   "packages": [
     "mini-diskmanager",
@@ -35,7 +44,8 @@
     "aurora",
     "aurora-config",
     "fm350",
-    "fancontrol"
+    "fancontrol",
+    "turboacc"
   ],
   "release_note": "eMMC \u673a\u578b sysupgrade \u56fa\u4ef6\uff1b\u5185\u7f6e FM350 \u9996\u542f\u914d\u7f6e\u3001\u98ce\u6247\u7ba1\u7406\u3001OTA \u548c RNDIS \u81ea\u6108\u3002",
   "device_symbol": "CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_airpi_ap3000m",
@@ -160,6 +170,67 @@
     {
       "path": "/lib/wifi/mac80211.uc",
       "build_source": "package/network/config/wifi-scripts/files/lib/wifi/mac80211.uc"
+    },
+    {
+      "path": "/etc/config/turboacc",
+      "build_source": "package/luci-app-turboacc/root/etc/config/turboacc"
+    },
+    {
+      "path": "/etc/init.d/turboacc",
+      "build_source": "package/luci-app-turboacc/root/etc/init.d/turboacc",
+      "executable": true
+    },
+    {
+      "path": "/etc/uci-defaults/90-turboacc",
+      "build_source": "package/luci-app-turboacc/root/etc/uci-defaults/90-turboacc",
+      "executable": true
+    },
+    {
+      "path": "/usr/share/luci/menu.d/luci-app-turboacc.json",
+      "build_source": "package/luci-app-turboacc/root/usr/share/luci/menu.d/luci-app-turboacc.json"
+    },
+    {
+      "path": "/usr/share/rpcd/acl.d/luci-app-turboacc.json",
+      "build_source": "package/luci-app-turboacc/root/usr/share/rpcd/acl.d/luci-app-turboacc.json"
+    },
+    {
+      "path": "/usr/share/rpcd/ucode/luci.turboacc",
+      "build_source": "package/luci-app-turboacc/root/usr/share/rpcd/ucode/luci.turboacc"
+    },
+    {
+      "path": "/usr/share/ucitrack/luci-app-turboacc.json",
+      "build_source": "package/luci-app-turboacc/root/usr/share/ucitrack/luci-app-turboacc.json"
+    },
+    {
+      "path": "/usr/share/ucode/turboacc/core.uc",
+      "build_source": "package/luci-app-turboacc/root/usr/share/ucode/turboacc/core.uc"
+    },
+    {
+      "path": "/usr/share/ucode/turboacc/main.uc",
+      "build_source": "package/luci-app-turboacc/root/usr/share/ucode/turboacc/main.uc"
+    },
+    {
+      "path": "/www/luci-static/resources/turboacc/utils.js",
+      "build_source": "package/luci-app-turboacc/htdocs/luci-static/resources/turboacc/utils.js"
+    },
+    {
+      "path": "/www/luci-static/resources/view/turboacc/turboacc.css",
+      "build_source": "package/luci-app-turboacc/htdocs/luci-static/resources/view/turboacc/turboacc.css"
+    },
+    {
+      "path": "/www/luci-static/resources/view/turboacc.js",
+      "build_source": "package/luci-app-turboacc/htdocs/luci-static/resources/view/turboacc.js"
+    },
+    {
+      "path": "/etc/rc.d/S90turboacc",
+      "executable": true
     }
+  ],
+  "forbidden_files": [
+    "/etc/uci-defaults/luci-turboacc",
+    "/usr/lib/lua/luci/controller/turboacc.lua",
+    "/usr/lib/lua/luci/model/cbi/turboacc.lua",
+    "/usr/lib/lua/luci/view/turboacc/turboacc_status.htm",
+    "/etc/uci-defaults/99-ap3000m-flowoffload"
   ]
 }
