@@ -92,9 +92,9 @@ class TurboAccTests(unittest.TestCase):
                 if file.is_file():
                     path = installed + file.relative_to(self.package / folder).as_posix()
                     self.assertEqual(required[path]["build_source"], "package/luci-app-turboacc/" + file.relative_to(self.package).as_posix())
-        config = (REPO / "Config/TR3000-512.txt").read_text()
+        config = (REPO / "Config/TR3000-512.txt").read_text() + (REPO / "Config/BASE.txt").read_text()
         self.assertNotIn("luci-app-turboacc_INCLUDE_", config)
-        for name in ("ucode", "ucode-mod-fs", "ucode-mod-uci", "rpcd-mod-ucode", "ucitrack", "luci-i18n-turboacc-zh-cn"):
+        for name in ("ucode", "ucode-mod-fs", "ucode-mod-uci", "rpcd-mod-ucode", "luci-base", "luci-i18n-turboacc-zh-cn"):
             self.assertIn(name, profile["required_packages"])
             self.assertIn("CONFIG_PACKAGE_" + name + "=y", config)
         for path in profile["forbidden_files"]:

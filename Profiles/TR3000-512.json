@@ -23,7 +23,7 @@
     "ucode-mod-fs",
     "ucode-mod-uci",
     "rpcd-mod-ucode",
-    "ucitrack",
+    "luci-base",
     "luci-i18n-turboacc-zh-cn"
   ],
   "packages": [
@@ -59,6 +59,15 @@
   },
   "build_tag_file": "/etc/tr3000-build.tag",
   "required_files": [
+    {
+      "path": "/etc/init.d/ucitrack",
+      "build_source": "feeds/luci/modules/luci-base/root/etc/init.d/ucitrack",
+      "executable": true
+    },
+    {
+      "path": "/etc/rc.d/S80ucitrack",
+      "executable": true
+    },
     {
       "path": "/etc/init.d/tr3000-usbwan",
       "source": "Files/TR3000-512/etc/init.d/tr3000-usbwan",

@@ -31,7 +31,7 @@ def patched(originals):
         "LUCI_MINIFY_JS:=0\nLUCI_MINIFY_CSS:=0\n")
     recipe = replace_once(recipe,
         "LUCI_DEPENDS:=+luci-base +firewall4 +ucode +ucode-mod-fs +ucode-mod-uci\n",
-        "LUCI_DEPENDS:=+luci-base +firewall4 +ucode +ucode-mod-fs +ucode-mod-uci +rpcd-mod-ucode +ucitrack\n")
+        "LUCI_DEPENDS:=+luci-base +firewall4 +ucode +ucode-mod-fs +ucode-mod-uci +rpcd-mod-ucode\n")
     result["Makefile"] = recipe.encode("utf8")
     core = originals[CORE].decode("utf8")
     # VIKINGYFY's SONiC backend uses a boolean fullcone option, whereas

@@ -78,8 +78,8 @@ class ApTurboAccTests(unittest.TestCase):
                 if file.is_file():
                     path = installed + file.relative_to(self.package / folder).as_posix()
                     self.assertEqual(required[path]["build_source"], "package/luci-app-turboacc/" + file.relative_to(self.package).as_posix())
-        config = (REPO / "Config/AP3000M.txt").read_text(encoding="utf8")
-        for name in ("luci-app-turboacc", "luci-i18n-turboacc-zh-cn", "firewall4", "nftables-json", "ucode", "ucode-mod-fs", "ucode-mod-uci", "rpcd-mod-ucode", "ucitrack"):
+        config = (REPO / "Config/AP3000M.txt").read_text(encoding="utf8") + (REPO / "Config/BASE.txt").read_text(encoding="utf8")
+        for name in ("luci-app-turboacc", "luci-i18n-turboacc-zh-cn", "firewall4", "nftables-json", "ucode", "ucode-mod-fs", "ucode-mod-uci", "rpcd-mod-ucode", "luci-base"):
             self.assertIn(name, profile["required_packages"])
             self.assertIn("CONFIG_PACKAGE_" + name + "=y", config)
         hook = (REPO / "Scripts/AP3000M/private.sh").read_text(encoding="utf8")
