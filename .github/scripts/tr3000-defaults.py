@@ -29,6 +29,9 @@ def patched(originals):
     recipe = replace_once(recipe, "LUCI_PKGARCH:=all\n",
         "LUCI_PKGARCH:=all\n# Keep installed assets exact for the final squashfs gate.\n"
         "LUCI_MINIFY_JS:=0\nLUCI_MINIFY_CSS:=0\n")
+    recipe = replace_once(recipe,
+        "LUCI_DEPENDS:=+luci-base +firewall4 +ucode +ucode-mod-fs +ucode-mod-uci\n",
+        "LUCI_DEPENDS:=+luci-base +firewall4 +ucode +ucode-mod-fs +ucode-mod-uci +rpcd-mod-ucode +ucitrack\n")
     result["Makefile"] = recipe.encode("utf8")
     core = originals[CORE].decode("utf8")
     # VIKINGYFY's SONiC backend uses a boolean fullcone option, whereas
@@ -36,8 +39,14 @@ def patched(originals):
     core = replace_once(core, "\t\ttcpcca: false,\n", "\t\tfullcone_boolean: false,\n\t\ttcpcca: false,\n")
     core = replace_once(core, "\tcaps.fullcone6 =", "\tcaps.fullcone_boolean = match(src, /fullcone\\s*:\\s*\\[\\s*\"bool\"/) != null;\n\tcaps.fullcone6 =")
     core = replace_once(core, "\t\tdesired.fullcone = mode;", "\t\tdesired.fullcone = caps.fullcone_boolean && mode == '2' ? '1' : mode;")
+    # ucode captures function bindings at definition time. Move this upstream
+    # helper before migration/apply so the migration never captures null.
+    helper_start = core.index("function ensure_section(cursor) {\n")
+    helper_end = core.index("function defaults() {\n", helper_start)
+    helper = core[helper_start:helper_end]
+    core = replace_once(core, helper, "")
     migration = (REPO / "Scripts/TR3000-512/turboacc/migrate.uc").read_text(encoding="utf8")
-    core = replace_once(core, "function apply() {\n", migration + "\nfunction apply() {\n")
+    core = replace_once(core, "function apply() {\n", helper + migration + "\nfunction apply() {\n")
     core = replace_once(core, "function apply() {\n\tlet cursor = uci.cursor();\n",
         "function apply() {\n\tlet cursor = uci.cursor();\n"
         "\tmigrate_settings(cursor);\n"

@@ -74,7 +74,7 @@ chmod 0755 files/etc/tr3000-usbwan.sh
 
 # Arthur applies the chosen TCP algorithm after loading BBR when needed.
 # Retire exact generated outputs if this tree previously used the old hook.
-rm -f files/etc/rc.d/S99tr3000-bbr files/etc/init.d/tr3000-bbr
+rm -f files/etc/rc.d/S99tr3000-bbr files/etc/rc.d/K10tr3000-bbr files/etc/init.d/tr3000-bbr
 
 # ---------------------------------------------------------------- 4. 构建标签
 BUILD_TAG="${WRT_RELEASE_TAG:?missing release tag}"

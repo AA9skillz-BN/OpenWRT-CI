@@ -262,13 +262,13 @@ include Makefile
 define BuildPackage
 endef
 .PHONY: prepare install
-define PrepareProbe
+define Probe
 prepare:
 \t$(Build/Prepare)
-endef
-$(eval $(PrepareProbe))
 install:
 \t$(call Package/luci-app-turboacc/install,$(TOPDIR)/rootfs)
+endef
+$(eval $(Probe))
 ''')
         result = subprocess.run(["make", "--no-print-directory", "-f", "probe.mk", f"TOPDIR={self.top}", "prepare", "install"], cwd=self.package, text=True, capture_output=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

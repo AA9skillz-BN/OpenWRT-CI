@@ -1,5 +1,6 @@
 """Exercise final-image validation with real FIT, DTB and squashfs tools on Linux."""
 import io
+import json
 import os
 from pathlib import Path
 import shutil
