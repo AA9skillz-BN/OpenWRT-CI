@@ -72,6 +72,19 @@ class ReleaseRecoveryTests(unittest.TestCase):
                 result = self.execute(blocks(step)[0], root, ARTIFACT_DIGEST='sha256:' + digest)
                 self.assertEqual(result.returncode == 0, expected, result.stderr)
 
+    def test_artifact_selection_does_not_rely_on_same_step_github_env_updates(self):
+        step = workflow('RELEASE-EXISTING.yml')['jobs']['publish']['steps'][0]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'source-profile.txt').write_text('TR3000-512')
+            artifact = {'name': 'firmware-TR3000-512-123-1', 'expired': False, 'id': 42, 'digest': 'sha256:abc'}
+            for items, expected in [([artifact], True), ([], False), ([artifact, artifact], False),
+                                    ([dict(artifact, expired=True)], False),
+                                    ([dict(artifact, name='firmware-AP3000M-123-1')], False)]:
+                (root / 'source-artifacts.json').write_text(json.dumps({'artifacts': items}))
+                result = self.execute(blocks(step)[2], root, SOURCE_RUN='123', GITHUB_OUTPUT=str(root / 'output'))
+                self.assertEqual(result.returncode == 0, expected, result.stderr)
+
     def test_uploaded_asset_must_match_complete_local_set_size_and_digest(self):
         step = next(s for s in workflow('DEVICE-CORE.yml')['jobs']['publish']['steps']
                     if s['name'] == 'Verify uploaded release asset digests')

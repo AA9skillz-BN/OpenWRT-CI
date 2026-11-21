@@ -37,6 +37,7 @@ jobs:
         assert run['event'] == 'workflow_dispatch' and run['head_repository']['full_name'] == os.environ['GITHUB_REPOSITORY']
         profiles = {'.github/workflows/TR3000.yml': 'TR3000-512', '.github/workflows/AP3000M.yml': 'AP3000M', '.github/workflows/C8-688.yml': 'C8-688'}
         profile = profiles[run['path']]
+        Path('source-profile.txt').write_text(profile)
         with open(os.environ['GITHUB_ENV'], 'a') as f:
             f.write('BUILD_SHA=' + run['head_sha'] + '\nPROFILE=' + profile + '\n')
         PY
@@ -52,7 +53,8 @@ jobs:
         import json, os
         from pathlib import Path
         artifacts = json.loads(Path('source-artifacts.json').read_text())['artifacts']
-        matches = [a for a in artifacts if a['name'].startswith('firmware-' + os.environ['PROFILE'] + '-' + os.environ['SOURCE_RUN'] + '-') and not a['expired']]
+        profile = Path('source-profile.txt').read_text()
+        matches = [a for a in artifacts if a['name'].startswith('firmware-' + profile + '-' + os.environ['SOURCE_RUN'] + '-') and not a['expired']]
         assert len(matches) == 1, 'Need exactly one accepted firmware artifact; do not guess between attempts'
         a = matches[0]
         with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
