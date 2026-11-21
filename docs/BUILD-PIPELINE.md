@@ -15,12 +15,13 @@ Release 的标签；已验证固件的标签保留，以便重试发布。仅重
 ## 阶段和失败条件
 
 1. 固定使用 Ubuntu 24.04，安装依赖；不执行整机 full-upgrade。
-2. 默认 `SOURCE_MODE=locked`，按 `Profiles/sources.lock.json` 拉取源码和
-   feeds 的完整提交 SHA。拉取失败、URL 不一致或版本不一致直接失败。
+2. 默认 `SOURCE_MODE=latest`，跟随所选源码分支和 feeds 上游，并记录实际提交。
+   可选择 `locked`，按 `Profiles/sources.lock.json` 拉取源码和 feeds 的完整提交 SHA；
+   锁模式下拉取失败、URL 不一致或版本不一致直接失败。
    在 feeds 更新前排除未启用的 video、PON feeds。
 3. 根据 `Profiles/<机型>.json` 只拉需要的第三方仓库。独立的 `PLUGIN_MODE`
-   默认 `locked`，使用 `Profiles/packages.lock.json` 中的完整提交 SHA；
-   `latest` 解析插件分支当前提交后仍按确切 SHA 拉取。插件只安装一次。
+   默认 `latest`，解析插件分支当前提交后仍按确切 SHA 拉取；可选择 `locked`，
+   使用 `Profiles/packages.lock.json` 中的完整提交 SHA。插件只安装一次。
 4. 通过独立 bash 进程执行机型 `private.sh`，投放补丁、首启脚本等。
    必需文件缺失或复制失败立即终止，不通过 source 共享 shell 状态。
 5. 按“基础及功能片段 → 机型 → PRIVATE.txt → 手动 PACKAGE”合并配置，
@@ -85,8 +86,9 @@ Samba、USB 网卡、存储工具等功能。可在每个 profile 的 `config_fr
 
 ### 独立选择插件版本
 
-三个机型的 Run workflow 都提供 `PLUGIN_MODE=locked/latest`，默认 `locked`。
-它与 `SOURCE_MODE` 独立，四种组合均可使用：
+三个机型的 Run workflow 都提供 `PLUGIN_MODE=locked/latest`，默认 `latest`。
+`SOURCE_MODE` 同样默认 `latest`；入口参数缺省回退和共用核心默认值保持一致。
+两者独立，四种组合均可使用：
 
 | SOURCE_MODE | PLUGIN_MODE | 主源码 / feeds | 单独拉取的第三方插件 |
 | --- | --- | --- | --- |

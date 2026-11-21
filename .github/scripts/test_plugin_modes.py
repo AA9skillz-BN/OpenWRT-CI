@@ -153,14 +153,14 @@ class PluginWorkflowTests(unittest.TestCase):
             inputs = workflow[True]["workflow_dispatch"]["inputs"]
             for mode in ("SOURCE_MODE", "PLUGIN_MODE"):
                 self.assertEqual(inputs[mode]["options"], ["locked", "latest"])
-                self.assertEqual(inputs[mode]["default"], "locked")
+                self.assertEqual(inputs[mode]["default"], "latest")
             for job in workflow["jobs"].values():
                 for mode in ("SOURCE_MODE", "PLUGIN_MODE"):
-                    self.assertEqual(job["with"]["WRT_" + mode], "${{ inputs." + mode + " || 'locked' }}")
+                    self.assertEqual(job["with"]["WRT_" + mode], "${{ inputs." + mode + " || 'latest' }}")
         core = yaml.safe_load((REPO / ".github/workflows/DEVICE-CORE.yml").read_text(encoding="utf-8"))
         for mode in ("SOURCE_MODE", "PLUGIN_MODE"):
             key = "WRT_" + mode
-            self.assertEqual(core["on"]["workflow_call"]["inputs"][key]["default"], "locked")
+            self.assertEqual(core["on"]["workflow_call"]["inputs"][key]["default"], "latest")
             self.assertEqual(core["env"][key], "${{inputs." + key + "}}")
 
 

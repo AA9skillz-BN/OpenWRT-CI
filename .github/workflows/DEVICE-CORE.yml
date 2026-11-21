@@ -51,13 +51,13 @@ name: DEVICE-CORE
         default: false
         type: boolean
       WRT_SOURCE_MODE:
-        description: Use locked source/feed revisions, or explicitly follow upstream
-        default: locked
+        description: Follow upstream source/feeds by default, or use locked revisions
+        default: latest
         required: false
         type: string
       WRT_PLUGIN_MODE:
-        description: Use locked plugin revisions, or resolve current plugin branch commits
-        default: locked
+        description: Resolve current plugin branch commits by default, or use locked revisions
+        default: latest
         required: false
         type: string
 env:
