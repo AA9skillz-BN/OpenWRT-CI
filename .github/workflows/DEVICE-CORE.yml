@@ -440,13 +440,37 @@ jobs:
       with:
         token: ${{secrets.GITHUB_TOKEN}}
         tag_name: ${{needs.core.outputs.release_tag}}
-        target_commitish: ${{github.sha}}
+        # The existing tag was reserved and checked against the build SHA above.
+        # Do not resubmit a historical commit as target_commitish: main may have
+        # advanced during compilation, triggering GitHub's integration restriction.
         draft: true
         prerelease: ${{ github.ref != 'refs/heads/main' }}
         make_latest: ${{ github.ref == 'refs/heads/main' && 'true' || 'false' }}
         fail_on_unmatched_files: true
         body_path: ./release/build-reports/release-notes.md
         files: ./release/wrt/upload/*
+    - name: Verify uploaded release asset digests
+      env:
+        GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
+        RELEASE_ID: ${{steps.release.outputs.id}}
+        RELEASE_TAG: ${{needs.core.outputs.release_tag}}
+      run: |
+        gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" > uploaded-release.json
+        python3 - <<'PY'
+        import hashlib, json
+        from pathlib import Path
+        import os
+        release = json.loads(Path('uploaded-release.json').read_text())
+        assert release['draft'] is True and release['tag_name'] == os.environ['RELEASE_TAG']
+        local = {p.name: p for p in Path('release/wrt/upload').iterdir() if p.is_file()}
+        assets = release['assets']
+        assert len(assets) == len(local) and {a['name'] for a in assets} == set(local)
+        for asset in assets:
+            path = local[asset['name']]
+            assert asset['size'] == path.stat().st_size, path.name
+            assert asset.get('digest') == 'sha256:' + hashlib.sha256(path.read_bytes()).hexdigest(), path.name
+        print(f'Verified {len(assets)} uploaded release asset sizes and SHA-256 digests')
+        PY
     - name: Publish complete release
       env:
         GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
