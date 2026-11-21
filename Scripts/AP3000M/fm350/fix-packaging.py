@@ -3,7 +3,8 @@ import hashlib
 from pathlib import Path
 import sys
 
-UPSTREAM_SHA256 = "2556fbfb9aa3dece733d76e2408d6532bb53e6d701e3f07a7ebc63438231dc2c"
+UPSTREAM_SHA256 = "e9d61f3000df33a5f712fcd669f6db2f82951e2f3eb36ba5d10a776f36bba84d"
+REVIEWED_SHA256 = {UPSTREAM_SHA256, "2556fbfb9aa3dece733d76e2408d6532bb53e6d701e3f07a7ebc63438231dc2c"}
 BEFORE = '''\t@if [ -n "$(TARGET_STRIP)" ] && [ -x "$(TARGET_STRIP)" ]; then \\
 \t\t$(TARGET_STRIP) $(RUST_OUT) || true; \\
 \telse \\
@@ -18,7 +19,7 @@ AFTER = '''\t# Keep RUST_OUT identical to the binary after the package's RSTRIP 
 def patch_makefile(data):
     text = data.decode("utf-8")
     original = text.replace(AFTER, BEFORE)
-    if hashlib.sha256(original.encode("utf-8")).hexdigest() != UPSTREAM_SHA256:
+    if hashlib.sha256(original.encode("utf-8")).hexdigest() not in REVIEWED_SHA256:
         raise ValueError("FM350 recipe differs from the reviewed locked source")
     if original.count(BEFORE) != 1:
         raise ValueError("FM350 strip anchor changed")
