@@ -153,7 +153,8 @@ packaged:
             self.assertEqual(installed.read_bytes()[:6], b"\x7fELF\x02\x01")
             self.assertEqual(int.from_bytes(installed.read_bytes()[18:20], "little"), 183)
             self.assertTrue(installed.stat().st_mode & 0o111)
-            entry = json.loads((REPO / "Profiles/AP3000M.json").read_bytes())["required_files"][0]
+            entry = next(item for item in json.loads((REPO / "Profiles/AP3000M.json").read_bytes())["required_files"]
+                         if item["path"] == "/usr/sbin/fm350d")
             self.assertEqual(entry["path"], "/usr/sbin/fm350d")
             self.assertEqual(entry["build_source"], str(binary.relative_to(top)))
             self.assertEqual(entry["elf_machine"], 183)
