@@ -1,0 +1,172 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Download official deployment scripts on the user's own device; no bundled binaries.
+umask 077
+
+ROOT=/opt/open-box
+STATE=/tmp/ap3000m-openbox
+LOCK=/var/lock/ap3000m-openbox.lock
+OTA_LOCK=/var/lock/ap3000m-ota.lock
+SELF=/usr/sbin/ap3000m-openbox
+API=https://api.github.com/repos/liandu2024/Open-Box
+RAW=https://raw.githubusercontent.com/liandu2024/Open-Box
+MIRROR=0
+TMP=
+FINISHED=0
+
+die() { printf '%s\n' "$*" >&2; exit 1; }
+
+installed() {
+	[ -x "$ROOT/bin/openbox-panel" ] && [ -s "$ROOT/meta.json" ] &&
+		[ -x /etc/init.d/openbox-panel ] && [ -x /etc/init.d/openbox ] &&
+		[ -s /usr/share/luci/menu.d/luci-app-openbox.json ]
+}
+
+prepare_state() {
+	[ ! -L "$STATE" ] || die '安装状态目录不能是软链接'
+	mkdir -p "$STATE" || die '无法创建安装状态目录'
+	chmod 0700 "$STATE" || die '无法设置安装状态目录权限'
+}
+
+write_state() {
+	jq -n --arg stage "$1" --arg message "$2" \
+		'{stage:$stage,message:$message}' >"$STATE/state.new" &&
+		mv -f "$STATE/state.new" "$STATE/state.json"
+}
+
+busy() {
+	[ -f "$LOCK" ] && ! (flock -n 9) 9>"$LOCK"
+}
+
+status() {
+	local ready=false data=false running=false port=3036 version='' operation='{}'
+	installed && ready=true
+	[ ! -d "$ROOT/data" ] || [ -z "$(find "$ROOT/data" -type f -print -quit 2>/dev/null)" ] || data=true
+	busy && running=true
+	if [ -s "$ROOT/data/panel-port" ]; then
+		port=$(cat "$ROOT/data/panel-port")
+		case "$port" in ''|*[!0-9]*) port=3036 ;; esac
+		[ "$port" -ge 1 ] 2>/dev/null && [ "$port" -le 65535 ] 2>/dev/null || port=3036
+	elif [ "$ready" = true ]; then
+		# Official legacy installations without panel-port used 2026.
+		port=2026
+	fi
+	[ ! -s "$ROOT/meta.json" ] || version=$(jq -r '.version // ""' "$ROOT/meta.json" 2>/dev/null)
+	if [ -s "$STATE/state.json" ] && [ ! -L "$STATE" ]; then
+		operation=$(jq -c '{stage:(.stage // "idle"),message:(.message // "")}' "$STATE/state.json" 2>/dev/null) || operation='{}'
+	fi
+	jq -n --argjson installed "$ready" --argjson data_present "$data" \
+		--argjson busy "$running" --argjson port "$port" --arg version "$version" \
+		--argjson operation "$operation" \
+		'{installed:$installed,data_present:$data_present,busy:$busy,port:$port,version:$version,operation:$operation}
+		 | if (.busy == false and .operation.stage == "running") then
+		     .operation={stage:"failed",message:"上次安装已中断，可以重新安装；已有数据保留"}
+		   else . end'
+}
+
+acquire_lock() {
+	mkdir -p "$(dirname "$LOCK")" "$(dirname "$OTA_LOCK")"
+	exec 9>"$LOCK"
+	flock -n 9 || die '已有 Open-Box 安装任务正在运行'
+	# Share the existing OTA lock so flashing and installation cannot overlap.
+	exec 8>"$OTA_LOCK"
+	flock -n 8 || die '固件下载或升级正在运行，请结束后再安装'
+}
+
+fetch() {
+	local url="$1" output="$2"
+	if curl -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 12 \
+		--max-time 90 --max-filesize 262144 -o "$output" "$url"; then
+		return 0
+	fi
+	[ "$MIRROR" = 1 ] || return 1
+	curl -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 12 \
+		--max-time 90 --max-filesize 262144 -o "$output" "https://gh-proxy.com/$url"
+}
+
+download_installer() {
+	local revision blob size actual
+	fetch "$API/commits/main" "$TMP/commit.json" || die '无法获取官方安装脚本版本'
+	revision=$(jq -er '.sha | select(type == "string")' "$TMP/commit.json") || die '官方提交信息无效'
+	case "$revision" in ''|*[!a-f0-9]*) die '官方提交信息无效' ;; esac
+	[ "${#revision}" = 40 ] || die '官方提交信息长度无效'
+	fetch "$API/contents/scripts/install.sh?ref=$revision" "$TMP/script.json" || die '无法获取安装脚本校验信息'
+	blob=$(jq -er '.sha | select(type == "string")' "$TMP/script.json") || die '脚本校验信息无效'
+	case "$blob" in ''|*[!a-f0-9]*) die '脚本校验信息无效' ;; esac
+	[ "${#blob}" = 40 ] || die '脚本校验信息长度无效'
+	size=$(jq -er '.size | select(type == "number" and . == floor and . > 0 and . <= 262144)' "$TMP/script.json") || die '安装脚本大小无效'
+	fetch "$RAW/$revision/scripts/install.sh" "$TMP/install.sh" || die '官方安装脚本下载失败'
+	[ "$(wc -c <"$TMP/install.sh" | tr -d ' ')" = "$size" ] || die '安装脚本大小不符'
+	actual=$({ printf 'blob %s\000' "$size"; cat "$TMP/install.sh"; } | sha1sum | cut -d ' ' -f1)
+	[ "$actual" = "$blob" ] || die '安装脚本 Git 内容校验不符'
+	sh -n "$TMP/install.sh" || die '官方安装脚本语法检查失败'
+	printf 'Official installer commit: %s\n' "$revision"
+	sha256sum "$TMP/install.sh"
+}
+
+cleanup() {
+	[ -z "$TMP" ] || rm -rf "$TMP"
+	[ "$FINISHED" = 1 ] || write_state failed '安装未完成；已有数据保留。可重试，诊断日志在 /tmp/ap3000m-openbox/install.log'
+}
+
+worker() {
+	# Background invocation inherits both locked file descriptions, never reopens them.
+	flock -n 9 && flock -n 8 || die '缺少安装锁'
+	trap cleanup EXIT
+	trap 'exit 130' INT TERM HUP
+	write_state running '正在获取官方安装程序，请稍候'
+	if installed; then
+		write_state success '已安装；后续软件更新请使用 Open-Box 面板'
+		FINISHED=1
+		return 0
+	fi
+	TMP=$(mktemp -d "$STATE/install.XXXXXX") || die '无法创建下载目录'
+	download_installer
+	write_state running '正在安装官方发行版；保留已有数据'
+	if [ "$MIRROR" = 1 ]; then
+		sh "$TMP/install.sh" --mirror https://gh-proxy.com </dev/null || die '官方安装程序失败'
+	else
+		sh "$TMP/install.sh" --direct </dev/null || die '官方安装程序失败'
+	fi
+	installed || die '官方程序或系统入口不完整，未确认安装成功'
+	write_state success '安装完成；请打开面板。代理内核按官方安装程序的行为保持待配置状态'
+	FINISHED=1
+}
+
+main() {
+	local action="${1:-status}" background=0
+	[ "$#" = 0 ] || shift
+	for option in "$@"; do
+		case "$option" in
+			--background) background=1 ;;
+			--mirror) MIRROR=1 ;;
+			*) die '只支持 status 或 install [--background] [--mirror]' ;;
+		esac
+	done
+	case "$action" in
+		status) [ "$#" = 0 ] || die 'status 不接受参数'; status; return ;;
+		install|worker) ;;
+		*) die '只支持 status 或 install [--background] [--mirror]' ;;
+	esac
+	[ "$(id -u)" = 0 ] || die '需要管理员权限'
+	[ "$(cat /tmp/sysinfo/board_name 2>/dev/null)" = airpi,ap3000m ] || die '此安装入口仅适用于 AP3000M'
+	for tool in curl jq flock sha1sum sha256sum; do
+		command -v "$tool" >/dev/null 2>&1 || die "缺少运行依赖：$tool"
+	done
+	prepare_state
+	if [ "$action" = worker ]; then worker; return; fi
+	acquire_lock
+	if [ "$background" = 1 ]; then
+		write_state running '正在启动官方安装任务'
+		if [ "$MIRROR" = 1 ]; then
+			nohup "$SELF" worker --mirror </dev/null >"$STATE/install.log" 2>&1 8>&8 9>&9 &
+		else
+			nohup "$SELF" worker </dev/null >"$STATE/install.log" 2>&1 8>&8 9>&9 &
+		fi
+		printf 'started\n'
+	else
+		worker
+	fi
+}
+
+main "$@"

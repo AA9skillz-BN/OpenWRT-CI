@@ -56,6 +56,7 @@ jobs:
           python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
       - name: Check LuCI JavaScript syntax
         run: |
+          node --check Scripts/AP3000M/luci-app-ap3000m-openbox/htdocs/luci-static/resources/view/ap3000m-openbox/overview.js
           node --check Scripts/AP3000M/luci-app-ap3000m-ota/htdocs/luci-static/resources/view/ap3000m-ota/overview.js
           node --check Scripts/TR3000-512/luci-app-tr3000-ota/htdocs/luci-static/resources/view/tr3000-ota/overview.js
           node .github/scripts/test_tr3000_ota_ui.js

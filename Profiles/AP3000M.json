@@ -32,7 +32,15 @@
     "ucode-mod-fs",
     "ucode-mod-uci",
     "rpcd-mod-ucode",
-    "luci-base"
+    "luci-base",
+    "luci-app-ap3000m-openbox",
+    "curl",
+    "ca-bundle",
+    "kmod-tun",
+    "kmod-nft-queue",
+    "kmod-nft-nat",
+    "kmod-veth",
+    "ip-full"
   ],
   "packages": [
     "mini-diskmanager",
@@ -68,6 +76,31 @@
   },
   "build_tag_file": "/etc/ap3000m-build.tag",
   "required_files": [
+    {
+      "path": "/usr/sbin/ap3000m-openbox",
+      "source": "Scripts/AP3000M/luci-app-ap3000m-openbox/root/usr/sbin/ap3000m-openbox",
+      "executable": true
+    },
+    {
+      "path": "/lib/upgrade/keep.d/ap3000m-openbox",
+      "source": "Scripts/AP3000M/luci-app-ap3000m-openbox/root/lib/upgrade/keep.d/ap3000m-openbox"
+    },
+    {
+      "path": "/usr/share/luci/menu.d/luci-app-ap3000m-openbox.json",
+      "source": "Scripts/AP3000M/luci-app-ap3000m-openbox/root/usr/share/luci/menu.d/luci-app-ap3000m-openbox.json"
+    },
+    {
+      "path": "/usr/share/rpcd/acl.d/luci-app-ap3000m-openbox.json",
+      "source": "Scripts/AP3000M/luci-app-ap3000m-openbox/root/usr/share/rpcd/acl.d/luci-app-ap3000m-openbox.json"
+    },
+    {
+      "path": "/usr/share/rpcd/ucode/ap3000m-openbox.uc",
+      "source": "Scripts/AP3000M/luci-app-ap3000m-openbox/root/usr/share/rpcd/ucode/ap3000m-openbox.uc"
+    },
+    {
+      "path": "/www/luci-static/resources/view/ap3000m-openbox/overview.js",
+      "source": "Scripts/AP3000M/luci-app-ap3000m-openbox/htdocs/luci-static/resources/view/ap3000m-openbox/overview.js"
+    },
     {
       "path": "/etc/init.d/ucitrack",
       "build_source": "feeds/luci/modules/luci-base/root/etc/init.d/ucitrack",
@@ -236,6 +269,8 @@
     }
   ],
   "forbidden_files": [
+    "/opt/open-box/bin/openbox-panel",
+    "/opt/open-box/meta.json",
     "/etc/uci-defaults/luci-turboacc",
     "/usr/lib/lua/luci/controller/turboacc.lua",
     "/usr/lib/lua/luci/model/cbi/turboacc.lua",

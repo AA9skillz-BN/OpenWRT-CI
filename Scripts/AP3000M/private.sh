@@ -141,6 +141,13 @@ else
 	exit 1
 fi
 
+# Official Open-Box installer entry and data-only sysupgrade preservation.
+# Proprietary upstream programs are downloaded on the device, never repackaged.
+_ap3000m_openbox="$GITHUB_WORKSPACE/Scripts/AP3000M/luci-app-ap3000m-openbox"
+[ -f "$_ap3000m_openbox/Makefile" ] || { echo 'Missing required Open-Box installer package' >&2; exit 1; }
+rm -rf package/luci-app-ap3000m-openbox
+cp -rf "$_ap3000m_openbox" package/luci-app-ap3000m-openbox
+
 # 10) RNDIS 数据面调优（RPS/XPS + txqueuelen + MTU 实测；拥塞控制交 TurboACC）
 _ap3000m_tune="$GITHUB_WORKSPACE/Scripts/AP3000M/net-tune"
 if [ -d "$_ap3000m_tune" ]; then
