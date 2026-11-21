@@ -77,10 +77,6 @@ CONFIG_PACKAGE_luci-i18n-ttyd-zh-cn=y
 CONFIG_PACKAGE_jq=y
 CONFIG_PACKAGE_luci-app-ap3000m-ota=y
 
-# Official Open-Box installation entry; programs download on the user's device.
-CONFIG_PACKAGE_luci-app-ap3000m-openbox=y
-CONFIG_PACKAGE_ca-bundle=y
-
 # ---------------------------------------------------------------------
 # RNDIS 数据面调优（Scripts/AP3000M/net-tune）
 #   FM350 只有 RNDIS 一种数据通路，这里把这一条通道调到最优：

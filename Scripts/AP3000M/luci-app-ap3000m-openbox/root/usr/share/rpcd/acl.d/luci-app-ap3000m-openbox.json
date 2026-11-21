@@ -1,7 +1,0 @@
-{
-	"luci-app-ap3000m-openbox": {
-		"description": "Install official Open-Box on AP3000M and inspect installation status",
-		"read": { "ubus": { "luci.ap3000m_openbox": [ "status" ] } },
-		"write": { "ubus": { "luci.ap3000m_openbox": [ "install" ] } }
-	}
-}

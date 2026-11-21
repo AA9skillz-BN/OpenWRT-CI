@@ -1,8 +1,0 @@
-{
-	"admin/services/ap3000m-openbox": {
-		"title": "Open-Box 安装与恢复",
-		"order": 65,
-		"action": { "type": "view", "path": "ap3000m-openbox/overview" },
-		"depends": { "acl": [ "luci-app-ap3000m-openbox" ] }
-	}
-}
