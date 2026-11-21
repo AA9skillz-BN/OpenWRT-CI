@@ -40,7 +40,8 @@
     "kmod-nft-queue",
     "kmod-nft-nat",
     "kmod-veth",
-    "ip-full"
+    "ip-full",
+    "openssl-util"
   ],
   "packages": [
     "mini-diskmanager",

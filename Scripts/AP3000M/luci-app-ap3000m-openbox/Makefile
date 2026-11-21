@@ -14,7 +14,7 @@ define Package/$(PKG_NAME)
   CATEGORY:=LuCI
   SUBMENU:=3. Applications
   TITLE:=AP3000M Open-Box official installer
-  DEPENDS:=+luci-base +rpcd-mod-ucode +ucode-mod-fs +curl +ca-bundle +jq +flock +kmod-tun +kmod-nft-queue +kmod-nft-nat +kmod-veth +ip-full
+  DEPENDS:=+luci-base +rpcd-mod-ucode +ucode-mod-fs +curl +ca-bundle +jq +flock +openssl-util +kmod-tun +kmod-nft-queue +kmod-nft-nat +kmod-veth +ip-full
   PKGARCH:=all
 endef
 

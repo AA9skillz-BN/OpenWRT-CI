@@ -196,7 +196,7 @@ $(eval $(Probe))
                 self.assertIn(forbidden, profile["forbidden_files"])
                 self.assertFalse((top / "rootfs" / forbidden.lstrip("/")).exists())
             config = (REPO / "Config/BASE.txt").read_text() + (REPO / "Config/AP3000M.txt").read_text()
-            for package_name in ("luci-app-ap3000m-openbox", "ca-bundle", "kmod-tun", "kmod-nft-queue", "kmod-nft-nat", "kmod-veth", "ip-full"):
+            for package_name in ("luci-app-ap3000m-openbox", "ca-bundle", "openssl-util", "kmod-tun", "kmod-nft-queue", "kmod-nft-nat", "kmod-veth", "ip-full"):
                 self.assertIn("CONFIG_PACKAGE_" + package_name + "=y", config)
                 self.assertIn(package_name, profile["required_packages"])
 

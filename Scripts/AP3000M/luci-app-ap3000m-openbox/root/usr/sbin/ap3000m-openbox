@@ -97,7 +97,7 @@ download_installer() {
 	size=$(jq -er '.size | select(type == "number" and . == floor and . > 0 and . <= 262144)' "$TMP/script.json") || die '安装脚本大小无效'
 	fetch "$RAW/$revision/scripts/install.sh" "$TMP/install.sh" || die '官方安装脚本下载失败'
 	[ "$(wc -c <"$TMP/install.sh" | tr -d ' ')" = "$size" ] || die '安装脚本大小不符'
-	actual=$({ printf 'blob %s\000' "$size"; cat "$TMP/install.sh"; } | sha1sum | cut -d ' ' -f1)
+	actual=$({ printf 'blob %s\000' "$size"; cat "$TMP/install.sh"; } | openssl dgst -sha1 -r | cut -d ' ' -f1)
 	[ "$actual" = "$blob" ] || die '安装脚本 Git 内容校验不符'
 	sh -n "$TMP/install.sh" || die '官方安装脚本语法检查失败'
 	printf 'Official installer commit: %s\n' "$revision"
@@ -150,7 +150,7 @@ main() {
 	esac
 	[ "$(id -u)" = 0 ] || die '需要管理员权限'
 	[ "$(cat /tmp/sysinfo/board_name 2>/dev/null)" = airpi,ap3000m ] || die '此安装入口仅适用于 AP3000M'
-	for tool in curl jq flock sha1sum sha256sum; do
+	for tool in curl jq flock openssl sha256sum; do
 		command -v "$tool" >/dev/null 2>&1 || die "缺少运行依赖：$tool"
 	done
 	prepare_state
