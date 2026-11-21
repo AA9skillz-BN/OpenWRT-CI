@@ -19,10 +19,15 @@ _ap3000m_log() { echo "==> [AP3000M] $*"; }
 python3 "$GITHUB_WORKSPACE/Scripts/AP3000M/fancontrol/fix-confirm.py" \
 	package/luci-app-airpi3000m-fancontrol
 
-# Keep IPv6 DNS out of the PDP activation/address fallback in the locked plugin.
-python3 "$GITHUB_WORKSPACE/Scripts/AP3000M/fm350/fix-pdp-dns.py" \
+# Apply the independently reviewed patch for the selected plugin mode.
+case "${WRT_PLUGIN_MODE:-locked}" in
+	locked) _fm350_patch_suffix='' ;;
+	latest) _fm350_patch_suffix='-latest' ;;
+	*) echo "Unsupported FM350 plugin mode: ${WRT_PLUGIN_MODE}" >&2; exit 1 ;;
+esac
+python3 "$GITHUB_WORKSPACE/Scripts/AP3000M/fm350/fix-pdp-dns${_fm350_patch_suffix}.py" \
 	package/luci-app-fm350
-python3 "$GITHUB_WORKSPACE/Scripts/AP3000M/fm350/fix-packaging.py" \
+python3 "$GITHUB_WORKSPACE/Scripts/AP3000M/fm350/fix-packaging${_fm350_patch_suffix}.py" \
 	package/luci-app-fm350
 
 # 6) 投放 AP3000M 专属的首次开机配置（FM350 的 AT 口 / APN / CID 自动纠正）

@@ -3,8 +3,7 @@ import hashlib
 from pathlib import Path
 import sys
 
-UPSTREAM_SHA256 = "f14d778051dcc9c1249f4ea49038ffd7d8b3a405035a6a61fa9dfd768480430e"
-OLD_SHA256 = "cf85267027fc7d3038de1cab760031b286908caa476d356c80d28bea57b48c81"
+UPSTREAM_SHA256 = "cf85267027fc7d3038de1cab760031b286908caa476d356c80d28bea57b48c81"
 SOURCE = "rust/src/modem/pdp.rs"
 
 REPLACEMENTS = (
@@ -36,37 +35,23 @@ REPLACEMENTS = (
     ),
 )
 
-NEW_REPLACEMENTS = (
-    (
-        '        for row in crate::at::rows(&r, "+CGCONTRDP") {\n'
-        '            // <cid>,<bearer>,',
-        '        for row in crate::at::rows(&r, "+CGCONTRDP") {\n'
-        '            if row.first().and_then(|x| x.parse::<u32>().ok()) != Some(cfg.cid) {\n'
-        '                continue;\n'
-        '            }\n'
-        '            // <cid>,<bearer>,',
-    ),
-    *REPLACEMENTS[1:],
-)
-
 
 def patch_pdp(data):
     text = data.decode("utf-8")
-    for sha, replacements in ((OLD_SHA256, REPLACEMENTS), (UPSTREAM_SHA256, NEW_REPLACEMENTS)):
+    if hashlib.sha256(data).hexdigest() != UPSTREAM_SHA256:
         original = text
-        if hashlib.sha256(data).hexdigest() != sha:
-            for before, after in replacements:
-                if original.count(after) != 1:
-                    break
-                original = original.replace(after, before, 1)
-        if hashlib.sha256(original.encode("utf-8")).hexdigest() != sha:
-            continue
-        for before, after in replacements:
-            if original.count(before) != 1:
-                raise ValueError("PDP source anchors changed")
-            original = original.replace(before, after, 1)
-        return original.encode("utf-8")
-    raise ValueError("PDP source differs from the reviewed locked source")
+        for before, after in REPLACEMENTS:
+            if original.count(after) != 1:
+                raise ValueError("PDP source differs from the reviewed locked source")
+            original = original.replace(after, before, 1)
+        if hashlib.sha256(original.encode("utf-8")).hexdigest() != UPSTREAM_SHA256:
+            raise ValueError("PDP source differs from the reviewed locked source")
+        return data
+    for before, after in REPLACEMENTS:
+        if text.count(before) != 1:
+            raise ValueError("PDP source anchors changed")
+        text = text.replace(before, after, 1)
+    return text.encode("utf-8")
 
 
 if __name__ == "__main__":
