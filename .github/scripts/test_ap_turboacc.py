@@ -1,6 +1,5 @@
 """AP-specific migration, old-file cleanup and real locked LuCI installation."""
 import importlib.util
-import io
 import json
 import os
 from pathlib import Path
@@ -105,10 +104,12 @@ class ApTurboAccTests(unittest.TestCase):
 
     def test_real_ucode_import_keeps_existing_offload_disabled_and_no_wed(self):
         actual = self.runtime(self.template(), "defaults(); apply(); defaults(); apply();",
-                              {"flow_offloading": "0", "flow_offloading_hw": "0", "fullcone": "0"}, wed="N")
+                              {"flow_offloading": "0", "flow_offloading_hw": "0", "fullcone": "0", "tcpcca": "reno"}, wed="N")
         cfg = actual["store"]["turboacc"]["config"]
         self.assertEqual((cfg["fastpath"], cfg["fastpath_fo_hw"], cfg["fullcone"], cfg["fastpath_mh_eth_hnat_wed"]), ("disabled", "0", "0", "0"))
         self.assertEqual(actual["store"]["firewall"]["@defaults[0]"]["flow_offloading"], "0")
+        self.assertEqual(cfg["tcpcca"], "reno")
+        self.assertFalse(any("modprobe tcp_bbr" in cmd for cmd in actual["commands"]))
 
     def test_real_ucode_retained_modern_choices_override_stale_template_marker(self):
         settings = dict(self.template(), initialized="1", fastpath="disabled", fastpath_fo_hw="0", fullcone="0", tcpcca="reno")

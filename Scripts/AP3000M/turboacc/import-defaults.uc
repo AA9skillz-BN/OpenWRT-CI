@@ -26,6 +26,9 @@ function import_ap_defaults(cursor) {
 	}
 	if (fc6 == '0' || fc6 == '1')
 		cursor.set(CONFIG, SECTION, 'fullcone6', fc6);
+	let cca = cursor.get(FWCONFIG, FWDEFAULTS, 'tcpcca');
+	if (cca != null && index(read_cca(), cca) >= 0)
+		cursor.set(CONFIG, SECTION, 'tcpcca', cca);
 	let wed = find_wed();
 	let value = wed != null ? read_text(wed) : null;
 	if (value == 'Y' || value == 'N' || value == '1' || value == '0')
