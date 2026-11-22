@@ -297,7 +297,7 @@ def package(tree, repo, name, data, reports):
         if file.is_file() and file.name in ("source-commit.txt", "feeds.buildinfo", "packages.lock.json", "plugin-resolution.json",
                                              "build-inputs.json", "image-metadata.json", "compatibility.txt", "ci-commit.txt",
                                              "config-resolution.json", "source-lock.json", "verified-payload.json",
-                                             "toolchain-inputs.json", "toolchain-cache.json"):
+                                             "toolchain-inputs.json", "toolchain-cache.json", "openclash-core.json"):
             shutil.copy2(file, upload / file.name)
     # Do not discard evidence needed to reproduce or diagnose this release.
     checksums = []

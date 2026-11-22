@@ -15,6 +15,9 @@ _ap3000m_log() { echo "==> [AP3000M] $*"; }
 
 # Rust and locked plugin installation are handled by the common build stages.
 
+# Bundle the official static ARM64 Meta core in the upstream OpenClash package.
+python3 "$GITHUB_WORKSPACE/.github/scripts/ap3000m-openclash-core.py" --tree .
+
 # Same reviewed Arthur source as TR, with AP-owned settings import/cleanup.
 python3 "$GITHUB_WORKSPACE/.github/scripts/ap3000m-turboacc.py" package/luci-app-turboacc
 

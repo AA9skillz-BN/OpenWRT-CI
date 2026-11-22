@@ -77,6 +77,26 @@ CONFIG_PACKAGE_luci-i18n-ttyd-zh-cn=y
 CONFIG_PACKAGE_jq=y
 CONFIG_PACKAGE_luci-app-ap3000m-ota=y
 
+# OpenClash + static ARM64 Mihomo core (installed into the package by private.sh).
+CONFIG_PACKAGE_luci-app-openclash=y
+CONFIG_PACKAGE_dnsmasq=n
+CONFIG_PACKAGE_dnsmasq-dhcpv6=n
+CONFIG_PACKAGE_dnsmasq-full=y
+CONFIG_PACKAGE_dnsmasq_full_nftset=y
+CONFIG_PACKAGE_bash=y
+CONFIG_PACKAGE_curl=y
+CONFIG_PACKAGE_ca-bundle=y
+CONFIG_PACKAGE_ip-full=y
+CONFIG_PACKAGE_ruby=y
+CONFIG_PACKAGE_ruby-yaml=y
+CONFIG_PACKAGE_unzip=y
+CONFIG_PACKAGE_luci-compat=y
+CONFIG_PACKAGE_kmod-inet-diag=y
+CONFIG_PACKAGE_kmod-tun=y
+CONFIG_PACKAGE_kmod-nft-tproxy=y
+CONFIG_PACKAGE_kmod-nft-socket=y
+CONFIG_PACKAGE_kmod-nft-nat=y
+
 # ---------------------------------------------------------------------
 # RNDIS 数据面调优（Scripts/AP3000M/net-tune）
 #   FM350 只有 RNDIS 一种数据通路，这里把这一条通道调到最优：

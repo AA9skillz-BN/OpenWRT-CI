@@ -32,7 +32,22 @@
     "ucode-mod-fs",
     "ucode-mod-uci",
     "rpcd-mod-ucode",
-    "luci-base"
+    "luci-base",
+    "luci-app-openclash",
+    "dnsmasq-full",
+    "bash",
+    "curl",
+    "ca-bundle",
+    "ip-full",
+    "ruby",
+    "ruby-yaml",
+    "unzip",
+    "luci-compat",
+    "kmod-inet-diag",
+    "kmod-tun",
+    "kmod-nft-tproxy",
+    "kmod-nft-socket",
+    "kmod-nft-nat"
   ],
   "packages": [
     "mini-diskmanager",
@@ -45,7 +60,8 @@
     "aurora-config",
     "fm350",
     "fancontrol",
-    "turboacc"
+    "turboacc",
+    "openclash"
   ],
   "release_note": "eMMC \u673a\u578b sysupgrade \u56fa\u4ef6\uff1b\u5185\u7f6e FM350 \u9996\u542f\u914d\u7f6e\u3001\u98ce\u6247\u7ba1\u7406\u3001OTA \u548c RNDIS \u81ea\u6108\u3002",
   "device_symbol": "CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_airpi_ap3000m",
@@ -68,6 +84,37 @@
   },
   "build_tag_file": "/etc/ap3000m-build.tag",
   "required_files": [
+    {
+      "path": "/etc/openclash/core/clash_meta",
+      "build_source": "package/luci-app-openclash/root/etc/openclash/core/clash_meta",
+      "elf_machine": 183,
+      "executable": true
+    },
+    {
+      "path": "/usr/share/openclash/ap3000m-core.json",
+      "build_source": "package/luci-app-openclash/root/usr/share/openclash/ap3000m-core.json"
+    },
+    {
+      "path": "/usr/share/openclash/mihomo-LICENSE",
+      "build_source": "package/luci-app-openclash/root/usr/share/openclash/mihomo-LICENSE"
+    },
+    {
+      "path": "/lib/upgrade/keep.d/luci-app-openclash",
+      "build_source": "package/luci-app-openclash/root/lib/upgrade/keep.d/luci-app-openclash"
+    },
+    {
+      "path": "/etc/config/openclash",
+      "build_source": "package/luci-app-openclash/root/etc/config/openclash"
+    },
+    {
+      "path": "/etc/init.d/openclash",
+      "build_source": "package/luci-app-openclash/root/etc/init.d/openclash",
+      "executable": true
+    },
+    {
+      "path": "/usr/lib/lua/luci/controller/openclash.lua",
+      "build_source": "package/luci-app-openclash/luasrc/controller/openclash.lua"
+    },
     {
       "path": "/etc/init.d/ucitrack",
       "build_source": "feeds/luci/modules/luci-base/root/etc/init.d/ucitrack",
