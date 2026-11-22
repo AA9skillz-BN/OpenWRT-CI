@@ -157,6 +157,7 @@ INSTALL_BIN:=install -m0755
 define Probe
 .PHONY: prepare install
 prepare:
+\tmkdir -p $(PKG_BUILD_DIR)
 \t$(Build/Prepare)
 install:
 \ttouch $(PKG_BUILD_DIR)/openclash.zh-cn.lmo
