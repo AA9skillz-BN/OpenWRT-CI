@@ -49,7 +49,13 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("$GITHUB_REF\" != 'refs/heads/main'", initialize)
         self.assertIn('WRT_RELEASE_TAG="preview-$WRT_RELEASE_TAG"', initialize)
         for step in builder["steps"]:
-            self.assertNotIn("secrets.GITHUB_TOKEN", json.dumps(step))
+            if step.get("name") == "Apply Device Source and Files":
+                # This job's contents:read token authenticates public release API
+                # requests; it cannot publish. Keep the exception step-scoped.
+                self.assertEqual(step.get("env"), {"GH_TOKEN": "${{secrets.GITHUB_TOKEN}}"})
+                self.assertNotIn("secrets.GITHUB_TOKEN", json.dumps({k: v for k, v in step.items() if k != "env"}))
+            else:
+                self.assertNotIn("secrets.GITHUB_TOKEN", json.dumps(step))
             if "checkout@" in step.get("uses", ""):
                 self.assertFalse(step["with"]["persist-credentials"])
         publisher = data["jobs"]["publish"]
