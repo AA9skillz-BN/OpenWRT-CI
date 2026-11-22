@@ -1,5 +1,6 @@
 """Validate core authenticity/architecture and install it with actual OpenClash Make rules."""
 import concurrent.futures
+import functools
 import gzip
 import hashlib
 import importlib.util
@@ -109,10 +110,11 @@ class ActualOpenClashTests(unittest.TestCase):
             requests = [(revision, name) for revision in dict.fromkeys([locked, REVIEWED_LATEST]) for name in source_files]
             with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
                 downloaded = dict(pool.map(get, requests))
-            record = None
-            for revision in dict.fromkeys([locked, REVIEWED_LATEST]):
-                with self.subTest(plugin=revision):
-                    tree = top / revision
+            cached_fetch = functools.lru_cache(maxsize=8)(core.fetch)
+            cases = [(rev, device) for rev in dict.fromkeys([locked, REVIEWED_LATEST]) for device in ("AP3000M", "TR3000-512")]
+            for revision, device in cases:
+                with self.subTest(plugin=revision, device=device):
+                    tree = top / (revision + "-" + device)
                     package = tree / "package/luci-app-openclash"
                     for name in source_files:
                         path = package / name
@@ -121,26 +123,18 @@ class ActualOpenClashTests(unittest.TestCase):
                     config = package / "root/etc/config/openclash"
                     original_config = config.read_bytes()
                     self.assertIn(b"option enable '0'", original_config)
-                    if record is None:
-                        record = core.install(repo, tree, "locked")
-                        original_core = (package / "root/etc/openclash/core/clash_meta").read_bytes()
-                        original_license = (package / "root/usr/share/openclash/mihomo-LICENSE").read_bytes()
-                        qemu = shutil.which("qemu-aarch64")
-                        self.assertIsNotNone(qemu, "qemu-aarch64 required for actual ARM64 smoke test")
-                        result = subprocess.run([qemu, str(package / "root/etc/openclash/core/clash_meta"), "-v"],
-                                                text=True, capture_output=True, timeout=30)
-                        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                        self.assertIn(record["tag"].removeprefix("v"), result.stdout)
-                        self.assertIn("Mihomo", result.stdout)
-                        print("Official ARM64 core executed: " + result.stdout.strip())
-                    else:
-                        # Reuse the same verified core so this Make test does not download twice.
-                        first = top / locked / "package/luci-app-openclash/root"
-                        for relative in ("etc/openclash/core/clash_meta", "usr/share/openclash/mihomo-LICENSE",
-                                         "usr/share/openclash/ap3000m-core.json", "lib/upgrade/keep.d/luci-app-openclash"):
-                            path = package / "root" / relative
-                            path.parent.mkdir(parents=True, exist_ok=True)
-                            shutil.copy2(first / relative, path)
+                    with patch.object(core, "fetch", cached_fetch):
+                        record = core.install(repo, tree, "locked", device)
+                    original_core = (package / "root/etc/openclash/core/clash_meta").read_bytes()
+                    original_license = (package / "root/usr/share/openclash/mihomo-LICENSE").read_bytes()
+                    qemu = shutil.which("qemu-aarch64")
+                    self.assertIsNotNone(qemu, "qemu-aarch64 required for actual ARM64 smoke test")
+                    result = subprocess.run([qemu, str(package / "root/etc/openclash/core/clash_meta"), "-v"],
+                                            text=True, capture_output=True, timeout=30)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn(record["tag"].removeprefix("v"), result.stdout)
+                    self.assertIn("Mihomo", result.stdout)
+                    print(device + " official ARM64 core executed: " + result.stdout.strip())
                     self.assertEqual(config.read_bytes(), original_config)
                     (tree / "include").mkdir()
                     (tree / "include/package.mk").touch()
@@ -174,7 +168,7 @@ $(eval $(Probe))
                     self.assertTrue(installed_core.stat().st_mode & 0o111)
                     self.assertEqual((root / "usr/share/openclash/mihomo-LICENSE").read_bytes(), original_license)
                     self.assertEqual((root / "etc/config/openclash").read_bytes(), original_config)
-                    profile = json.loads((REPO / "Profiles/AP3000M.json").read_bytes())
+                    profile = json.loads((REPO / "Profiles/" + device + ".json").read_bytes())
                     entries = [item for item in profile["required_files"] if item.get("build_source", "").startswith("package/luci-app-openclash/")]
                     self.assertEqual(len(entries), 7)
                     for item in entries:
@@ -184,7 +178,7 @@ $(eval $(Probe))
                             self.assertTrue(path.stat().st_mode & 0o111)
                     self.assertEqual((root / "lib/upgrade/keep.d/luci-app-openclash").read_text(), "/etc/openclash/\n")
                     self.assertIn("/etc/openclash/", (package / "root/etc/uci-defaults/luci-openclash").read_text())
-                    print("Actual upstream OpenClash prepare/install verified: " + revision)
+                    print("Actual upstream OpenClash prepare/install verified: " + device + " " + revision)
 
 
 if __name__ == "__main__":

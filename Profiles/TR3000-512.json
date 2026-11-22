@@ -66,6 +66,37 @@
   "build_tag_file": "/etc/tr3000-build.tag",
   "required_files": [
     {
+      "path": "/etc/openclash/core/clash_meta",
+      "build_source": "package/luci-app-openclash/root/etc/openclash/core/clash_meta",
+      "elf_machine": 183,
+      "executable": true
+    },
+    {
+      "path": "/usr/share/openclash/tr3000-core.json",
+      "build_source": "package/luci-app-openclash/root/usr/share/openclash/tr3000-core.json"
+    },
+    {
+      "path": "/usr/share/openclash/mihomo-LICENSE",
+      "build_source": "package/luci-app-openclash/root/usr/share/openclash/mihomo-LICENSE"
+    },
+    {
+      "path": "/lib/upgrade/keep.d/luci-app-openclash",
+      "build_source": "package/luci-app-openclash/root/lib/upgrade/keep.d/luci-app-openclash"
+    },
+    {
+      "path": "/etc/config/openclash",
+      "build_source": "package/luci-app-openclash/root/etc/config/openclash"
+    },
+    {
+      "path": "/etc/init.d/openclash",
+      "build_source": "package/luci-app-openclash/root/etc/init.d/openclash",
+      "executable": true
+    },
+    {
+      "path": "/usr/lib/lua/luci/controller/openclash.lua",
+      "build_source": "package/luci-app-openclash/luasrc/controller/openclash.lua"
+    },
+    {
       "path": "/etc/tr3000-wan-boot-guard.sh",
       "source": "Files/TR3000-512/etc/tr3000-wan-boot-guard.sh",
       "executable": true

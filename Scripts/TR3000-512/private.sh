@@ -23,6 +23,9 @@ WRT_REPO_ROOT="${GITHUB_WORKSPACE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." &
 TR_DIR="$WRT_REPO_ROOT/Scripts/TR3000-512"
 log() { echo "==> [TR3000] $*"; }
 
+# Same verified official ARM64 static core as AP; keep TR-owned provenance.
+python3 "$WRT_REPO_ROOT/.github/scripts/ap3000m-openclash-core.py" --tree . --device TR3000-512
+
 # ------------------------------------------------------------ 0. 清理坏 feed
 # feeds/video 的 qt5base/Config.in 存在 Kconfig 递归依赖错误：
 #   feeds/video/frameworks/qt5/qt5base/Config.in:18: error: recursive dependency detected!

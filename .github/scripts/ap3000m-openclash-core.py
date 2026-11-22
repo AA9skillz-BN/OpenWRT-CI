@@ -84,7 +84,10 @@ def unpack(archive, snapshot):
     return binary
 
 
-def install(repo, tree, mode):
+def install(repo, tree, mode, device="AP3000M"):
+    if device not in ("AP3000M", "TR3000-512"):
+        raise ValueError("Unsupported OpenClash core device")
+    metadata_name = "ap3000m-core.json" if device == "AP3000M" else "tr3000-core.json"
     package = tree / "package/luci-app-openclash"
     if not (package / "Makefile").is_file() or not (package / "root/etc/config/openclash").is_file():
         raise ValueError("OpenClash package must be installed before adding its core")
@@ -107,7 +110,7 @@ def install(repo, tree, mode):
     share.mkdir(parents=True, exist_ok=True)
     (share / "mihomo-LICENSE").write_bytes(license_text)
     metadata = json.dumps(record, indent=2) + "\n"
-    (share / "ap3000m-core.json").write_text(metadata, encoding="utf-8", newline="\n")
+    (share / metadata_name).write_text(metadata, encoding="utf-8", newline="\n")
     # The upstream first-boot script uses the same path and rule. Put it in the
     # image too, so data backup works before or after first-boot processing.
     keep = package / "root/lib/upgrade/keep.d/luci-app-openclash"
@@ -116,7 +119,7 @@ def install(repo, tree, mode):
     reports = repo / "build-reports"
     reports.mkdir(exist_ok=True)
     (reports / "openclash-core.json").write_text(metadata, encoding="utf-8", newline="\n")
-    print(f"AP3000M OpenClash core: {mode} {snapshot['tag']} ARM64 static SHA256={record['binary_sha256']}", flush=True)
+    print(f"{device} OpenClash core: {mode} {snapshot['tag']} ARM64 static SHA256={record['binary_sha256']}", flush=True)
     return record
 
 
@@ -125,8 +128,9 @@ def main():
     parser.add_argument("--repo", type=Path, default=Path(os.environ.get("GITHUB_WORKSPACE", ".")))
     parser.add_argument("--tree", type=Path, default=Path.cwd())
     parser.add_argument("--mode", choices=("locked", "latest"), default=os.environ.get("WRT_PLUGIN_MODE", "locked"))
+    parser.add_argument("--device", choices=("AP3000M", "TR3000-512"), default="AP3000M")
     args = parser.parse_args()
-    install(args.repo.resolve(), args.tree.resolve(), args.mode)
+    install(args.repo.resolve(), args.tree.resolve(), args.mode, args.device)
 
 
 if __name__ == "__main__":
