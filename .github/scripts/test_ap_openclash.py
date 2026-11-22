@@ -168,7 +168,7 @@ $(eval $(Probe))
                     self.assertTrue(installed_core.stat().st_mode & 0o111)
                     self.assertEqual((root / "usr/share/openclash/mihomo-LICENSE").read_bytes(), original_license)
                     self.assertEqual((root / "etc/config/openclash").read_bytes(), original_config)
-                    profile = json.loads((REPO / "Profiles/" + device + ".json").read_bytes())
+                    profile = json.loads((REPO / "Profiles" / (device + ".json")).read_bytes())
                     entries = [item for item in profile["required_files"] if item.get("build_source", "").startswith("package/luci-app-openclash/")]
                     self.assertEqual(len(entries), 7)
                     for item in entries:
