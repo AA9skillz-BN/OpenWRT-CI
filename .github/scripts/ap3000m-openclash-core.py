@@ -14,6 +14,15 @@ import urllib.request
 REPOSITORY = "MetaCubeX/mihomo"
 MAX_ARCHIVE = 40 * 1024 * 1024
 MAX_BINARY = 100 * 1024 * 1024
+PRESERVE_CORE = "\n# Preserve the verified, already stripped official Mihomo ELF bytes.\nRSTRIP:=:\n"
+
+
+def preserve_package_core(recipe):
+    anchor = "\ninclude $(INCLUDE_DIR)/package.mk\n"
+    original = recipe.replace(PRESERVE_CORE, "")
+    if original.count(anchor) != 1 or re.search(r"(?m)^\s*(?:override\s+)?RSTRIP\s*[:?+]?=", original):
+        raise ValueError("OpenClash package strip rules changed; review before installing its core")
+    return original.replace(anchor, anchor + PRESERVE_CORE)
 
 
 def fetch(url, limit):
@@ -96,11 +105,14 @@ def install(repo, tree, mode, device="AP3000M"):
     package = tree / "package/luci-app-openclash"
     if not (package / "Makefile").is_file() or not (package / "root/etc/config/openclash").is_file():
         raise ValueError("OpenClash package must be installed before adding its core")
+    recipe = package / "Makefile"
+    adapted_recipe = preserve_package_core(recipe.read_text(encoding="utf-8"))
     snapshot = resolve(json.loads((repo / "Profiles/openclash-core.lock.json").read_bytes()), mode)
     base = "https://github.com/" + REPOSITORY + "/releases/download/" + snapshot["tag"] + "/"
     binary = unpack(fetch(base + snapshot["asset"], MAX_ARCHIVE), snapshot)
     license_url = "https://raw.githubusercontent.com/" + REPOSITORY + "/" + snapshot["tag"] + "/LICENSE"
     license_text = fetch(license_url, 128 * 1024)
+    recipe.write_text(adapted_recipe, encoding="utf-8", newline="\n")
     record = {"schema": 1, "mode": mode, **snapshot,
               "binary_sha256": hashlib.sha256(binary).hexdigest(), "binary_size": len(binary),
               "elf_machine": 183, "static": True,

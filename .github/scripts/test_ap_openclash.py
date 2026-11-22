@@ -11,6 +11,7 @@ from pathlib import Path
 import shutil
 import struct
 import subprocess
+import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -41,6 +42,15 @@ def snapshot(binary):
 
 
 class OpenClashCoreTests(unittest.TestCase):
+    def test_preserve_core_patch_is_repeatable_and_rejects_changed_strip_rules(self):
+        recipe = "include $(TOPDIR)/rules.mk\ninclude $(INCLUDE_DIR)/package.mk\n"
+        adapted = core.preserve_package_core(recipe)
+        self.assertEqual(core.preserve_package_core(adapted), adapted)
+        self.assertIn("RSTRIP:=:", adapted)
+        for bad in ("", recipe * 2, recipe + "RSTRIP=other\n", recipe + "override RSTRIP := other\n"):
+            with self.subTest(recipe=bad), self.assertRaises(ValueError):
+                core.preserve_package_core(bad)
+
     def test_api_authentication_is_scoped_and_not_forwarded_on_redirect(self):
         api = "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest"
         urls = [api, "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.34/core.gz",
@@ -94,7 +104,7 @@ class OpenClashCoreTests(unittest.TestCase):
             root = Path(directory)
             package = root / "tree/package/luci-app-openclash"
             (package / "root/etc/config").mkdir(parents=True)
-            (package / "Makefile").touch()
+            (package / "Makefile").write_text("\ninclude $(INCLUDE_DIR)/package.mk\n")
             (package / "root/etc/config/openclash").touch()
             existing = package / "root/etc/openclash/core/clash_meta"
             existing.parent.mkdir(parents=True)
@@ -115,6 +125,30 @@ class ActualOpenClashTests(unittest.TestCase):
         print("Authenticated official latest Mihomo API resolved: " + latest["tag"])
         with tempfile.TemporaryDirectory() as directory:
             top = Path(directory)
+            source = json.loads((REPO / "Profiles/sources.lock.json").read_bytes())["AP3000M"]
+            raw = "https://raw.githubusercontent.com/immortalwrt/immortalwrt/" + source["commit"] + "/"
+            rules = core.fetch(raw + "rules.mk", 100 * 1024).decode()
+            strip_rules = rules.split("# strip an entire directory\n", 1)[1].split("\nNINJA =", 1)[0]
+            sstrip = core.fetch("https://sources.openwrt.org/ELFkickers-3.2.tar.gz", 2 * 1024 * 1024)
+            self.assertEqual(hashlib.sha256(sstrip).hexdigest(),
+                             "9b81e6c53e0c94fc198d9882eb737156f36d565152dc32118897c77b06a2687c")
+            tools = top / "tools"
+            with tarfile.open(fileobj=io.BytesIO(sstrip)) as archive:
+                archive.extractall(tools, filter="data")
+            tools = next(tools.iterdir())
+            result = subprocess.run(["make", "-C", str(tools), "bin/sstrip"], text=True, capture_output=True, timeout=60)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            (top / "scripts").mkdir()
+            rstrip = top / "scripts/rstrip.sh"
+            rstrip.write_bytes(core.fetch(raw + "scripts/rstrip.sh", 100 * 1024))
+            rstrip.chmod(0o755)
+            (tools / "bin/patchelf").symlink_to(shutil.which("patchelf"))
+            strip_setup = f'''\nSCRIPT_DIR:={top}/scripts
+STAGING_DIR_HOST:={tools}
+CONFIG_USE_SSTRIP:=y
+CONFIG_SSTRIP_DISCARD_TRAILING_ZEROES:=y
+qstrip=$(subst ",,$(1))
+''' + strip_rules
             repo = top / "repo"
             (repo / "Profiles").mkdir(parents=True)
             shutil.copy2(REPO / "Profiles/openclash-core.lock.json", repo / "Profiles/openclash-core.lock.json")
@@ -146,6 +180,17 @@ class ActualOpenClashTests(unittest.TestCase):
                     with patch.object(core, "fetch", cached_fetch):
                         record = core.install(repo, tree, "locked", device)
                     original_core = (package / "root/etc/openclash/core/clash_meta").read_bytes()
+                    # Reproduce the missed package finalization stage with real
+                    # upstream rules/sstrip, rather than a fake mutating command.
+                    before_strip = tree / "unadapted-core"
+                    before_strip.write_bytes(original_core)
+                    (tree / "strip.mk").write_text(strip_setup + '\nstrip:\n\t$(RSTRIP) $(TOPDIR)/unadapted-core\n')
+                    result = subprocess.run(["make", "-f", "strip.mk", f"TOPDIR={tree}", "strip"],
+                                            cwd=tree, text=True, capture_output=True, timeout=30)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertNotEqual(before_strip.read_bytes(), original_core,
+                                        "unadapted package strip must reproduce the binary mismatch")
+                    print("Official Mihomo package strip mismatch reproduced: " + device + " " + revision)
                     original_license = (package / "root/usr/share/openclash/mihomo-LICENSE").read_bytes()
                     qemu = shutil.which("qemu-aarch64")
                     self.assertIsNotNone(qemu, "qemu-aarch64 required for actual ARM64 smoke test")
@@ -166,21 +211,26 @@ CP:=cp -fpR
 INSTALL_DIR:=install -d
 INSTALL_DATA:=install -m0644
 INSTALL_BIN:=install -m0755
-''')
+''' + strip_setup)
                     (package / "probe.mk").write_text('''include Makefile
 define Probe
-.PHONY: prepare install
+.PHONY: prepare install packaged
 prepare:
 \tmkdir -p $(PKG_BUILD_DIR)
 \t$(Build/Prepare)
 install:
 \ttouch $(PKG_BUILD_DIR)/openclash.zh-cn.lmo
 \t$(call Package/luci-app-openclash/install,$(TOPDIR)/rootfs)
+packaged:
+\t$(RSTRIP) $(TOPDIR)/rootfs
 endef
 $(eval $(Probe))
 ''')
-                    result = subprocess.run(["make", "--no-print-directory", "-f", "probe.mk", f"TOPDIR={tree}", "prepare", "install"],
+                    result = subprocess.run(["make", "--no-print-directory", "-f", "probe.mk", f"TOPDIR={tree}", "prepare", "install", "packaged"],
                                             cwd=package, text=True, capture_output=True, timeout=45)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    result = subprocess.run(["make", "--no-print-directory", "-f", "probe.mk", f"TOPDIR={tree}", "packaged"],
+                                            cwd=package, text=True, capture_output=True, timeout=30)
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     root = tree / "rootfs"
                     installed_core = root / "etc/openclash/core/clash_meta"
