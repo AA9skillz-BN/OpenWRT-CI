@@ -4,6 +4,7 @@ import functools
 import gzip
 import hashlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -40,6 +41,23 @@ def snapshot(binary):
 
 
 class OpenClashCoreTests(unittest.TestCase):
+    def test_api_authentication_is_scoped_and_not_forwarded_on_redirect(self):
+        api = "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest"
+        urls = [api, "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.34/core.gz",
+                "https://raw.githubusercontent.com/MetaCubeX/mihomo/v1.19.34/LICENSE",
+                "https://api.github.com.example.org/", "http://api.github.com/"]
+        for env in ({"GH_TOKEN": "test-token"}, {"GITHUB_TOKEN": "test-token"}, {}):
+            for url in urls:
+                with self.subTest(env=list(env), url=url), patch.dict(os.environ, env, clear=True):
+                    with patch.object(core.urllib.request, "urlopen", return_value=io.BytesIO(b"ok")) as open_url:
+                        self.assertEqual(core.fetch(url, 10), b"ok")
+                    request = open_url.call_args.args[0]
+                    expected = "Bearer test-token" if env and url == api else None
+                    self.assertEqual(request.get_header("Authorization"), expected)
+                    redirected = urllib.request.HTTPRedirectHandler().redirect_request(
+                        request, None, 302, "Found", {}, "https://release-assets.githubusercontent.com/core.gz")
+                    self.assertIsNone(redirected.get_header("Authorization"))
+
     def test_locked_avoids_moving_api_and_latest_resolves_one_exact_arm64_asset(self):
         _, locked = snapshot(fixture_binary())
         with patch.object(core, "fetch", side_effect=AssertionError("locked must not use latest API")):
@@ -93,6 +111,8 @@ class OpenClashCoreTests(unittest.TestCase):
 @unittest.skipIf(os.name == "nt", "real ARM64 execution and upstream Make installation run on Linux")
 class ActualOpenClashTests(unittest.TestCase):
     def test_official_locked_core_runs_and_both_plugin_snapshots_install_exact_payload(self):
+        latest = core.resolve(json.loads((REPO / "Profiles/openclash-core.lock.json").read_bytes()), "latest")
+        print("Authenticated official latest Mihomo API resolved: " + latest["tag"])
         with tempfile.TemporaryDirectory() as directory:
             top = Path(directory)
             repo = top / "repo"

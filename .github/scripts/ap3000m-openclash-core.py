@@ -18,6 +18,11 @@ MAX_BINARY = 100 * 1024 * 1024
 
 def fetch(url, limit):
     request = urllib.request.Request(url, headers={"User-Agent": "OpenWRT-CI-AP3000M", "Accept": "application/vnd.github+json"})
+    # Authenticate only the GitHub API, never release storage or raw content.
+    # Unredirected headers are deliberately omitted by urllib on redirects.
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if token and url.startswith("https://api.github.com/"):
+        request.add_unredirected_header("Authorization", "Bearer " + token)
     with urllib.request.urlopen(request, timeout=120) as response:
         data = response.read(limit + 1)
     if not data or len(data) > limit:

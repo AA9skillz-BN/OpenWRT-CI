@@ -51,6 +51,8 @@ jobs:
           cmake --build "$RUNNER_TEMP/ucode-build" --target ucode -j2
           echo "UCODE_TEST_BIN=$RUNNER_TEMP/ucode-build/ucode" >> "$GITHUB_ENV"
       - name: Test build gates, device runtime, OTA and actual images
+        env:
+          GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
         run: |
           rustup target add aarch64-unknown-linux-musl
           python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v

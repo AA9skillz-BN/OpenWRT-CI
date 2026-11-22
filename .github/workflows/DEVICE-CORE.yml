@@ -210,6 +210,8 @@ jobs:
         bash "$GITHUB_WORKSPACE/.github/scripts/prepare-i2c-tools.sh"
     - name: Apply Device Source and Files
       working-directory: ./wrt
+      env:
+        GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
       run: bash "$GITHUB_WORKSPACE/Scripts/$WRT_PROFILE/private.sh"
     - name: Custom Settings
       run: |
