@@ -1,23 +1,30 @@
 #!/bin/sh
 # SPDX-License-Identifier: MIT
-# ap3000m-net-tune —— 把 FM350 的 USB-RNDIS 数据面榨干
+# ap3000m-net-tune —— FM350-GL (USB 3.0 RNDIS) 稳定性锁死与数据面极限调优
 #
-# FM350 只有 RNDIS 一种数据通路（GTUSBMODE 40/41 都是 RNDIS），没有 ECM/NCM 可选，
-# 所以能做的就是把这一个通道的参数调到最优：
-#   1. xhci-hcd 硬中断亲和性：无线 mt7915e 硬中断固定在 CPU0，把 USB 3.0 绑到 CPU1
-#   2. RPS/XPS：把软中断接收/发送分摊到两个 A53 核（usbnet 默认只压一个核）
-#   3. txqueuelen：USB 高 BDP 下加大队列
-#   4. MTU：用 DF ping 实测运营商上限，避免分片
+# FM350 只有 RNDIS 一种数据通路（GTUSBMODE 40/41 都是 RNDIS），没有 ECM/NCM 可选。
+# 围绕「满速 USB 3.0 不掉线 + 双核吞吐榨干」做六件事：
+#   1. USB 3.0 U0 锁定：在核对 AP3000M 端口拓扑与 FM350 VID:PID 后关闭 usb3_lpm_permit
+#      (禁用易诱发 MTK T750 RNDIS Bulk-IN 卡死的 U1/U2 低功耗跳变) 并锁定 power/control=on
+#   2. xhci-hcd 硬中断亲和性：无线 mt7915e 硬中断在 CPU0，将 USB 3.0 硬中断绑到 CPU1
+#   3. RPS/XPS + RFS：软中断双核分摊（mask=3）并开启 rps_flow_cnt=4096 提升缓存命中
+#   4. GRO 微秒聚合：gro_flush_timeout=20000 + napi_defer_hard_irqs=2 合并突发帧减负协议栈
+#   5. txqueuelen：加大至 2000 适配 5G 高带宽时延积
+#   6. 双栈 MTU 探测：用 DF ping 实测 IPv4/IPv6 不分片上限并持久化
 #
 # 用法：
-#   ap3000m-net-tune apply [dev]   应用即时参数（RPS/XPS/队列/已缓存的 MTU）
-#   ap3000m-net-tune probe [dev]   实测 MTU 并缓存到 /etc/ap3000m-mtu
+#   ap3000m-net-tune apply [dev]   应用即时参数（USB3 U0/IRQ/RPS/RFS/GRO/队列/已缓存 MTU）
+#   ap3000m-net-tune probe [dev]   实测双栈 MTU 并缓存到 /etc/ap3000m-mtu
 #   ap3000m-net-tune status [dev]  打印当前生效值
 
 set -u
 
 MTU_CACHE=/etc/ap3000m-mtu
-PING_HOST=223.5.5.5
+PING_HOST4=223.5.5.5
+PING_HOST6=2400:3200::1
+USB3_PORT=/sys/bus/usb/devices/usb2/2-0:1.0/usb2-port1
+USB3_DEV=/sys/bus/usb/devices/2-1
+USB3_BUS=/sys/bus/usb/devices/usb2
 
 log() { logger -t ap3000m-net "$*" 2>/dev/null; printf '%s\n' "ap3000m-net-tune: $*" >&2; }
 
@@ -30,7 +37,6 @@ dev_of() {
 
 cpu_count() {
 	# 直接数 /sys/devices/system/cpu 下的 cpuN 目录：比 nproc 可靠
-	# （实测 nproc 在本机型上返回 1，导致掩码算成 1，只压了一个核）
 	n=$(ls -d /sys/devices/system/cpu/cpu[0-9]* 2>/dev/null | wc -l)
 	[ "${n:-0}" -ge 1 ] || n=$(nproc 2>/dev/null || echo 1)
 	[ "$n" -ge 8 ] && n=8
@@ -40,6 +46,34 @@ cpu_count() {
 rps_mask() {
 	n=$(cpu_count)
 	printf '%x' $(( (1 << n) - 1 ))
+}
+
+is_reviewed_fm350_usb() {
+	case "$(readlink -f "$USB3_PORT" 2>/dev/null)" in
+		/sys/devices/platform/soc/11200000.usb/usb2/2-0:1.0/usb2-port1) ;;
+		*) return 1 ;;
+	esac
+	[ -f "$USB3_DEV/idVendor" ] && [ -f "$USB3_DEV/idProduct" ] || return 1
+	v=$(cat "$USB3_DEV/idVendor" 2>/dev/null)
+	p=$(cat "$USB3_DEV/idProduct" 2>/dev/null)
+	case "$v:$p" in
+		0e8d:7126|0e8d:7127) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+lock_usb3_power_u0() {
+	# 保留 5000M USB 3.0 全速，仅禁止 U1/U2 链路低功耗睡眠与控制器自动挂起，消除唤醒卡死与抖动
+	is_reviewed_fm350_usb || return 0
+	state=""
+	if [ -w "$USB3_PORT/usb3_lpm_permit" ]; then
+		echo 0 >"$USB3_PORT/usb3_lpm_permit" 2>/dev/null && state="lpm=0"
+	fi
+	for ctrl in "$USB3_DEV/power/control" "$USB3_BUS/power/control"; do
+		[ -w "$ctrl" ] && echo on >"$ctrl" 2>/dev/null
+	done
+	[ -r "$USB3_DEV/power/control" ] && state="${state:+$state,}pwr=$(cat "$USB3_DEV/power/control" 2>/dev/null)"
+	printf '%s' "$state"
 }
 
 pin_xhci_irq() {
@@ -70,6 +104,7 @@ apply_tuning() {
 	dev=$(dev_of "${1:-}")
 	[ -d "/sys/class/net/$dev" ] || { log "设备 $dev 不存在，跳过"; return 1; }
 
+	usb_u0=$(lock_usb3_power_u0)
 	irq_pin=$(pin_xhci_irq)
 	mask=$(rps_mask)
 	nq=0
@@ -78,10 +113,18 @@ apply_tuning() {
 		echo "$mask" >"$f" 2>/dev/null
 		nq=$((nq + 1))
 	done
+	for f in /sys/class/net/"$dev"/queues/rx-*/rps_flow_cnt; do
+		[ -w "$f" ] || continue
+		echo 4096 >"$f" 2>/dev/null
+	done
 	for f in /sys/class/net/"$dev"/queues/tx-*/xps_cpus; do
 		[ -w "$f" ] || continue
 		echo "$mask" >"$f" 2>/dev/null
 	done
+
+	# RNDIS 单帧送交协议栈开销高；开启 20us GRO 聚合窗口合并 5G 突发流
+	[ -w "/sys/class/net/$dev/gro_flush_timeout" ] && echo 20000 >"/sys/class/net/$dev/gro_flush_timeout" 2>/dev/null
+	[ -w "/sys/class/net/$dev/napi_defer_hard_irqs" ] && echo 2 >"/sys/class/net/$dev/napi_defer_hard_irqs" 2>/dev/null
 
 	ip link set dev "$dev" txqueuelen 2000 2>/dev/null
 
@@ -90,12 +133,11 @@ apply_tuning() {
 		ip link set dev "$dev" mtu "$mtu" 2>/dev/null
 	fi
 
-	# 回读实际值：写进去的和读出来的可能不一致（内核会按在线 CPU 重算掩码）
 	real=""
 	for f in /sys/class/net/"$dev"/queues/rx-*/rps_cpus; do
 		[ -r "$f" ] && real="$real $(cat "$f" 2>/dev/null)"
 	done
-	log "已应用：dev=$dev cpus=$(cpu_count) mask=$mask xhci_irq=${irq_pin:-不变} rx队列=$nq 回读=[$real] txqueuelen=$(cat /sys/class/net/"$dev"/tx_queue_len 2>/dev/null) mtu=${mtu:-默认}"
+	log "已应用：dev=$dev cpus=$(cpu_count) mask=$mask usb3=[${usb_u0:-跳过}] xhci_irq=${irq_pin:-不变} rx队列=$nq 回读=[$real] gro=$(cat /sys/class/net/"$dev"/gro_flush_timeout 2>/dev/null) txqueuelen=$(cat /sys/class/net/"$dev"/tx_queue_len 2>/dev/null) mtu=${mtu:-默认}"
 }
 
 probe_mtu() {
@@ -103,22 +145,28 @@ probe_mtu() {
 	ip4=$(ip -4 -o addr show dev "$dev" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n 1)
 	[ -n "$ip4" ] || { log "设备 $dev 还没有 IPv4，稍后再探 MTU"; return 1; }
 
-	# 真机教训（2026-10-26）：OpenWrt 默认 /bin/ping 是 busybox 的，
-	# **不支持 `-M do`**（设置 DF 位），所以拿它探测永远失败。
-	# 镜像里装了 iputils-ping 时才有真正的 -M；没有就跳过探测、保持默认 1500。
 	if ! ping -M do -c 1 -W 1 127.0.0.1 >/dev/null 2>&1; then
 		log "当前 ping 不支持 -M do（busybox），跳过 MTU 实测，保持 $(cat /sys/class/net/"$dev"/mtu 2>/dev/null)"
 		return 2
 	fi
 
-	for mtu in 1500 1476 1460 1432 1420 1400 1360 1300 1280; do
-		payload=$((mtu - 28))
-		if ping -M do -s "$payload" -c 1 -W 2 -I "$ip4" "$PING_HOST" >/dev/null 2>&1; then
+	has_v6=0
+	if ip -6 -o addr show dev "$dev" scope global 2>/dev/null | grep -q 'inet6 '; then
+		ping -6 -c 1 -W 1 -I "$dev" "$PING_HOST6" >/dev/null 2>&1 && has_v6=1
+	fi
+
+	for mtu in 1500 1476 1460 1452 1432 1420 1400 1360 1300 1280; do
+		payload4=$((mtu - 28))
+		if ping -M do -s "$payload4" -c 1 -W 2 -I "$ip4" "$PING_HOST4" >/dev/null 2>&1; then
+			if [ "$has_v6" = 1 ]; then
+				payload6=$((mtu - 48))
+				ping -6 -M do -s "$payload6" -c 1 -W 2 -I "$dev" "$PING_HOST6" >/dev/null 2>&1 || continue
+			fi
 			printf '%s\n' "$mtu" >"$MTU_CACHE"
 			ip link set dev "$dev" mtu "$mtu" 2>/dev/null
 			uci -q set network.fm350.mtu="$mtu" 2>/dev/null
 			uci -q commit network 2>/dev/null
-			log "MTU 实测结果：$mtu（payload $payload，经 $ip4）"
+			log "MTU 实测结果：$mtu（v4_payload=$payload4 v6_checked=$has_v6，经 $ip4）"
 			return 0
 		fi
 	done
@@ -132,10 +180,20 @@ show_status() {
 	printf 'dev=%s\n' "$dev"
 	printf 'mtu=%s\n' "$(cat /sys/class/net/"$dev"/mtu 2>/dev/null)"
 	printf 'tx_queue_len=%s\n' "$(cat /sys/class/net/"$dev"/tx_queue_len 2>/dev/null)"
-	for f in /sys/class/net/"$dev"/queues/rx-*/rps_cpus; do
+	printf 'gro_flush_timeout=%s napi_defer_hard_irqs=%s\n' \
+		"$(cat /sys/class/net/"$dev"/gro_flush_timeout 2>/dev/null)" \
+		"$(cat /sys/class/net/"$dev"/napi_defer_hard_irqs 2>/dev/null)"
+	for f in /sys/class/net/"$dev"/queues/rx-*/rps_cpus /sys/class/net/"$dev"/queues/rx-*/rps_flow_cnt; do
 		[ -e "$f" ] && printf '%s=%s\n' "${f#/sys/class/net/}" "$(cat "$f" 2>/dev/null)"
 	done
 	printf 'xhci_irq_affinity=%s\n' "$(xhci_irq_status)"
+	if is_reviewed_fm350_usb; then
+		printf 'usb3_speed=%s usb3_lpm_permit=%s usb_power=%s/%s\n' \
+			"$(cat "$USB3_DEV/speed" 2>/dev/null)" \
+			"$(cat "$USB3_PORT/usb3_lpm_permit" 2>/dev/null)" \
+			"$(cat "$USB3_DEV/power/control" 2>/dev/null)" \
+			"$(cat "$USB3_BUS/power/control" 2>/dev/null)"
+	fi
 	printf 'cached_mtu=%s\n' "$(cat "$MTU_CACHE" 2>/dev/null)"
 	printf 'cc=%s qdisc=%s\n' "$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)" \
 		"$(sysctl -n net.core.default_qdisc 2>/dev/null)"

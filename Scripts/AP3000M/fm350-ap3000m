@@ -22,23 +22,36 @@ set -u
 
 LOG() { logger -t ap3000m-fm350 "$*"; echo "[ap3000m-fm350] $*"; }
 
-# ---- 1. 等待模组枚举（最多 40 秒）----
+is_fm350_ifc() {
+	local parent="${1%/*}" v p
+	[ -f "$parent/idVendor" ] && [ -f "$parent/idProduct" ] || return 1
+	v=$(cat "$parent/idVendor" 2>/dev/null)
+	p=$(cat "$parent/idProduct" 2>/dev/null)
+	case "$v:$p" in
+		0e8d:7126|0e8d:7127) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+find_at_port() {
+	for ifc in /sys/bus/usb/devices/*:1.6 /sys/bus/usb/devices/*:1.2; do
+		[ -d "$ifc" ] && is_fm350_ifc "$ifc" || continue
+		for node in "$ifc"/ttyUSB*; do
+			[ -e "$node" ] || continue
+			printf '/dev/%s' "${node##*/}"
+			return 0
+		done
+	done
+	return 1
+}
+
+# ---- 1 & 2. 等待已核对 VID:PID 的 FM350 AT 接口枚举（最多 40 秒）----
+AT_DEV=""
 i=0
 while [ "$i" -lt 40 ]; do
-	[ -e /dev/ttyUSB0 ] && break
+	AT_DEV=$(find_at_port) && [ -n "$AT_DEV" ] && break
 	sleep 1
 	i=$((i + 1))
-done
-
-# ---- 2. 按 USB 接口号定位 AT 口：mode 41 → :1.6，mode 40 → :1.2 ----
-AT_DEV=""
-for ifc in /sys/bus/usb/devices/*:1.6 /sys/bus/usb/devices/*:1.2; do
-	[ -d "$ifc" ] || continue
-	for node in "$ifc"/ttyUSB*; do
-		[ -e "$node" ] || continue
-		AT_DEV="/dev/${node##*/}"
-		break 2
-	done
 done
 
 if [ -z "$AT_DEV" ]; then

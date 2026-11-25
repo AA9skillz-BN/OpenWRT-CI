@@ -1,0 +1,39 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# 90-ap3000m-net-tune —— USB 网卡枚举/重建时在末尾套用 FM350 调优
+#
+# 命名 90-* 排在默认脚本之后；拿到 IPv4 后再次 apply 以确保覆盖首启期间的 packet_steering。
+
+[ "$ACTION" = "add" ] || [ "$ACTION" = "register" ] || exit 0
+
+dev="${DEVICE:-${DEVICENAME:-}}"
+[ -n "$dev" ] || exit 0
+[ -d "/sys/class/net/$dev" ] || exit 0
+
+drv=$(basename "$(readlink -f "/sys/class/net/$dev/device/driver" 2>/dev/null)")
+case "$drv" in
+	rndis_host|usbnet|cdc_ether|cdc_ncm) ;;
+	*) exit 0 ;;
+esac
+
+[ -x /usr/sbin/ap3000m-net-tune ] || exit 0
+
+(
+	/usr/sbin/ap3000m-net-tune apply "$dev"
+
+	i=0
+	while [ "$i" -lt 12 ]; do
+		sleep 10
+		ip4=$(ip -4 -o addr show dev "$dev" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n 1)
+		if [ -n "$ip4" ]; then
+			/usr/sbin/ap3000m-net-tune apply "$dev"
+			/usr/sbin/ap3000m-net-tune probe "$dev"
+			rc=$?
+			[ "$rc" -eq 0 ] && break
+			[ "$rc" -eq 2 ] && break
+		fi
+		i=$((i + 1))
+	done
+) >/dev/null 2>&1 &
+
+exit 0

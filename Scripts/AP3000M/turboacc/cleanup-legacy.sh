@@ -1,6 +1,7 @@
 # Retire exact old TurboACC paths and the AP-only competing defaults.
 # Do not call the former stop(): it rewrites firewall/DNS state.
 rm -f /etc/uci-defaults/luci-turboacc /etc/uci-defaults/99-ap3000m-flowoffload
+rm -f /etc/hotplug.d/net/20-ap3000m-net-tune
 rm -f /usr/lib/lua/luci/controller/turboacc.lua
 rm -f /usr/lib/lua/luci/model/cbi/turboacc.lua
 rm -f /usr/lib/lua/luci/view/turboacc/turboacc_status.htm

@@ -24,6 +24,7 @@
     "kmod-usb-audio",
     "flock",
     "sgdisk",
+    "iputils-ping",
     "kmod-nft-fullcone",
     "luci-app-turboacc",
     "luci-i18n-turboacc-zh-cn",
@@ -204,6 +205,32 @@
       "executable": true
     },
     {
+      "path": "/etc/hotplug.d/net/90-ap3000m-net-tune",
+      "source": "Scripts/AP3000M/net-tune/90-ap3000m-net-tune",
+      "executable": true
+    },
+    {
+      "path": "/etc/hotplug.d/iface/90-ap3000m-iface-tune",
+      "source": "Scripts/AP3000M/net-tune/90-ap3000m-iface-tune",
+      "executable": true
+    },
+    {
+      "path": "/etc/sysctl.d/99-ap3000m-tune.conf",
+      "source": "Scripts/AP3000M/net-tune/99-ap3000m-tune.conf"
+    },
+    {
+      "path": "/etc/config/ap3000m_ota",
+      "source": "Scripts/AP3000M/ota/ap3000m_ota.config"
+    },
+    {
+      "path": "/usr/share/luci/menu.d/luci-app-ap3000m-ota.json",
+      "source": "Scripts/AP3000M/luci-app-ap3000m-ota/root/usr/share/luci/menu.d/luci-app-ap3000m-ota.json"
+    },
+    {
+      "path": "/usr/share/rpcd/acl.d/luci-app-ap3000m-ota.json",
+      "source": "Scripts/AP3000M/luci-app-ap3000m-ota/root/usr/share/rpcd/acl.d/luci-app-ap3000m-ota.json"
+    },
+    {
       "path": "/etc/uci-defaults/99-ap3000m-fm350",
       "source": "Scripts/AP3000M/fm350-ap3000m",
       "executable": true
@@ -306,6 +333,7 @@
     "/usr/lib/lua/luci/controller/turboacc.lua",
     "/usr/lib/lua/luci/model/cbi/turboacc.lua",
     "/usr/lib/lua/luci/view/turboacc/turboacc_status.htm",
-    "/etc/uci-defaults/99-ap3000m-flowoffload"
+    "/etc/uci-defaults/99-ap3000m-flowoffload",
+    "/etc/hotplug.d/net/20-ap3000m-net-tune"
   ]
 }

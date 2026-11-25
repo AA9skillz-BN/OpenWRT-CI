@@ -13,6 +13,7 @@
 set -u
 
 DIR_DEFAULT=/root/ota
+BACKUP_DIR=/etc/ap3000m-backups
 BUILD_TAG_FILE=/etc/ap3000m-build.tag
 PENDING_FILE=/etc/ap3000m-pending
 RESULT_FILE=/etc/ap3000m-result
@@ -218,7 +219,7 @@ human_mb() {
 }
 
 free_kb() {
-	df -k "$(work_dir)" 2>/dev/null | awk 'NR==2 {print $4}'
+	df -Pk "$(work_dir)" 2>/dev/null | awk 'NR==2 {print $4}'
 }
 
 # ---------- 子命令 ----------
@@ -416,9 +417,17 @@ cmd_upgrade() {
 	# Validate device compatibility before recording a pending upgrade.
 	sysupgrade -T "$IMG" || die "镜像校验失败，未提交升级"
 
-	# 升级前备份当前配置（万一要手工恢复）
-	bk="$(work_dir)/config-$(current_tag)-$(date +%Y%m%d-%H%M%S).tar.gz"
-	sysupgrade -b "$bk" >/dev/null 2>&1 && log "已备份配置：$bk" || warn "配置备份失败（不影响升级）"
+	# 升级前备份当前配置到跨 sysupgrade 保留的 /etc/ap3000m-backups（仅留最近 3 份，避免占满空间）
+	mkdir -p "$BACKUP_DIR" 2>/dev/null || true
+	bk="$BACKUP_DIR/config-$(current_tag)-$(date +%Y%m%d-%H%M%S).tar.gz"
+	if sysupgrade -b "$bk" >/dev/null 2>&1; then
+		log "已备份配置：$bk"
+		ls -1t "$BACKUP_DIR"/config-*.tar.gz 2>/dev/null | awk 'NR>3' | while read -r old_bk; do
+			rm -f "$old_bk"
+		done
+	else
+		warn "配置备份失败（不影响升级）"
+	fi
 
 	printf '%s\n' "$TAG" > "$PENDING_FILE"
 	sync

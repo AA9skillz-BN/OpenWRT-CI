@@ -92,10 +92,13 @@ if [ -d "$_ap3000m_ota_dir" ]; then
 	printf '%s\n' "$_ap3000m_tag" >"$_ap3000m_bf/etc/ap3000m-build.tag"
 	chmod 0644 "$_ap3000m_bf/etc/ap3000m-build.tag"
 
-	# 升级状态要跨越 sysupgrade 保留（只保留这两个文件，build.tag 必须用新镜像里的）
-	if ! grep -q '^/etc/ap3000m-pending$' "$_ap3000m_bf/etc/sysupgrade.conf" 2>/dev/null; then
-		printf '/etc/ap3000m-pending\n/etc/ap3000m-result\n' >>"$_ap3000m_bf/etc/sysupgrade.conf"
-	fi
+	# 升级状态与最近 3 份配置备份要跨越 sysupgrade 保留（build.tag 必须用新镜像里的）
+	for _keep_entry in '/etc/ap3000m-pending' '/etc/ap3000m-result' '/etc/ap3000m-backups'; do
+		if ! grep -qxF "$_keep_entry" "$_ap3000m_bf/etc/sysupgrade.conf" 2>/dev/null; then
+			printf '%s\n' "$_keep_entry" >>"$_ap3000m_bf/etc/sysupgrade.conf"
+		fi
+	done
+	unset _keep_entry
 
 	# 开机回写升级结果：自带 init.d 脚本 + 构建期建 rc.d 软链（不碰 rc.local）
 	cp -f "$_ap3000m_ota_dir/ap3000m-ota-boot" "$_ap3000m_bf/etc/init.d/ap3000m-ota-boot"
@@ -159,20 +162,25 @@ else
 	exit 1
 fi
 
-# 10) RNDIS 数据面调优（RPS/XPS + txqueuelen + MTU 实测；拥塞控制交 TurboACC）
+# 10) RNDIS 数据面与 USB 3.0 U0 稳定性调优（net + iface 双 hotplug 防止 packet_steering 覆盖）
 _ap3000m_tune="$GITHUB_WORKSPACE/Scripts/AP3000M/net-tune"
 if [ -d "$_ap3000m_tune" ]; then
 	mkdir -p "$_ap3000m_bf/usr/sbin" "$_ap3000m_bf/etc/hotplug.d/net" \
-		"$_ap3000m_bf/etc/sysctl.d" "$_ap3000m_bf/etc/uci-defaults"
+		"$_ap3000m_bf/etc/hotplug.d/iface" "$_ap3000m_bf/etc/sysctl.d" "$_ap3000m_bf/etc/uci-defaults"
+
+	rm -f "$_ap3000m_bf/etc/hotplug.d/net/20-ap3000m-net-tune"
 
 	cp -f "$_ap3000m_tune/ap3000m-net-tune" "$_ap3000m_bf/usr/sbin/ap3000m-net-tune"
 	chmod 0755 "$_ap3000m_bf/usr/sbin/ap3000m-net-tune"
 
-	cp -f "$_ap3000m_tune/20-ap3000m-net-tune" "$_ap3000m_bf/etc/hotplug.d/net/20-ap3000m-net-tune"
-	chmod 0755 "$_ap3000m_bf/etc/hotplug.d/net/20-ap3000m-net-tune"
+	cp -f "$_ap3000m_tune/90-ap3000m-net-tune" "$_ap3000m_bf/etc/hotplug.d/net/90-ap3000m-net-tune"
+	chmod 0755 "$_ap3000m_bf/etc/hotplug.d/net/90-ap3000m-net-tune"
+
+	cp -f "$_ap3000m_tune/90-ap3000m-iface-tune" "$_ap3000m_bf/etc/hotplug.d/iface/90-ap3000m-iface-tune"
+	chmod 0755 "$_ap3000m_bf/etc/hotplug.d/iface/90-ap3000m-iface-tune"
 
 	cp -f "$_ap3000m_tune/99-ap3000m-tune.conf" "$_ap3000m_bf/etc/sysctl.d/99-ap3000m-tune.conf"
-	_ap3000m_log "已投放 RNDIS 调优（hotplug + sysctl；分载及 BBR 由 TurboACC 管理）"
+	_ap3000m_log "已投放 FM350 USB3 U0 与 RNDIS 调优（net/iface hotplug + sysctl；分载及 BBR 由 TurboACC 管理）"
 else
 	echo "Missing required network tuning" >&2
 	exit 1

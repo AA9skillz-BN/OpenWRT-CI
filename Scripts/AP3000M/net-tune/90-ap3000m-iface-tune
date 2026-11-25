@@ -1,0 +1,25 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# 90-ap3000m-iface-tune —— 防止 S25packet_steering 在接口事件后重置 eth2 的 RPS/XPS
+#
+# 真机根因：/etc/init.d/packet_steering 注册了 `procd_add_raw_trigger "interface.*" 1000`，
+# 每当 fm350 / fm350v6 拨号或每 30 分钟刷新 IPv6 时，procd 会在 1 秒后重跑 packet-steering.uc，
+# 把 eth2 的 rps_cpus 从双核 3 改回单核 2、xps_cpus 归零。这里延迟 2 秒重新锁定调优参数。
+
+case "${ACTION:-}" in
+	ifup|ifupdate) ;;
+	*) exit 0 ;;
+esac
+
+[ -x /usr/sbin/ap3000m-net-tune ] || exit 0
+
+dev=$(uci -q get network.fm350.device 2>/dev/null)
+[ -n "$dev" ] || dev="eth2"
+[ -d "/sys/class/net/$dev" ] || exit 0
+
+(
+	sleep 2
+	/usr/sbin/ap3000m-net-tune apply "$dev"
+) </dev/null >/dev/null 2>&1 &
+
+exit 0

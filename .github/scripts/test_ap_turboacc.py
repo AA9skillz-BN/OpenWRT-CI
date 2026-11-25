@@ -131,6 +131,7 @@ class ApTurboAccTests(unittest.TestCase):
     def test_cleanup_removes_only_retired_paths_and_legacy_bbr_override(self):
         root = self.top / "rootfs"
         retired = ["/etc/uci-defaults/luci-turboacc", "/etc/uci-defaults/99-ap3000m-flowoffload",
+                   "/etc/hotplug.d/net/20-ap3000m-net-tune",
                    "/usr/lib/lua/luci/controller/turboacc.lua", "/usr/lib/lua/luci/model/cbi/turboacc.lua",
                    "/usr/lib/lua/luci/view/turboacc/turboacc_status.htm", "/tmp/luci-indexcache.hash", "/tmp/luci-modulecache/old"]
         preserved = ["/etc/config/firewall", "/etc/config/turboacc", "/etc/init.d/turboacc", "/usr/lib/lua/luci/controller/other.lua"]

@@ -39,6 +39,7 @@ need_tools() { :; }
 ensure_dir() { :; }
 DL_TAG_FILE="$TASK_TMP/dl.tag"
 DL_RESULT_FILE="$TASK_TMP/dl.result"
+BACKUP_DIR="$TASK_TMP/backups"
 PENDING_FILE="$TASK_TMP/pending"
 CACHE_FILE="$TASK_TMP/check.json"
 OP_FILE="$TASK_TMP/operation.json"

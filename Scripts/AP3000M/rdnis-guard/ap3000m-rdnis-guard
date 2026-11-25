@@ -71,9 +71,20 @@ stalled() {
 	return 0
 }
 
+is_fm350_ifc() {
+	local parent="${1%/*}" v p
+	[ -f "$parent/idVendor" ] && [ -f "$parent/idProduct" ] || return 1
+	v=$(cat "$parent/idVendor" 2>/dev/null)
+	p=$(cat "$parent/idProduct" 2>/dev/null)
+	case "$v:$p" in
+		0e8d:7126|0e8d:7127) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
 at_port_from_usb() {
 	for ifc in /sys/bus/usb/devices/*:1.6 /sys/bus/usb/devices/*:1.2; do
-		[ -d "$ifc" ] || continue
+		[ -d "$ifc" ] && is_fm350_ifc "$ifc" || continue
 		for node in "$ifc"/ttyUSB*; do
 			[ -e "$node" ] || continue
 			printf '/dev/%s' "${node##*/}"
@@ -122,10 +133,13 @@ verify_healed() {
 }
 
 level1() {
-	if fm350d at 'AT+CFUN=1,1' >/dev/null 2>&1; then
-		log "一级恢复：已下发 AT+CFUN=1,1，等模组重新枚举（90s）"
+	# 先停止后台 fm350d 释放 /dev/ttyUSB* 独占权，防止与轮询争抢串口导致 CFUN=1,1 下发失败
+	/etc/init.d/fm350d stop >/dev/null 2>&1 || true
+	sleep 1
+	if timeout 15 fm350d at 'AT+CFUN=1,1' >/dev/null 2>&1; then
+		log "一级恢复：已独占下发 AT+CFUN=1,1，等模组重新枚举（90s）"
 	else
-		log "一级恢复：AT 通道不可用，只重启 fm350d"
+		log "一级恢复：AT 通道无响应，等待后直接重启 fm350d"
 	fi
 	sleep 90
 
@@ -138,7 +152,7 @@ level1() {
 		fi
 	}
 
-	/etc/init.d/fm350d restart >/dev/null 2>&1
+	/etc/init.d/fm350d start >/dev/null 2>&1 || /etc/init.d/fm350d restart >/dev/null 2>&1
 	verify_healed
 }
 
@@ -175,15 +189,12 @@ cmd_check() {
 	return 0
 }
 
-# 运行期巡检：只在"已经拨号成功但收包为 0"时动手，避免把正常拨号/断网误判
+# 运行期巡检：只在"已经拨号成功但收包为 0"时动手，常规跳过态保持静默不刷屏 syslog
 watch_once() {
 	[ "$(uci -q get fm350.main.rdnis_watch)" != 0 ] || return 0
 
-	/etc/init.d/fm350d status >/dev/null 2>&1 || { log "fm350d 未运行，跳过"; return 0; }
-	if ! have_ipv4; then
-		log "接口还没有 IPv4（可能正在拨号/无信号），跳过"
-		return 0
-	fi
+	/etc/init.d/fm350d status >/dev/null 2>&1 || return 0
+	have_ipv4 || return 0
 	stalled || return 0
 
 	# 连续两次（间隔 15s）都卡死才动手
