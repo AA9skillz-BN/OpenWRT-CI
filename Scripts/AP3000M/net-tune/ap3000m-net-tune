@@ -4,9 +4,10 @@
 #
 # FM350 只有 RNDIS 一种数据通路（GTUSBMODE 40/41 都是 RNDIS），没有 ECM/NCM 可选，
 # 所以能做的就是把这一个通道的参数调到最优：
-#   1. RPS/XPS：把单流的中断/发送分摊到两个 A53 核（usbnet 默认只压一个核）
-#   2. txqueuelen：USB 高 BDP 下加大队列
-#   3. MTU：用 DF ping 实测运营商上限，避免分片
+#   1. xhci-hcd 硬中断亲和性：无线 mt7915e 硬中断固定在 CPU0，把 USB 3.0 绑到 CPU1
+#   2. RPS/XPS：把软中断接收/发送分摊到两个 A53 核（usbnet 默认只压一个核）
+#   3. txqueuelen：USB 高 BDP 下加大队列
+#   4. MTU：用 DF ping 实测运营商上限，避免分片
 #
 # 用法：
 #   ap3000m-net-tune apply [dev]   应用即时参数（RPS/XPS/队列/已缓存的 MTU）
@@ -41,10 +42,35 @@ rps_mask() {
 	printf '%x' $(( (1 << n) - 1 ))
 }
 
+pin_xhci_irq() {
+	# MT7981B 双核下 mt7915e 无线硬中断全部落在 CPU0；将 FM350 所在的 xhci-hcd
+	# 硬中断迁至 CPU1（掩码 2），避免 5G 蜂窝与 Wi-Fi 并发时争抢同一个核心。
+	[ "$(cpu_count)" -ge 2 ] || return 0
+	pinned=""
+	for irq in $(awk '/xhci-hcd/ {sub(/:/, "", $1); print $1}' /proc/interrupts 2>/dev/null); do
+		[ -w "/proc/irq/$irq/smp_affinity" ] || continue
+		if echo 2 >"/proc/irq/$irq/smp_affinity" 2>/dev/null; then
+			pinned="${pinned:+$pinned,}$irq->2"
+		fi
+	done
+	printf '%s' "$pinned"
+}
+
+xhci_irq_status() {
+	out=""
+	for irq in $(awk '/xhci-hcd/ {sub(/:/, "", $1); print $1}' /proc/interrupts 2>/dev/null); do
+		[ -r "/proc/irq/$irq/smp_affinity" ] || continue
+		val=$(cat "/proc/irq/$irq/smp_affinity" 2>/dev/null)
+		out="${out:+$out,}$irq:$val"
+	done
+	printf '%s' "${out:-na}"
+}
+
 apply_tuning() {
 	dev=$(dev_of "${1:-}")
 	[ -d "/sys/class/net/$dev" ] || { log "设备 $dev 不存在，跳过"; return 1; }
 
+	irq_pin=$(pin_xhci_irq)
 	mask=$(rps_mask)
 	nq=0
 	for f in /sys/class/net/"$dev"/queues/rx-*/rps_cpus; do
@@ -69,7 +95,7 @@ apply_tuning() {
 	for f in /sys/class/net/"$dev"/queues/rx-*/rps_cpus; do
 		[ -r "$f" ] && real="$real $(cat "$f" 2>/dev/null)"
 	done
-	log "已应用：dev=$dev cpus=$(cpu_count) mask=$mask rx队列=$nq 回读=[$real] txqueuelen=$(cat /sys/class/net/"$dev"/tx_queue_len 2>/dev/null) mtu=${mtu:-默认}"
+	log "已应用：dev=$dev cpus=$(cpu_count) mask=$mask xhci_irq=${irq_pin:-不变} rx队列=$nq 回读=[$real] txqueuelen=$(cat /sys/class/net/"$dev"/tx_queue_len 2>/dev/null) mtu=${mtu:-默认}"
 }
 
 probe_mtu() {
@@ -109,6 +135,7 @@ show_status() {
 	for f in /sys/class/net/"$dev"/queues/rx-*/rps_cpus; do
 		[ -e "$f" ] && printf '%s=%s\n' "${f#/sys/class/net/}" "$(cat "$f" 2>/dev/null)"
 	done
+	printf 'xhci_irq_affinity=%s\n' "$(xhci_irq_status)"
 	printf 'cached_mtu=%s\n' "$(cat "$MTU_CACHE" 2>/dev/null)"
 	printf 'cc=%s qdisc=%s\n' "$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)" \
 		"$(sysctl -n net.core.default_qdisc 2>/dev/null)"

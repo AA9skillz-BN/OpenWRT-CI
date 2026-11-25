@@ -19,7 +19,10 @@ case "${WRT_PROFILE:-}" in
 	C8-688)
 		python3 "$GITHUB_WORKSPACE/.github/scripts/wifi-defaults.py" --tree . --band-suffix || exit 1
 		;;
-	AP3000M|TR3000-512)
+	AP3000M)
+		python3 "$GITHUB_WORKSPACE/.github/scripts/wifi-defaults.py" --tree . --ap3000m-radio-defaults || exit 1
+		;;
+	TR3000-512)
 		python3 "$GITHUB_WORKSPACE/.github/scripts/wifi-defaults.py" --tree . || exit 1
 		;;
 	*)

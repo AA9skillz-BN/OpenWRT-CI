@@ -120,6 +120,8 @@ CONFIG_PACKAGE_audio-support=y
 
 # Kernel-managed locks shared by OTA and RNDIS recovery instances.
 CONFIG_PACKAGE_flock=y
+# GPT backup header alignment check for expanded eMMC images.
+CONFIG_PACKAGE_sgdisk=y
 
 # Official firewall4 uses nft-fullcone; the old SONIC symbol is absent.
 CONFIG_PACKAGE_fullconenat-sonic=n

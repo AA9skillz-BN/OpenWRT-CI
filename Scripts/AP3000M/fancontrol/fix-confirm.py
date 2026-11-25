@@ -13,6 +13,14 @@ RECIPE_SHA256 = "099091082301cca8cae61046a0b78ec76d595c8020b01dbcbba9415f2d4e1df
 # recipe. Its install macro is identical to the locked 7.0.2 implementation.
 RECIPE_HASHES = {RECIPE_SHA256,
                  "2b81809c45d7e825e69a83064ca3a6a3f1fb0efbb0e7a09ffdb7c57042a49ffc"}
+CONFIG = "luci-app-airpi-fancontrol/files/etc/config/airpi-fan"
+CONFIG_SHA256 = "5115e2d358c5bf188d2fa2a19f5867ab0bce80f4554d528f98fd85fe0a38864b"
+CONFIG_EDITS = (
+    ("\toption temp_mid '60'\n", "\toption temp_mid '68'\n"),
+    ("\toption hysteresis '2'\n", "\toption hysteresis '4'\n"),
+    ("\toption min_hold '30'\n", "\toption min_hold '60'\n"),
+    ("\toption log_level '2'\n", "\toption log_level '1'\n"),
+)
 VIEW_NAME = b"airpi-fancontrol/fancontrol"
 INSTALL_VIEW = '''\t$(INSTALL_DATA) ./htdocs/luci-static/resources/view/airpi-fancontrol/fancontrol.js \\
 \t\t$(1)/www/luci-static/resources/view/airpi-fancontrol/fancontrol.js
@@ -86,15 +94,37 @@ def patch_recipe(data, alias_name):
     return original.replace(INSTALL_VIEW, INSTALL_VIEW + extra).encode("utf-8")
 
 
+def patch_config(data):
+    # MT7981 Wi-Fi sensors idle at ~60 C, causing the upstream temp_mid=60 /
+    # hysteresis=2 defaults to step between PWM 128 and 192 every ~35s and fill
+    # syslog at log_level=2. Keep CONFFILES semantics so user edits survive OTA.
+    text = data.decode("utf-8")
+    original = text
+    if all(new in text for _, new in CONFIG_EDITS):
+        for old, new in CONFIG_EDITS:
+            original = original.replace(new, old, 1)
+    if hashlib.sha256(original.encode("utf-8")).hexdigest() != CONFIG_SHA256:
+        raise ValueError("fan config differs from the reviewed locked source")
+    if original != text:
+        return data
+    updated = original
+    for old, new in CONFIG_EDITS:
+        if updated.count(old) != 1:
+            raise ValueError("fan config anchors changed")
+        updated = updated.replace(old, new, 1)
+    return updated.encode("utf-8")
+
+
 def patch_package(root):
     root = Path(root)
-    view, menu, recipe = root / VIEW, root / MENU, root / RECIPE
+    view, menu, recipe, config = root / VIEW, root / MENU, root / RECIPE, root / CONFIG
     data = patch_view(view.read_bytes())
     digest = hashlib.sha256(data).hexdigest()[:12]
     view_name = VIEW_NAME.decode("ascii") + "-" + digest
     alias = view.with_name("fancontrol-" + digest + ".js")
     menu_data = patch_menu(menu.read_bytes(), view_name)
     recipe_data = patch_recipe(recipe.read_bytes(), alias.name)
+    config_data = patch_config(config.read_bytes())
     # Validate all inputs before changing any file. A repeated hook may reuse
     # only the exact reviewed alias, never silently overwrite different bytes.
     if alias.is_symlink() or (alias.exists() and alias.read_bytes() != data):
@@ -103,6 +133,7 @@ def patch_package(root):
     alias.write_bytes(data)
     menu.write_bytes(menu_data)
     recipe.write_bytes(recipe_data)
+    config.write_bytes(config_data)
     return view_name
 
 

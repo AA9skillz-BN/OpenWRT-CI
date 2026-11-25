@@ -25,6 +25,21 @@ python3 "$GITHUB_WORKSPACE/.github/scripts/ap3000m-turboacc.py" package/luci-app
 python3 "$GITHUB_WORKSPACE/Scripts/AP3000M/fancontrol/fix-confirm.py" \
 	package/luci-app-airpi3000m-fancontrol
 
+# Fresh-install system timezone/NTP/cronloglevel and Dnsmasq min_cache_ttl=300.
+python3 "$GITHUB_WORKSPACE/Scripts/AP3000M/system-defaults.py" --tree .
+
+# Relocate unaligned eMMC backup GPT header to the end of /dev/mmcblk0 once.
+_ap3000m_gpt="$GITHUB_WORKSPACE/Scripts/AP3000M/98-ap3000m-gpt-fix"
+if [ -f "$_ap3000m_gpt" ]; then
+	mkdir -p "package/base-files/files/etc/uci-defaults"
+	cp -f "$_ap3000m_gpt" "package/base-files/files/etc/uci-defaults/98-ap3000m-gpt-fix"
+	chmod 0755 "package/base-files/files/etc/uci-defaults/98-ap3000m-gpt-fix"
+	_ap3000m_log "已投放 eMMC GPT 备份表自检修复: 98-ap3000m-gpt-fix"
+else
+	echo "Missing required GPT backup header check script" >&2
+	exit 1
+fi
+
 # Apply the independently reviewed patch for the selected plugin mode.
 case "${WRT_PLUGIN_MODE:-locked}" in
 	locked) _fm350_patch_suffix='' ;;

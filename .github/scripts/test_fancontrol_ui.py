@@ -41,9 +41,16 @@ class FanUiTests(unittest.TestCase):
             cls.recipe = response.read()
         if hashlib.sha256(cls.recipe).hexdigest() != fix.RECIPE_SHA256:
             raise AssertionError("locked fan recipe hash mismatch")
+        url = ("https://raw.githubusercontent.com/LianXia233/luci-app-airpi3000m-fancontrol/"
+               "f931c4681f7c401bd4702351fd4a3ba821105340/" + fix.CONFIG)
+        with urllib.request.urlopen(url, timeout=60) as response:
+            cls.config = response.read()
+        if hashlib.sha256(cls.config).hexdigest() != fix.CONFIG_SHA256:
+            raise AssertionError("locked fan config hash mismatch")
 
     def package_fixture(self, root):
-        for name, data in ((fix.VIEW, self.original), (fix.MENU, self.menu), (fix.RECIPE, self.recipe)):
+        for name, data in ((fix.VIEW, self.original), (fix.MENU, self.menu),
+                           (fix.RECIPE, self.recipe), (fix.CONFIG, self.config)):
             path = root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
@@ -68,13 +75,18 @@ class FanUiTests(unittest.TestCase):
             paths = {
                 "/www/luci-static/resources/view/" + view_name + ".js": alias,
                 "/usr/share/luci/menu.d/luci-app-airpi-fancontrol.json": root / fix.MENU,
+                "/etc/config/airpi-fan": root / fix.CONFIG,
             }
             for installed, source in paths.items():
                 expected = "package/luci-app-airpi3000m-fancontrol/" + source.relative_to(root).as_posix()
                 self.assertEqual(required[installed]["build_source"], expected)
+            cfg_text = (root / fix.CONFIG).read_text(encoding="utf-8")
+            for needle in ("option temp_mid '68'", "option hysteresis '4'",
+                           "option min_hold '60'", "option log_level '1'"):
+                self.assertIn(needle, cfg_text)
 
     def test_menu_or_alias_drift_fails_before_any_files_are_written(self):
-        for bad in ("menu", "partial_menu", "alias", "recipe", "patched_recipe"):
+        for bad in ("menu", "partial_menu", "alias", "recipe", "patched_recipe", "config"):
             with self.subTest(bad=bad), tempfile.TemporaryDirectory() as temp:
                 root = Path(temp)
                 self.package_fixture(root)
@@ -87,6 +99,8 @@ class FanUiTests(unittest.TestCase):
                     (root / fix.VIEW).with_name("fancontrol-10b9af7ae581.js").write_bytes(b"old view")
                 elif bad == "recipe":
                     (root / fix.RECIPE).write_bytes(self.recipe + b"\n")
+                elif bad == "config":
+                    (root / fix.CONFIG).write_bytes(self.config + b"\n")
                 else:
                     fix.patch_package(root)
                     recipe = root / fix.RECIPE

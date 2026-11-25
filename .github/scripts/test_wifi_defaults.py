@@ -91,6 +91,19 @@ class WifiPatchTests(unittest.TestCase):
             with self.subTest(source_length=len(broken)), self.assertRaisesRegex(ValueError, "review upstream"):
                 wifi.patch_generator(broken, "Test", "12345678")
 
+    def test_ap3000m_radio_defaults_patch_repeatably_and_reject_anchor_drift(self):
+        source = upstreams()["AP3000M"]
+        updated = wifi.patch_generator(source, "AP3000M", "12345678", ap3000m_radio_defaults=True)
+        self.assertEqual(updated, wifi.patch_generator(updated, "AP3000M", "12345678", ap3000m_radio_defaults=True))
+        self.assertNotIn("bss_transition", updated)
+        self.assertIn("sae-mixed", updated)
+        self.assertIn("mu_beamformer='1'", updated)
+        self.assertIn("country || 'CN'", updated)
+        for broken in (source.replace("width > 80", "width > 40"),
+                       source.replace("set ${s}.country='${country || ''}'", "set ${s}.country='00'")):
+            with self.assertRaisesRegex(ValueError, "review upstream"):
+                wifi.patch_generator(broken, "AP3000M", "12345678", ap3000m_radio_defaults=True)
+
     def test_every_device_image_checks_the_installed_generator_bytes(self):
         for name in ("AP3000M", "C8-688", "TR3000-512"):
             data = json.loads((REPO / f"Profiles/{name}.json").read_text(encoding="utf-8"))
@@ -125,7 +138,13 @@ class WifiPatchTests(unittest.TestCase):
                 result = subprocess.run([BASH, "-ec", command], cwd=tree, env=env,
                                         text=True, capture_output=True, encoding="utf-8")
                 self.assertEqual(result.returncode, 0, result.stderr)
-                expected = wifi.patch_generator(source, options["WRT_SSID"], str(options["WRT_WORD"]), profile == "C8-688")
+                expected = wifi.patch_generator(
+                    source,
+                    options["WRT_SSID"],
+                    str(options["WRT_WORD"]),
+                    profile == "C8-688",
+                    ap3000m_radio_defaults=(profile == "AP3000M"),
+                )
                 self.assertEqual(generator.read_text(encoding="utf-8"), expected)
                 # Settings.sh must not hide a missing/changed upstream generator.
                 config_before_failure = (tree / ".config").read_bytes()
@@ -228,6 +247,30 @@ const uci = { cursor: function() { return { get_all: function() { return SAVED; 
             "bands": {"6G": {"max_width": 160, "he": True}}}}}}
         generated = assignments(self.execute(wifi.patch_generator(upstreams()["AP3000M"], "New", "12345678"), hardware=hardware))
         self.assertEqual(generated["wireless.default_radio0.encryption"], "sae")
+
+    def test_ap3000m_new_radios_enable_cn_he160_beamformer_and_sae_mixed_without_touching_saved(self):
+        hardware = {
+            "wlan": {
+                "phy0": {"path": "platform/soc/18000000.wifi", "info": {"bands": {"2G": {"max_width": 40, "he": True}}}},
+                "phy1": {"path": "platform/soc/18000000.wifi+1", "info": {"bands": {"5G": {"max_width": 160, "he": True}}}},
+            }
+        }
+        patched = wifi.patch_generator(upstreams()["AP3000M"], "AP3000M", "12345678", ap3000m_radio_defaults=True)
+        generated = assignments(self.execute(patched, hardware=hardware))
+        self.assertEqual(generated["wireless.radio0.country"], "CN")
+        self.assertEqual(generated["wireless.radio0.htmode"], "HE20")
+        self.assertEqual(generated["wireless.default_radio0.encryption"], "psk2+ccmp")
+        self.assertNotIn("wireless.radio0.mu_beamformer", generated)
+        self.assertEqual(generated["wireless.radio1.country"], "CN")
+        self.assertEqual(generated["wireless.radio1.htmode"], "HE160")
+        self.assertEqual(generated["wireless.radio1.mu_beamformer"], "1")
+        self.assertEqual(generated["wireless.default_radio1.encryption"], "sae-mixed")
+        self.assertFalse(any("bss_transition" in key for key in generated))
+        saved = {
+            "radio0": {".type": "wifi-device", "path": "platform/soc/18000000.wifi"},
+            "radio1": {".type": "wifi-device", "path": "platform/soc/18000000.wifi+1"},
+        }
+        self.assertEqual(self.execute(patched, saved=saved, hardware=hardware), "")
 
 
 if __name__ == "__main__":

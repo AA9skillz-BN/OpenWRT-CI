@@ -23,6 +23,7 @@
     "kmod-sound-core",
     "kmod-usb-audio",
     "flock",
+    "sgdisk",
     "kmod-nft-fullcone",
     "luci-app-turboacc",
     "luci-i18n-turboacc-zh-cn",
@@ -141,6 +142,24 @@
     {
       "path": "/usr/share/luci/menu.d/luci-app-airpi-fancontrol.json",
       "build_source": "package/luci-app-airpi3000m-fancontrol/luci-app-airpi-fancontrol/files/usr/share/luci/menu.d/luci-app-airpi-fancontrol.json"
+    },
+    {
+      "path": "/etc/config/airpi-fan",
+      "build_source": "package/luci-app-airpi3000m-fancontrol/luci-app-airpi-fancontrol/files/etc/config/airpi-fan"
+    },
+    {
+      "path": "/bin/config_generate",
+      "build_source": "package/base-files/files/bin/config_generate",
+      "executable": true
+    },
+    {
+      "path": "/etc/config/dhcp",
+      "build_source": "package/network/services/dnsmasq/files/dhcp.conf"
+    },
+    {
+      "path": "/etc/uci-defaults/98-ap3000m-gpt-fix",
+      "source": "Scripts/AP3000M/98-ap3000m-gpt-fix",
+      "executable": true
     },
     {
       "path": "/etc/init.d/ap3000m-fm350-usb-compat",
