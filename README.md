@@ -15,7 +15,7 @@ Actions 运行的 Artifact 中，验收后才另行发布。
 | Cudy TR3000 v1 **512MB 闪存硬改版** | [TR3000](.github/workflows/TR3000.yml) | [VIKINGYFY/immortalwrt](https://github.com/VIKINGYFY/immortalwrt) / `owrt` | `192.168.6.1` | `TR3000` / `12345678` | [TR3000-512](docs/TR3000-512.md) |
 | AirPi AP3000M | [AP3000M](.github/workflows/AP3000M.yml) | [immortalwrt/immortalwrt](https://github.com/immortalwrt/immortalwrt) / `master` | `192.168.10.1` | `AP3000M` / `12345678` | [AP3000M](docs/AP3000M.md) |
 
-表中是当前代码生成新配置时的默认值：2.4G / 5G 使用 WPA2-PSK / AES（CCMP）。
+新建无线配置时，两款机型的 2.4 GHz 均使用 WPA2-PSK / CCMP。TR3000 的 5 GHz 同样使用 WPA2-PSK / CCMP，AP3000M 的 5 GHz 使用 WPA2/WPA3 混合模式。
 保留配置升级时，后台地址和 Wi-Fi 等以恢复的用户配置为准。
 旧固件曾因无线生成器格式变化而未写入密码；修复需重新构建后刷入，已有 Release 附件不会随 main 更新。
 两款默认均使用 Aurora 主题。
@@ -25,7 +25,7 @@ Actions 运行的 Artifact 中，验收后才另行发布。
 
 ## 如何构建
 
-进入 **Actions → 对应机型 → Run workflow**。两款固件均为手动触发；构建代码、配置和工作流的推送或 PR 按路径触发 `Build logic checks`。
+进入 **Actions → 对应机型 → Run workflow**。两款固件均为手动触发；推送或提交 PR 会触发 `Build logic checks`，也可手动运行检查。
 
 | 参数 | 默认值 | 作用 |
 | --- | --- | --- |
@@ -36,7 +36,7 @@ Actions 运行的 Artifact 中，验收后才另行发布。
 | `PACKAGE` | 空 | 临时追加配置，例如 `CONFIG_PACKAGE_包名=y`；多项用字面量 `\n` 分隔 |
 | `TEST` | `false` | 生成并校验配置，上传配置预览，不编译固件 |
 | `PREVIEW_RUN_ID` | 空 | 完整构建可复用同机型、同分支、同 CI 提交的成功配置预览 |
-| `BUILD_ONLY` | `false` | 完整编译、校验并上传固件 Artifact，不创建 Release |
+| `BUILD_ONLY` | `false` | 设为 `true` 时，完整编译、校验并仅上传固件 Artifact |
 
 建议按以下顺序验证配置或上游更新：
 
@@ -63,10 +63,10 @@ Actions 运行的 Artifact 中，验收后才另行发布。
 
 默认构建跟随最新源码和 feeds，插件优先取最新分支，并记录实际提交。
 启用 `TEST=true` 后，Artifact 包含最终配置和 `build-snapshot.json`。
-完整验证可设 `TEST=false`、`BUILD_ONLY=true`，填入成功预览的 `PREVIEW_RUN_ID` 并沿用原参数。
+完整验证可设 `TEST=false`、`BUILD_ONLY=true`，将成功预览的 Actions run ID 填入 `PREVIEW_RUN_ID`，并沿用同一机型、分支、CI 提交及构建参数。构建会按快照拉取确切版本，并在编译前核对最终配置摘要。
 需要严格验证插件最新版时使用 `PLUGIN_MODE=latest`。
 需要按仓库版本锁构建时，将两个模式都设为 `locked`。
-AP 的 FM350 / 风扇及 AP/TR TurboACC 等仍执行适配检查；上游改变受检查内容时会停止构建，需审查适配。
+AP 的 FM350、风扇及两款机型的 TurboACC 等均受适配检查约束。`auto` 可按插件回退至锁定提交。源码适配失败、插件拉取失败或回退后仍无法适配时，构建会停止。
 其他源码、分支或新版插件仍需验证设备支持和包依赖；该选项不会自动更新已刷设备。
 
 同一机型应等当前任务结束、检查结果后再启动下一版。若已确认旧任务必然失败，应先取消并确认停止，再启动修复版；不同机型可以并行。
@@ -106,7 +106,7 @@ TR3000.yml / AP3000M.yml
 
 Release tag 包含机型、源码、分支、时间、run ID 和 attempt；非 `main` 分支发布额外使用 `preview-` 前缀，并标为 prerelease。配置预览和 BUILD_ONLY 均不会创建 Release。
 正式发布模式在长时间编译前预留指向本次 CI 提交的标签，标签冲突时停止；重试发布沿用成功编译任务的 Artifact 标识。
-需要发布已验收的 BUILD_ONLY 产物时，运行 `Publish existing device artifact`，填入原始 run ID。两种发布路径均要求构建提交有成功的 Build logic checks。详细规则见 [构建流程](docs/BUILD-PIPELINE.md)。
+需要发布已验收的 BUILD_ONLY 产物时，运行 `Publish existing device artifact`，填入原始 `run_id`。同一运行保留多份固件时，使用 `artifact_id` 指定已验收的那份。晋升会核对归档和附件摘要，缺少标签时创建指向原构建提交的标签。两种发布路径均要求构建提交有成功的 Build logic checks。详细规则见 [构建流程](docs/BUILD-PIPELINE.md)。
 
 构建检查可以发现配置和镜像内容问题；刷写、散热、无线和移动网络仍需对应硬件验证。
 
@@ -121,7 +121,6 @@ Release tag 包含机型、源码、分支、时间、run ID 和 attempt；非 `
 - LAN、主题和 TurboACC 默认值在构建期设置，保留配置升级时不会由旧的自定义首启脚本强制重设。
 - TurboACC 使用 JavaScript / ucode 页面与后端，沿用当前 firewall4 和 SONiC FullCone；迁移旧开关并优先保留已有新版设置。BBR 由 TurboACC 管理，移除旧独立 BBR 服务，避免互相覆盖。
 - LAN IPv6 路由器优先级规范为 `medium`，保留 relay 模式；不关闭 IPv6，已有客户端路由的变化还取决于 RA 更新。
-
 - LuCI「系统 → 固件升级」和 `tr3000-ota` 提供 512MB 专用 OTA，升级前检查当前分区布局和目标镜像的布局证明。
 
 两款固件均预装经过摘要核对的官方 ARM64 静态 Mihomo 内核。OpenClash 订阅需要自行导入。功能及分区要求见 [TR3000 文档](docs/TR3000-512.md)。
@@ -130,9 +129,9 @@ Release tag 包含机型、源码、分支、时间、run ID 和 attempt；非 `
 
 - [FM350-GL 管理](https://github.com/LianXia233/luci-app-fm350)、首次开机 AT 口 / APN / CID 配置纠正、[AP3000M 风扇控制](https://github.com/LianXia233/luci-app-airpi3000m-fancontrol)和 ttyd。
 - FM350 的 PDP / DNS 与打包适配、风扇页面确认和返回状态修正；locked / latest 分别使用对应的已审查 FM350 适配。关键文件在实际镜像中逐字节核对，Rust 后端检查目标架构。
-- 拨号启动前准备非 IMS 数据 PDP，按已保存的 CID / APN 和实际模组状态处理；用户自定义配置保留。
+- 拨号启动前按已保存的 CID / APN 和模组状态准备非 IMS 数据 PDP。AT 口定位会解析 USB 接口符号链接，再匹配当前模组的串口。
 - 提供用户主动开启的 FM350 USB 2.0 兼容选项，默认保留 USB 3.0；具体排障步骤和限制见机型文档。
-- RNDIS 开机检查及每 5 分钟巡检；恢复验收要求接口、IPv4、该接口默认路由和有效收包计数，自动与手动自愈共用文件锁。
+- RNDIS 在开机及每 5 分钟巡检，绑定 FM350 接口发起限时探测，连续两轮无收包后记录异常。默认由 fm350d 负责自动恢复。只有 `data_guard` 和 `net_guard` 均显式关闭且连续两轮出现符合条件的发送错误时，巡检脚本才尝试自动复位。恢复以该接口收到新的公网探测应答为准。
 - [Arthur TurboACC](https://github.com/Arthur97172/luci-app-turboacc) 管理软件 / 硬件分载、WED、FullCone 和 TCP 拥塞算法，实际可用项取决于驱动与后端能力；首次导入现有设置，保留明确关闭和已选择的算法。RPS/XPS 与 MTU 探测继续由设备调优脚本负责。
 - LuCI「系统 → 固件升级」和 `ap3000m-ota`，支持下载校验、保留 / 不保留配置升级，以及指定版本回退。
 - OTA 元数据从 GitHub API 获取，镜像站只用于下载文件；下载后核对大小和 SHA-256，刷写前执行 `sysupgrade -T`。
@@ -150,7 +149,7 @@ ap3000m-ota self-update                  # 从兼容的正式 Release 更新 CLI
 
 默认 OTA 渠道为 `AP3000M-immortalwrt-master-`，排除草稿及预发布版本。
 `ap3000m_ota.main.enabled=0` 关闭网页操作和定时检查，`auto_check=0` 只关闭每日检查；命令行手动操作仍可用。
-`fm350.main.rdnis_watch=0` 关闭运行期定时巡检。开关每次调用时读取，重新启用无需重装 cron。
+`fm350.main.rdnis_watch=0` 关闭开机及定时巡检。可用 `ap3000m-rdnis-guard --check` 手动检查。
 网页“任务已启动”表示进入后台下载 / 校验，后续错误会显示在页面；后台日志为 `/tmp/ap3000m-ota-operation.log`。
 
 配置、安装与排障见 [AP3000M 文档](docs/AP3000M.md)。
@@ -186,10 +185,11 @@ ap3000m-ota self-update                  # 从兼容的正式 Release 更新 CLI
 | [Build logic checks](.github/workflows/BUILD-CHECKS.yml) | 回归测试、真实 ucode / 文件锁与 FIT/DTB/squashfs 测试、Shell / JS / 工作流语法检查 |
 | [Auto-Clean](.github/workflows/Auto-Clean.yml) | 每天香港时间 05:21，两款机型每渠道保留最近 3 个 Release；回收已核实归属、失败且最后活动超过 24 小时的流水线草稿，人工草稿/未识别机型/Git tag 保留；手动默认预览，`APPLY=true` 才删除 |
 | 下载缓存 `dl` | 根据实际源码 / feeds / 插件提交、最终配置及适配后配方生成固定 key，精确命中不重复保存；旧缓存可补齐下载，内容仍由 OpenWrt 核对哈希 |
-| 编译缓存 `.ccache` | 滚动保存；编译失败也可保留已完成的缓存，取消的任务不保存 |
+| Cargo 下载缓存 | 按源码包内的 `Cargo.lock` 摘要分代，保存 registry 索引、crate 归档和 Git 下载 |
+| C/C++ 编译缓存 `.ccache` | 按宿主 OS 和 GCC 划分恢复前缀并滚动保存；编译失败也可保留已完成的缓存，取消的任务不保存 |
 | 安装后的 host / toolchain（v3） | 按实际工具链源码、规则、有效配置和宿主依赖精确匹配；核对文件内容、权限、链接及原始完成 stamp，通过后仅规范化 tools / toolchain 源码时间。只保存 host / toolchain 和完整性清单，Rust 链接另行刷新 |
 | 缓存异常 | 损坏或部分恢复时还原本轮干净宿主环境，告警后冷编；真实输入漂移或无法还原仍失败。封存、保存、服务或统计故障不阻断已验证固件 |
-| 缓存轮换 | 下载 / ccache 按机型和 ref 轮换；共享工具链按 ref / target 保护当前 key、最新两代及七天内条目。坏缓存仅精确删除已确认的 key，保护较新替代条目 |
+| 缓存轮换 | 下载 / ccache / Cargo 按机型和 ref 轮换；共享工具链按 ref / target 保护当前 key、最新两代及七天内条目。坏缓存仅精确删除已确认的 key，保护较新替代条目 |
 
 工具链 key 不直接绑定机型、插件 / feeds 版本、Rust 或固件日期；这些变化若影响实际工具链输入，
 仍会使缓存失效；只有实际依赖指纹相同才共享，同平台不等于必然共享。
