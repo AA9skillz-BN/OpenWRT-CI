@@ -7,6 +7,8 @@ from pathlib import Path
 import re
 import subprocess
 
+from build_snapshot import replay
+
 EXCLUDED = {"video", "pon_drivers", "pon_userspace"}
 
 
@@ -72,8 +74,12 @@ def main():
     url, branch = os.environ["WRT_REPO"], os.environ["WRT_BRANCH"]
     mode = os.environ.get("WRT_SOURCE_MODE", "locked")
     lock = resolve(repo, name, url, branch, mode)
+    snapshot = replay(repo)
+    pinned = snapshot["source"] if snapshot is not None else lock if mode == "locked" else None
+    if pinned is not None and (pinned["url"].removesuffix(".git"), pinned["branch"]) != (url.removesuffix(".git"), branch):
+        raise ValueError("source snapshot differs from the requested repository or branch")
     if args.command == "source":
-        revision = lock["commit"] if mode == "locked" else branch
+        revision = sha(pinned["commit"]) if pinned is not None else branch
         if revision.startswith("-"):
             raise ValueError("invalid source revision")
         git(tree, "init", "-q")
@@ -81,7 +87,7 @@ def main():
         git(tree, "fetch", "--depth=1", "origin", revision)
         git(tree, "checkout", "--detach", "FETCH_HEAD")
         actual = git(tree, "rev-parse", "HEAD")
-        if mode == "locked" and actual != lock["commit"]:
+        if pinned is not None and actual != pinned["commit"]:
             raise ValueError("source revision mismatch")
         (reports / "source-commit.txt").write_text(actual + "\n")
         with Path(os.environ["GITHUB_ENV"]).open("a") as stream:
@@ -90,14 +96,14 @@ def main():
         source = tree / "feeds.conf"
         if not source.exists():
             source = tree / "feeds.conf.default"
-        text = feed_config(source.read_text(), lock["feeds"] if mode == "locked" else None)
+        text = feed_config(source.read_text(), pinned["feeds"] if pinned is not None else None)
         (tree / "feeds.conf").write_text(text, newline="\n")
     else:
         feeds = {}
         for line in (tree / "feeds.conf").read_text().splitlines():
             _kind, feed, address = line.split()
             actual = git(tree / "feeds" / feed, "rev-parse", "HEAD")
-            if mode == "locked" and actual != lock["feeds"][feed]["commit"]:
+            if pinned is not None and actual != pinned["feeds"][feed]["commit"]:
                 raise ValueError(f"{feed}: fetched feed revision mismatch")
             feeds[feed] = {"url": re.split(r"[;^]", address, maxsplit=1)[0], "commit": actual}
         snapshot = {"url": url, "branch": branch, "commit": git(tree, "rev-parse", "HEAD"), "feeds": feeds}

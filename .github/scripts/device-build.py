@@ -12,8 +12,14 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from actions_evidence import sha
+from build_snapshot import replay
 from device_image import verify_payload
 import toolchain_cache
+
+
+class PluginIncompatible(ValueError):
+    """The candidate's reviewed adaptation did not apply."""
 
 
 def run(*args, cwd=None):
@@ -137,7 +143,13 @@ def run_hook_check(cmd):
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip().splitlines()
-        raise ValueError(detail[-1] if detail else f"hook exited with {result.returncode}")
+        if detail:
+            last = detail[-1]
+            missing_package_file = last.startswith("FileNotFoundError:") and (
+                str(cmd[-1]) in last or str(cmd[-1]).replace("\\", "\\\\") in last)
+            if last.startswith("ValueError:") or missing_package_file:
+                raise PluginIncompatible(last)
+        raise RuntimeError("\n".join(detail) or f"hook exited with {result.returncode}")
 
 
 def default_plugin_validator(repo, profile_name, key, probe_tree, mode):
@@ -145,11 +157,11 @@ def default_plugin_validator(repo, profile_name, key, probe_tree, mode):
     if key == "openclash" and profile_name in ("AP3000M", "TR3000-512"):
         pkg = probe_tree / "package/luci-app-openclash"
         if not (pkg / "Makefile").is_file() or not (pkg / "root/etc/config/openclash").is_file():
-            raise ValueError("OpenClash Makefile or default config missing")
+            raise PluginIncompatible("OpenClash Makefile or default config missing")
         recipe = (pkg / "Makefile").read_text(encoding="utf-8")
         anchor = "\ninclude $(INCLUDE_DIR)/package.mk\n"
         if recipe.count(anchor) != 1 or re.search(r"(?m)^\s*(?:override\s+)?RSTRIP\s*[:?+]?=", recipe):
-            raise ValueError("OpenClash package strip rules changed")
+            raise PluginIncompatible("OpenClash package strip rules changed")
         return
     if profile_name == "AP3000M":
         if key == "turboacc":
@@ -191,13 +203,30 @@ def install_packages(repo, tree, data, reports, profile_name=None, validator=Non
         raise ValueError("plugin mode must be locked, latest or auto")
     locks = json.loads((repo / "Profiles/packages.lock.json").read_text(encoding="utf-8"))
     validate = validator or default_plugin_validator
+    snapshot = replay(repo)
+    preview = snapshot["plugins"] if snapshot is not None else None
+    if preview is not None and (preview["mode"] != mode or set(preview["plugins"]) != set(data["packages"])):
+        raise ValueError("preview plugin mode or package set differs")
     resolve_mode = "latest" if mode in ("latest", "auto") else "locked"
     # Resolve each moving branch once, then fetch that exact SHA. A branch
     # advancing during checkout must not change this run's snapshot or records.
     resolved, resolution = {}, {}
     for key in data["packages"]:
-        resolved[key], resolution[key] = resolve_plugin(key, locks[key], resolve_mode)
-        resolution[key]["effective_mode"] = resolve_mode
+        if preview is None:
+            resolved[key], resolution[key] = resolve_plugin(key, locks[key], resolve_mode)
+            resolution[key]["effective_mode"] = resolve_mode
+            continue
+        entry = preview["plugins"][key]
+        item = locks[key]
+        effective = entry["effective_mode"]
+        if entry["url"] != item["url"] or entry["locked_commit"] != item["commit"]:
+            raise ValueError(f"{key}: preview package identity differs")
+        if effective != resolve_mode and not (mode == "auto" and effective == "locked" and entry.get("fallback") is True):
+            raise ValueError(f"{key}: preview adapter mode differs")
+        revision = sha(entry["resolved_commit"])
+        if effective == "locked" and revision != item["commit"]:
+            raise ValueError(f"{key}: preview lock commit differs")
+        resolved[key], resolution[key] = dict(item, commit=revision), entry
     provenance = {}
     for key in data["packages"]:
         item = resolved[key]
@@ -205,13 +234,19 @@ def install_packages(repo, tree, data, reports, profile_name=None, validator=Non
         locked_revision = locks[key]["commit"]
         print(f"Plugin {key}: {mode} {resolution[key]['branch'] or 'commit'} @ {revision}", flush=True)
         fetch_plugin_revision(key, item, tree, revision)
-        if mode == "auto":
+        if preview is not None and resolution[key].get("fallback"):
+            entry = resolution[key]
+            append_compatibility_note(
+                reports, f"- 插件 `{key}`：预检中上游提交 `{sha(entry['candidate_commit'])[:12]}` 适配失败"
+                f"（{entry['fallback_reason']}），按预检复用锁版本 `{revision[:12]}`。",
+            )
+        if mode == "auto" and preview is None:
             with tempfile.TemporaryDirectory() as probe_dir:
                 probe_tree = Path(probe_dir)
                 copy_plugin_targets(item, tree, probe_tree)
                 try:
                     validate(repo, profile_name, key, probe_tree, "latest")
-                except Exception as exc:
+                except PluginIncompatible as exc:
                     reason = str(exc).strip() or exc.__class__.__name__
                     print(f"::warning::Plugin {key}: latest @ {revision[:12]} failed adaptation check "
                           f"({reason}); falling back to verified lock @ {locked_revision[:12]}", flush=True)
@@ -378,7 +413,8 @@ def package(tree, repo, name, data, reports):
         if file.is_file() and file.name in ("source-commit.txt", "feeds.buildinfo", "packages.lock.json", "plugin-resolution.json",
                                              "build-inputs.json", "image-metadata.json", "compatibility.txt", "ci-commit.txt",
                                              "config-resolution.json", "source-lock.json", "verified-payload.json",
-                                             "toolchain-inputs.json", "toolchain-cache.json", "openclash-core.json"):
+                                             "toolchain-inputs.json", "toolchain-cache.json", "openclash-core.json",
+                                             "build-snapshot.json", "preview-origin.json", "cargo-locks.json"):
             shutil.copy2(file, upload / file.name)
     # Do not discard evidence needed to reproduce or diagnose this release.
     checksums = []
@@ -417,6 +453,23 @@ def download_key(tree, prefix, source, feeds, packages, config):
     return prefix + "-dl-" + toolchain_cache.json_digest(inputs)
 
 
+def cargo_lock_digests(tree):
+    return {
+        path.relative_to(tree).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted((tree / "package").rglob("Cargo.lock")) if path.is_file()
+    }
+
+
+def verify_cargo_locks(tree, reports):
+    path = reports / "cargo-locks.json"
+    before = json.loads(path.read_text(encoding="utf-8"))
+    after = cargo_lock_digests(tree)
+    if before != after:
+        changed = [name for name in sorted(before.keys() | after.keys()) if before.get(name) != after.get(name)]
+        raise ValueError(f"Cargo.lock changed during build: {', '.join(changed)}")
+    print(f"Verified {len(after)} unchanged source Cargo.lock files", flush=True)
+
+
 def cache_keys(repo, tree, name, reports):
     feeds = {p.name: run("git", "rev-parse", "HEAD", cwd=p)
              for p in sorted((tree / "feeds").iterdir()) if (p / ".git").exists()}
@@ -448,13 +501,11 @@ def cache_keys(repo, tree, name, reports):
     prefix = f"wrt-v2-{name.lower()}-linux-x64"
     downloads = download_key(tree, prefix, inputs["source"], feeds, inputs["packages"], config)
     # ccache validates compiler/content itself; toolchain staging never falls back.
-    ccache = hashlib.sha256((compiler + inputs["rust"] + inputs["os"]).encode()).hexdigest()[:16]
-    cargo_locks = {
-        p.relative_to(tree).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
-        for p in sorted((tree / "package").rglob("Cargo.lock")) if p.is_file()
-    } if (tree / "package").exists() else {}
-    cargo_prefix = f"{prefix}-cargo-{ccache}-"
-    cargo_key = cargo_prefix + toolchain_cache.json_digest({"rust": inputs["rust"], "locks": cargo_locks})[:16]
+    ccache = hashlib.sha256((compiler + inputs["os"]).encode()).hexdigest()[:16]
+    cargo_locks = cargo_lock_digests(tree)
+    cargo_prefix = f"{prefix}-cargo-v2-"
+    cargo_key = cargo_prefix + toolchain_cache.json_digest(cargo_locks)[:16]
+    write(reports / "cargo-locks.json", json.dumps(cargo_locks, indent=2) + "\n")
     with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as stream:
         stream.write(f"prefix={prefix}\nstaging={staging}\n"
                      f"toolchain_prefix={staging.rsplit('-', 1)[0]}\n"
@@ -483,6 +534,7 @@ def main():
     elif args.command == "defconfig":
         defconfig(tree, data, reports)
     elif args.command == "package":
+        verify_cargo_locks(tree, reports)
         package(tree, repo, args.profile, data, reports)
     elif args.command == "cache":
         cache_keys(repo, tree, args.profile, reports)

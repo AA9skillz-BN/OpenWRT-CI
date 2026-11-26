@@ -32,9 +32,10 @@ Actions 运行的 Artifact 中，验收后才另行发布。
 | `SOURCE` | 见机型表 | 源码仓库，格式为 `owner/repo` |
 | `BRANCH` | 见机型表 | 源码分支 |
 | `SOURCE_MODE` | `latest` | 跟随所选源码和 feeds 上游；可选 `locked` 使用源码版本锁 |
-| `PLUGIN_MODE` | `latest` | 跟随各插件配置分支，未配置时跟随默认分支；可选 `locked` 使用插件版本锁 |
+| `PLUGIN_MODE` | `auto` | 优先跟随各插件分支，已覆盖的适配检查不兼容时逐插件回退；可选严格的 `latest` 或固定 `locked` |
 | `PACKAGE` | 空 | 临时追加配置，例如 `CONFIG_PACKAGE_包名=y`；多项用字面量 `\n` 分隔 |
 | `TEST` | `false` | 生成并校验配置，上传配置预览，不编译固件 |
+| `PREVIEW_RUN_ID` | 空 | 完整构建可复用同机型、同分支、同 CI 提交的成功配置预览 |
 | `BUILD_ONLY` | `false` | 完整编译、校验并上传固件 Artifact，不创建 Release |
 
 建议按以下顺序验证配置或上游更新：
@@ -45,22 +46,25 @@ Actions 运行的 Artifact 中，验收后才另行发布。
 | 完整验证 | `false` | `true` | 编译并检查实际镜像，上传 `firmware-*` Artifact |
 | 编译并发布 | `false` | `false` | 验证通过后，由独立发布 job 创建 Release |
 
-`SOURCE_MODE` 和 `PLUGIN_MODE` 独立，默认均为 `latest`：
+`SOURCE_MODE` 和 `PLUGIN_MODE` 独立，分别默认 `latest` 和 `auto`：
 
 | `SOURCE_MODE` | `PLUGIN_MODE` | 主源码 / feeds | 单独拉取的第三方插件 |
 | --- | --- | --- | --- |
 | `locked` | `locked` | 使用源码版本锁 | 使用插件版本锁 |
 | `locked` | `latest` | 使用源码版本锁 | 跟随插件分支 |
 | `latest` | `locked` | 跟随所选源码和 feeds | 使用插件版本锁 |
-| `latest` | `latest` | 跟随所选源码和 feeds | 跟随插件分支 |
+| `latest` | `latest` | 跟随所选源码和 feeds | 严格跟随插件分支 |
+| `latest` / `locked` | `auto` | 按源码模式处理 | 逐插件预检，遇适配不兼容时回退到锁提交 |
 
 `SOURCE_MODE=locked` 要求 SOURCE / BRANCH 与 [sources.lock.json](Profiles/sources.lock.json) 一致；只改输入框不会绕过版本锁。
 `PLUGIN_MODE=latest` 在每次构建中只解析一次分支，再按确切提交 SHA 下载，记录原锁与实际版本；
 不会改写仓库内的 [packages.lock.json](Profiles/packages.lock.json)，这里的 latest 指分支最新提交，而非最新 Release。
 本仓库自带的 OTA 和设备脚本随本仓库提交，feeds 内的软件包由 `SOURCE_MODE` 控制。
 
-默认构建会跟随最新源码、feeds 和插件；每次构建记录实际提交，不保证不同日期的输入相同。
-完整验证可选 `TEST=false`、`BUILD_ONLY=true`；只更新插件时可选 `SOURCE_MODE=locked`、`PLUGIN_MODE=latest`。
+默认构建跟随最新源码和 feeds，插件优先取最新分支，并记录实际提交。
+启用 `TEST=true` 后，Artifact 包含最终配置和 `build-snapshot.json`。
+完整验证可设 `TEST=false`、`BUILD_ONLY=true`，填入成功预览的 `PREVIEW_RUN_ID` 并沿用原参数。
+需要严格验证插件最新版时使用 `PLUGIN_MODE=latest`。
 需要按仓库版本锁构建时，将两个模式都设为 `locked`。
 AP 的 FM350 / 风扇及 AP/TR TurboACC 等仍执行适配检查；上游改变受检查内容时会停止构建，需审查适配。
 其他源码、分支或新版插件仍需验证设备支持和包依赖；该选项不会自动更新已刷设备。
@@ -102,7 +106,7 @@ TR3000.yml / AP3000M.yml
 
 Release tag 包含机型、源码、分支、时间、run ID 和 attempt；非 `main` 分支发布额外使用 `preview-` 前缀，并标为 prerelease。配置预览和 BUILD_ONLY 均不会创建 Release。
 正式发布模式在长时间编译前预留指向本次 CI 提交的标签，标签冲突时停止；重试发布沿用成功编译任务的 Artifact 标识。
-TEST 和 BUILD_ONLY 不预建标签。详细失败清理与重试规则见[构建流程](docs/BUILD-PIPELINE.md)。
+需要发布已验收的 BUILD_ONLY 产物时，运行 `Publish existing device artifact`，填入原始 run ID。两种发布路径均要求构建提交有成功的 Build logic checks。详细规则见 [构建流程](docs/BUILD-PIPELINE.md)。
 
 构建检查可以发现配置和镜像内容问题；刷写、散热、无线和移动网络仍需对应硬件验证。
 
@@ -118,7 +122,9 @@ TEST 和 BUILD_ONLY 不预建标签。详细失败清理与重试规则见[构�
 - TurboACC 使用 JavaScript / ucode 页面与后端，沿用当前 firewall4 和 SONiC FullCone；迁移旧开关并优先保留已有新版设置。BBR 由 TurboACC 管理，移除旧独立 BBR 服务，避免互相覆盖。
 - LAN IPv6 路由器优先级规范为 `medium`，保留 relay 模式；不关闭 IPv6，已有客户端路由的变化还取决于 RA 更新。
 
-OpenClash 的内核和订阅需要刷机后自行配置。功能及分区要求见 [TR3000 文档](docs/TR3000-512.md)。
+- LuCI「系统 → 固件升级」和 `tr3000-ota` 提供 512MB 专用 OTA，升级前检查当前分区布局和目标镜像的布局证明。
+
+两款固件均预装经过摘要核对的官方 ARM64 静态 Mihomo 内核。OpenClash 订阅需要自行导入。功能及分区要求见 [TR3000 文档](docs/TR3000-512.md)。
 
 ### AP3000M
 
@@ -170,8 +176,8 @@ ap3000m-ota self-update                  # 从兼容的正式 Release 更新 CLI
 **同步 CI 模板**与**更新固件源码**是两件事：
 
 - 同步模板时审查合并差异，保留本仓库的 `DEVICE-CORE.yml`、机型定制和版本锁。`DEVICE-CORE.yml` 不会自动继承 `WRT-CORE.yml` 的更新。
-- 源码 / feeds 与第三方插件各有独立版本模式，默认均为 `latest`，每次解析上游并记录确切提交。核对 `source-lock.json`、`plugin-resolution.json` 和实际插件快照；需要固定输入时显式选 `locked`。latest 不自动修改仓库版本锁，更新锁需另行审查。
-- 更新后先检查 Build logic checks 和受影响机型的 TEST，再做 BUILD_ONLY；确认后再发布。遇到上游不兼容应适配修复，不能靠删除功能或跳过校验放行。
+- 源码 / feeds 与第三方插件各有独立版本模式，默认分别为 `latest` / `auto`，并记录每次使用的确切提交。核对 `source-lock.json`、`plugin-resolution.json` 和实际插件快照；需要固定输入时显式选 `locked`。latest 不自动修改仓库版本锁，更新锁需另行审查。
+- 更新后先检查 Build logic checks 和受影响机型的 TEST，再用预览 run ID 做 BUILD_ONLY，验收后可晋升同一 Artifact。遇到上游不兼容应适配修复，不能靠删除功能或跳过校验放行。
 
 两款默认的自动清理和缓存维护如下：
 

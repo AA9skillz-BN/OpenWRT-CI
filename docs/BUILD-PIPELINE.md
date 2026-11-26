@@ -5,7 +5,7 @@
 README 不作为构建配置来源。
 
 正式发布构建先由独立、无 checkout 的任务生成统一日期和标签，并将标签固定到本次
-CI 提交，再开始长时间编译；编译任务仍只有 `contents: read`。这样即使编译期间
+CI 提交，再开始长时间编译；编译任务使用 `contents: read` 和 `actions: read`。这样即使编译期间
 main 的工作流发生变化，发布时也无需再给历史提交补建标签。标签已存在但提交不同
 会立即失败；构建开始前分支已前进且标签尚未创建时，也会明确停止。
 TEST 和 BUILD_ONLY 不创建标签。构建失败只清理本轮新建、仍指向原提交且没有任何
@@ -16,12 +16,14 @@ Release 的标签；已验证固件的标签保留，以便重试发布。仅重
 `target_commitish`；编译期间 main 前进后，重复传入历史提交可能被 GitHub 的集成权限检查拒绝。
 上传完成后，公开前逐一核对远端附件清单、大小和 SHA-256；缺失或不一致即保留失败状态。
 
-若旧运行的发布任务失败，可手动运行 `Publish existing device artifact`
-（`RELEASE-EXISTING.yml`），填写原始 `run_id`。该入口只接受本仓库 main 的两款设备手动运行，
-要求原编译、镜像验证和固件上传成功，并且只有一份未过期固件 Artifact。
-它核对归档 API 摘要、构建提交、机型标签、预留 Git 标签和文件校验和后补发相同字节，
-不重新编译、不移动 Git 标签，也不覆盖已有 Release。存在多份 Artifact、已有 Release
-或未预留标签时应先人工核对，不通过猜测或覆盖继续。
+验收 BUILD_ONLY 产物后，可运行 `Publish existing device artifact`
+（`RELEASE-EXISTING.yml`）晋升，也可用它恢复失败的发布任务。填写本仓库 main 上设备运行的
+`run_id`。有多份未过期固件时再填写 `artifact_id`，以选定具体 attempt。
+该入口核对该 attempt 的编译、镜像校验和固件上传结果、GitHub 的 ZIP 摘要、实际构建提交、
+嵌入标签和每个附件校验和。两种发布路径均要求原构建 SHA 在同分支完成 Build logic checks。
+有标签时核对提交，缺失时创建指向原提交的轻量标签。GitHub 对历史提交创建标签可能要求
+额外工作流权限，可用仓库 secret `FIRMWARE_TAG_TOKEN` 提供具有 Contents 与 Workflows 写权限的凭据。
+它仅用于创建确切标签。存在同标签的草稿或 Release 时停止。
 
 ## 阶段和失败条件
 
@@ -31,7 +33,7 @@ Release 的标签；已验证固件的标签保留，以便重试发布。仅重
    锁模式下拉取失败、URL 不一致或版本不一致直接失败。
    在 feeds 更新前排除未启用的 video、PON feeds。
 3. 根据 `Profiles/<机型>.json` 只拉需要的第三方仓库。独立的 `PLUGIN_MODE`
-   默认 `latest`，解析插件分支当前提交后仍按确切 SHA 拉取；可选择 `locked`，
+   默认 `auto`，按确切 SHA 拉取最新候选，适配不兼容时回退该插件。可选严格的 `latest` 或 `locked`，
    使用 `Profiles/packages.lock.json` 中的完整提交 SHA。插件只安装一次。
 4. 通过独立 bash 进程执行机型 `private.sh`，投放补丁、首启脚本等。
    必需文件缺失或复制失败立即终止，不通过 source 共享 shell 状态。
@@ -45,11 +47,9 @@ Release 的标签；已验证固件的标签保留，以便重试发布。仅重
    的实际 FIT kernel 提取默认 DTB：核对 compatible、TR3000 的 UBI reg。
    解开实际 squashfs 检查关键脚本、执行权限、
    启动链接、脚本内容和本次 build tag；证据保存为 `verified-payload.json`。
-8. 编译 job 只有 `contents: read`，无全局 GitHub token，checkout 不持久化凭据。
-   固件与说明通过本次运行的 Artifact 交给独立发布 job；发布 job 不 checkout 或
-   执行构建代码，只复核校验和并发布。仅发布 job 拥有 `contents: write`。
-   先上传 draft Release，附件上传成功后公开。
-   不再查找“最新 Release”、下载固件、事后裁剪或修改说明。
+8. 编译 job 使用只读权限，上传固件和说明。独立发布 job 检出本工作流提交的校验脚本，
+   复核 Artifact 后创建 draft Release。附件全部上传并核对远端大小和 SHA-256 后公开。
+   发布流程只读取 Artifact 数据，其中的脚本与固件作为附件传递。
 
 AP3000M 另外打包 OTA 脚本和兼容元数据，均纳入校验和。最终 squashfs 必须含相同脚本及
 `/usr/share/ap3000m-ota/runtime-abi`。修改 UCI/RPC/UI 契约或不兼容的运行依赖时必须递增
@@ -66,9 +66,12 @@ prerelease，默认只接受 `AP3000M-immortalwrt-master-` 渠道；旧配置中
 `AP3000M-` 宽前缀也会收窄。自定义 OTA 渠道可以显式配置其他前缀。
 缓存清理在另一个仅有 contents/read、actions/write 的 job 中执行，不拿发布权限。
 
-TEST 只生成经过 defconfig 检查的配置 Artifact，不创建 Release、不恢复和保存编译缓存。
-同时执行工具链准备和缓存输入计算，以便在预览阶段发现工具链版本和指纹错误。
-勾选 BUILD_ONLY 则执行完整编译、镜像校验并上传固件 Artifact，不创建 Release。
+TEST 在 defconfig 和工具链预检完成后，上传最终配置和 `build-snapshot.json`。
+快照包含 CI 提交、构建参数、源码与 feeds 的提交、插件适配决策和 Mihomo 归档、二进制及许可摘要。
+填写同机型、同分支及同 CI SHA 的 `PREVIEW_RUN_ID` 并沿用原参数，可按此快照完成构建。
+构建验证预览 attempt、归档摘要和生成的配置，并把预览来源写入 `preview-origin.json`。
+上游分支在两次运行之间前进时仍按预览 SHA 拉取。预览过期或任一输入不一致时，重新执行预览。
+勾选 BUILD_ONLY 则执行完整编译和镜像校验，固件保存在 Artifact 中。
 
 ## 配置和插件维护
 
@@ -145,7 +148,9 @@ AP 的 FM350/风扇适配仍检查审阅过的上游内容。新版改变这些�
   未命中可借用本机型旧缓存补齐。下载由 OpenWrt 检查哈希。
 - `.ccache`：独立滚动缓存，上限 1 GiB，每次运行产生新 key 以积累结果；
   即使编译失败也保留已完成的缓存。
-- Cargo 依赖缓存：按 Rust 工具链版本与包内 `Cargo.lock` 摘要缓存 `~/.cargo/registry` 与 `~/.cargo/git/db`，精确命中时不重复上传，支持同工具链前缀回退。
+- Cargo 下载缓存按源码包的 `Cargo.lock` 摘要分代，保存 registry 索引、crate 归档及 git 下载。
+  FM350 的实际配方使用 `--locked`，完整构建在打包前核对源码包内锁文件的编译前后摘要。
+  C/C++ ccache 的恢复前缀由 GCC 和宿主 OS 决定。测量收益时分别核对缓存体积、命中与编译日志。
 - host/toolchain staging：使用 `wrt-v3-toolchain-<target>-<subtarget>-<hash>`，仅精确匹配，
   不使用前缀回退。缓存范围为 `staging_dir/host`、`staging_dir/toolchain-*` 和完整性清单，
   不含 `hostpkg`、目标平台的 `host` 或 `build_dir`。详细输入、验证和限制见
@@ -192,7 +197,7 @@ ImmortalWrt 于 2026-10-27 在提交
 正常合并双方修改，不应整文件覆盖。同步后先跑 Build logic checks，再跑
 两个机型的 TEST；公共构建逻辑变化时应再跑 BUILD_ONLY。
 
-OpenWrt/ImmortalWrt 源码和 feeds 默认不会自动漂移；更新版本锁后，工具链缓存按其实际
+默认跟随上游源码和 feeds。需要按仓库版本锁验证时选择 `locked`；工具链缓存按其实际
 构建输入变化失效，设备与包清单校验可以阻止不完整镜像发布。上游接口发生变化时
 仍然需要适配，检查通过也不等同于真机验证通过。
 

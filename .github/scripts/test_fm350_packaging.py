@@ -124,7 +124,7 @@ qstrip=$(subst ",,$(1))
             self.assertTrue(linker.is_file())
             wrapper = top / "cargo-with-test-linker"
             wrapper.write_text("#!/bin/sh\nexport CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=" +
-                shlex.quote(str(linker)) + "\nexec " + shlex.quote(cargo) + ' "$@" --locked\n')
+                shlex.quote(str(linker)) + "\nexec " + shlex.quote(cargo) + ' "$@"\n')
             wrapper.chmod(0o755)
             (tree / "probe.mk").write_text('''
 include Makefile
@@ -146,8 +146,17 @@ packaged:
                                 "original recipe must reproduce the image gate mismatch")
             recipe = tree / "Makefile"
             recipe.write_bytes(fix.patch_makefile(recipe.read_bytes()))
+            lock = tree / "rust/Cargo.lock"
+            original_lock = lock.read_bytes()
+            lock.unlink()
+            missing = subprocess.run(command, cwd=tree, capture_output=True, text=True, timeout=90)
+            self.assertNotEqual(missing.returncode, 0)
+            self.assertIn("--locked", missing.stdout + missing.stderr)
+            self.assertFalse(lock.exists())
+            lock.write_bytes(original_lock)
             after = subprocess.run(command, cwd=tree, capture_output=True, text=True, timeout=180)
             self.assertEqual(after.returncode, 0, after.stdout + after.stderr)
+            self.assertEqual(lock.read_bytes(), original_lock)
             self.assertEqual(binary.read_bytes(), installed.read_bytes(),
                              "compiled and packaged binary must remain byte-identical")
             self.assertEqual(installed.read_bytes()[:6], b"\x7fELF\x02\x01")

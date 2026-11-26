@@ -7,6 +7,10 @@ on:
         description: 'Completed main device run with successful validated firmware artifact'
         required: true
         type: string
+      artifact_id:
+        description: 'Optional exact artifact ID when several build attempts uploaded firmware'
+        required: false
+        type: string
 permissions:
   contents: read
 concurrency:
@@ -23,149 +27,64 @@ jobs:
       GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
       SOURCE_RUN: ${{inputs.run_id}}
     steps:
-    - name: Select only a successfully validated device build
+    - name: Checkout trusted release verification
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+        sparse-checkout: .github/scripts
+    - name: Verify and bind the archived firmware to its original build
       id: source
-      run: |
-        set -euo pipefail
-        [[ "$SOURCE_RUN" =~ ^[0-9]+$ ]]
-        gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN" > source-run.json
-        python3 - <<'PY'
-        import json, os
-        from pathlib import Path
-        run = json.loads(Path('source-run.json').read_text())
-        assert run['status'] == 'completed' and run['head_branch'] == 'main'
-        assert run['event'] == 'workflow_dispatch' and run['head_repository']['full_name'] == os.environ['GITHUB_REPOSITORY']
-        profiles = {'.github/workflows/TR3000.yml': 'TR3000-512', '.github/workflows/AP3000M.yml': 'AP3000M'}
-        profile = profiles[run['path']]
-        Path('source-profile.txt').write_text(profile)
-        with open(os.environ['GITHUB_ENV'], 'a') as f:
-            f.write('BUILD_SHA=' + run['head_sha'] + '\nPROFILE=' + profile + '\n')
-        PY
-        gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN/jobs?filter=all&per_page=100" > source-jobs.json
-        python3 - <<'PY'
-        import json
-        from pathlib import Path
-        jobs = [job for page in json.loads(Path('source-jobs.json').read_text()) for job in page['jobs']]
-        assert any(j['conclusion'] == 'success' and all(any(s['name'] == name and s['conclusion'] == 'success' for s in j['steps']) for name in ['Compile Firmware', 'Verify and Package Device Firmware', 'Upload Validated Firmware']) for j in jobs)
-        PY
-        gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN/artifacts" > source-artifacts.json
-        python3 - <<'PY'
-        import json, os
-        from pathlib import Path
-        artifacts = json.loads(Path('source-artifacts.json').read_text())['artifacts']
-        profile = Path('source-profile.txt').read_text()
-        matches = [a for a in artifacts if a['name'].startswith('firmware-' + profile + '-' + os.environ['SOURCE_RUN'] + '-') and not a['expired']]
-        assert len(matches) == 1, 'Need exactly one accepted firmware artifact; do not guess between attempts'
-        a = matches[0]
-        with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-            f.write('artifact=' + a['name'] + '\nartifact_id=' + str(a['id']) + '\ndigest=' + a['digest'] + '\n')
-        PY
-    - name: Download exact archived artifact and check API digest
       env:
-        ARTIFACT_ID: ${{steps.source.outputs.artifact_id}}
-        ARTIFACT_DIGEST: ${{steps.source.outputs.digest}}
-      run: |
-        gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip" > artifact.zip
-        python3 - <<'PY'
-        import hashlib, os, zipfile
-        from pathlib import Path
-        archive = Path('artifact.zip')
-        assert 'sha256:' + hashlib.sha256(archive.read_bytes()).hexdigest() == os.environ['ARTIFACT_DIGEST']
-        root = Path('release').resolve()
-        with zipfile.ZipFile(archive) as z:
-            assert all((root / n).resolve().is_relative_to(root) for n in z.namelist())
-            z.extractall(root)
-        PY
-    - name: Bind artifact provenance to original build
-      id: provenance
-      run: |
-        python3 - <<'PY'
-        import json, os, re
-        from pathlib import Path
-        upload = Path('release/wrt/upload')
-        assert (upload / 'ci-commit.txt').read_text().strip() == os.environ['BUILD_SHA']
-        configs = list(upload.glob('Config-*.txt'))
-        assert len(configs) == 1
-        tag = configs[0].stem.removeprefix('Config-')
-        assert re.fullmatch(re.escape(os.environ['PROFILE']) + r'-[A-Za-z0-9._-]+-' + os.environ['SOURCE_RUN'] + r'-[0-9]+', tag)
-        assert '<!-- firmware-model: ' + os.environ['PROFILE'].lower() + ' -->' in Path('release/build-reports/release-notes.md').read_text()
-        with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-            f.write('tag=' + tag + '\n')
-        PY
-    - name: Verify reserved tag points to the built commit
+        SOURCE_ARTIFACT: ${{inputs.artifact_id}}
+      run: python3 .github/scripts/release-evidence.py select
+    - name: Require successful build logic checks for the built commit
       env:
         GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
-        RELEASE_TAG: ${{steps.provenance.outputs.tag}}
-      run: |
-        gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" > release-tag.json
-        jq -e --arg sha "$BUILD_SHA" '.object.type == "commit" and .object.sha == $sha' release-tag.json
+      run: python3 .github/scripts/release-evidence.py logic
     - name: Refuse overwriting any existing release
       env:
-        RELEASE_TAG: ${{steps.provenance.outputs.tag}}
-      run: |
-        gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" > existing-releases.json
-        jq -e --arg tag "$RELEASE_TAG" '[.[][] | select(.tag_name == $tag)] | length == 0' existing-releases.json
-    - name: Verify transferred checksums
-      working-directory: ./release/wrt/upload
-      run: |
-        sha256sum --check --strict sha256sums
+        GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
+        RELEASE_TAG: ${{steps.source.outputs.tag}}
+      run: python3 .github/scripts/release-evidence.py new
+    - name: Verify or create exact release tag
+      env:
+        GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
+        RELEASE_TAG: ${{steps.source.outputs.tag}}
+        FIRMWARE_TAG_TOKEN: ${{secrets.FIRMWARE_TAG_TOKEN}}
+      run: python3 .github/scripts/release-evidence.py tag --create-tag
     - name: Mark pipeline draft ownership
       env:
-        RELEASE_TAG: ${{steps.provenance.outputs.tag}}
+        RELEASE_TAG: ${{steps.source.outputs.tag}}
       run: |
         printf '\n<!-- firmware-ci: repo=%s run=%s attempt=%s sha=%s tag=%s started=%s -->\n' \
           "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$BUILD_SHA" \
           "$RELEASE_TAG" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> ./release/build-reports/release-notes.md
     - name: Create validated draft
       id: release
-      uses: softprops/action-gh-release@v2
-      with:
-        token: ${{secrets.GITHUB_TOKEN}}
-        tag_name: ${{steps.provenance.outputs.tag}}
-        # The existing tag was reserved and checked against the build SHA above.
-        # Do not resubmit a historical commit as target_commitish: main may have
-        # advanced during compilation, triggering GitHub's integration restriction.
-        draft: true
-        prerelease: false
-        make_latest: true
-        fail_on_unmatched_files: true
-        body_path: ./release/build-reports/release-notes.md
-        files: ./release/wrt/upload/*
+      env:
+        GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
+        RELEASE_TAG: ${{steps.source.outputs.tag}}
+      run: python3 .github/scripts/release-evidence.py draft
     - name: Verify uploaded release asset digests
       env:
         GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
+        RELEASE_TAG: ${{steps.source.outputs.tag}}
         RELEASE_ID: ${{steps.release.outputs.id}}
-        RELEASE_TAG: ${{steps.provenance.outputs.tag}}
-      run: |
-        gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" > uploaded-release.json
-        python3 - <<'PY'
-        import hashlib, json
-        from pathlib import Path
-        import os
-        release = json.loads(Path('uploaded-release.json').read_text())
-        assert release['draft'] is True and release['tag_name'] == os.environ['RELEASE_TAG']
-        local = {p.name: p for p in Path('release/wrt/upload').iterdir() if p.is_file()}
-        assets = release['assets']
-        assert len(assets) == len(local) and {a['name'] for a in assets} == set(local)
-        for asset in assets:
-            path = local[asset['name']]
-            assert asset['size'] == path.stat().st_size, path.name
-            assert asset.get('digest') == 'sha256:' + hashlib.sha256(path.read_bytes()).hexdigest(), path.name
-        print(f'Verified {len(assets)} uploaded release asset sizes and SHA-256 digests')
-        PY
+      run: python3 .github/scripts/release-evidence.py uploaded
     - name: Publish complete release
       env:
         GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
+        RELEASE_TAG: ${{steps.source.outputs.tag}}
         RELEASE_ID: ${{steps.release.outputs.id}}
-      run: |
-        gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -F draft=false
+      run: python3 .github/scripts/release-evidence.py publish
     - name: Remove this run's failed draft
       if: ${{ failure() || cancelled() }}
       env:
         GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
-        RELEASE_TAG: ${{steps.provenance.outputs.tag}}
+        RELEASE_TAG: ${{steps.source.outputs.tag}}
       run: |
-        # The action may have created a draft before failing to return its ID.
+        # Draft creation can succeed before attachment upload finishes.
         # Match this exact run/attempt; never delete a published or manual draft.
         gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" > releases.json
         marker="<!-- firmware-ci: repo=$GITHUB_REPOSITORY run=$GITHUB_RUN_ID attempt=$GITHUB_RUN_ATTEMPT sha=$BUILD_SHA tag=$RELEASE_TAG started="

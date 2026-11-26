@@ -11,16 +11,21 @@ BEFORE = '''\t@if [ -n "$(TARGET_STRIP)" ] && [ -x "$(TARGET_STRIP)" ]; then \\
 AFTER = '''\t# Keep RUST_OUT identical to the binary after the package's RSTRIP pass.
 \t$(RSTRIP) $(RUST_OUT)
 '''
+CARGO_BUILD = "\t\t$(CARGO) build --$(RUST_PROFILE) --target $(RUST_TARGET)\n"
+LOCKED_BUILD = CARGO_BUILD.rstrip("\n") + " --locked\n"
 
 
 def patch_makefile(data):
     text = data.decode("utf-8")
     if "PKG_NAME:=luci-app-fm350" not in text or "RUST_OUT" not in text:
         raise ValueError("FM350 recipe identity or RUST_OUT definition missing")
+    if text.count(CARGO_BUILD) + text.count(LOCKED_BUILD) != 1:
+        raise ValueError("FM350 Cargo build anchor changed")
+    text = text.replace(CARGO_BUILD, LOCKED_BUILD, 1)
     if AFTER in text:
         if text.count(AFTER) != 1 or BEFORE in text:
             raise ValueError("FM350 strip anchor duplicated or inconsistent")
-        return data
+        return text.encode("utf-8")
     if text.count(BEFORE) != 1:
         raise ValueError("FM350 strip anchor changed; review latest Makefile")
     return text.replace(BEFORE, AFTER, 1).encode("utf-8")

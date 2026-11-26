@@ -26,6 +26,7 @@ def load_module(name, path):
 build = load_module("canary_device_build", REPO / ".github/scripts/device-build.py")
 wifi_mod = load_module("canary_wifi_defaults", REPO / ".github/scripts/wifi-defaults.py")
 ap_sys_mod = load_module("canary_ap_sys", REPO / "Scripts/AP3000M/system-defaults.py")
+tr_layout = load_module("canary_tr_layout", REPO / "Scripts/TR3000-512/patch-layout.py")
 openclash_mod = load_module("canary_openclash", REPO / ".github/scripts/ap3000m-openclash-core.py")
 
 SOURCE_TARGETS = (
@@ -96,10 +97,14 @@ def check_source_anchors(label, slug, branch, lock_key, sources_lock, head_sha=N
         ap_sys_mod.patch_config_generate(cg)
         ap_sys_mod.patch_dhcp_conf(dhcp)
     else:
-        dts = fetch_bytes(raw_base + "target/linux/mediatek/dts/mt7981b-cudy-tr3000-v1.dts").decode("utf-8")
-        mk = fetch_bytes(raw_base + "target/linux/mediatek/image/filogic.mk").decode("utf-8")
-        if "partition@5c0000" not in dts or "Device/cudy_tr3000-v1" not in mk:
-            raise ValueError("TR3000-512 UBI layout anchors changed")
+        with tempfile.TemporaryDirectory() as temporary:
+            tree = Path(temporary)
+            for name in ("target/linux/mediatek/dts/mt7981b-cudy-tr3000-v1.dts",
+                         "target/linux/mediatek/image/filogic.mk"):
+                path = tree / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(fetch_bytes(raw_base + name))
+            tr_layout.patch_layout(tree)
     return locked_sha, head_sha
 
 
@@ -145,10 +150,14 @@ def run_canary(repo=REPO):
             results.append({"category": "plugin", "target": f"{key} ({','.join(profiles)})",
                             "locked": locked_sha[:12], "latest": head_sha[:12],
                             "ok": True, "detail": f"分支 {meta['branch']} 适配校验通过"})
+        except build.PluginIncompatible as exc:
+            results.append({"category": "plugin", "target": f"{key} ({','.join(profiles)})",
+                            "locked": locked_sha[:12], "latest": head_short,
+                            "ok": False, "detail": f"适配不兼容，auto 选择锁版本：{exc}"})
         except Exception as exc:
             results.append({"category": "plugin", "target": f"{key} ({','.join(profiles)})",
                             "locked": locked_sha[:12], "latest": head_short,
-                            "ok": False, "detail": f"auto 模式将自动回退锁版本；原因: {exc}"})
+                            "ok": False, "detail": f"无法完成插件预检（{type(exc).__name__}）：{exc}"})
 
     try:
         mihomo = openclash_mod.resolve(openclash_lock, "latest")
@@ -164,7 +173,8 @@ def run_canary(repo=REPO):
 
 
 def format_markdown(report):
-    status_headline = "✅ 全部上游源码与插件当前均兼容" if report["all_ok"] else "⚠️ 检测到上游变更需跟进适配（`PLUGIN_MODE=auto` 构建不受阻断，会自动回退对应插件锁）"
+    status_headline = ("✅ 已覆盖的上游适配预检全部通过" if report["all_ok"] else
+                       "⚠️ 上游适配预检未全部通过。仅插件适配不兼容可触发 `PLUGIN_MODE=auto` 回退")
     lines = [
         "## 上游源码与插件适配巡检报告 (Upstream Canary)",
         "",

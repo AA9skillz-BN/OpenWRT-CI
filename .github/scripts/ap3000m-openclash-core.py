@@ -11,6 +11,8 @@ import re
 import struct
 import urllib.request
 
+from build_snapshot import replay
+
 REPOSITORY = "MetaCubeX/mihomo"
 MAX_ARCHIVE = 40 * 1024 * 1024
 MAX_BINARY = 100 * 1024 * 1024
@@ -113,13 +115,27 @@ def install(repo, tree, mode, device="AP3000M", reports=None):
     reports_dir = Path(reports or os.environ.get("WRT_BUILD_REPORTS") or (repo / "build-reports"))
     reports_dir.mkdir(parents=True, exist_ok=True)
     effective_mode = mode
-    if mode == "auto":
+    preview = replay(repo)
+    expected = preview["mihomo"] if preview is not None else None
+    if expected is not None:
+        effective_mode = expected["mode"]
+        if expected["requested_mode"] != mode or effective_mode not in ("locked", "latest") or (
+                mode != "auto" and effective_mode != mode):
+            raise ValueError("OpenClash core preview mode differs")
+        snapshot = validate_snapshot({key: expected[key] for key in ("repository", "tag", "asset", "size", "sha256")})
+        if effective_mode == "locked" and any(snapshot[key] != lock_data[key] for key in snapshot):
+            raise ValueError("OpenClash core preview differs from the committed lock")
+        base = "https://github.com/" + REPOSITORY + "/releases/download/" + snapshot["tag"] + "/"
+        binary = unpack(fetch(base + snapshot["asset"], MAX_ARCHIVE), snapshot)
+        if mode == "auto" and effective_mode == "locked":
+            print(f"{device} OpenClash core: replaying the preview's locked fallback {snapshot['tag']}", flush=True)
+    elif mode == "auto":
         try:
             snapshot = resolve(lock_data, "latest")
             base = "https://github.com/" + REPOSITORY + "/releases/download/" + snapshot["tag"] + "/"
             binary = unpack(fetch(base + snapshot["asset"], MAX_ARCHIVE), snapshot)
             effective_mode = "latest"
-        except Exception as exc:
+        except (ValueError, OSError) as exc:
             reason = str(exc).strip() or exc.__class__.__name__
             print(f"::warning::{device} OpenClash core: latest release incompatible ({reason}); "
                   f"falling back to locked {lock_data.get('tag')}", flush=True)
@@ -138,13 +154,15 @@ def install(repo, tree, mode, device="AP3000M", reports=None):
         binary = unpack(fetch(base + snapshot["asset"], MAX_ARCHIVE), snapshot)
     license_url = "https://raw.githubusercontent.com/" + REPOSITORY + "/" + snapshot["tag"] + "/LICENSE"
     license_text = fetch(license_url, 128 * 1024)
-    recipe.write_text(adapted_recipe, encoding="utf-8", newline="\n")
     record = {"schema": 1, "mode": effective_mode, "requested_mode": mode, **snapshot,
               "binary_sha256": hashlib.sha256(binary).hexdigest(), "binary_size": len(binary),
               "elf_machine": 183, "static": True,
               "source": "https://github.com/" + REPOSITORY + "/tree/" + snapshot["tag"],
               "source_archive": "https://github.com/" + REPOSITORY + "/archive/refs/tags/" + snapshot["tag"] + ".tar.gz",
               "license_url": license_url, "license_sha256": hashlib.sha256(license_text).hexdigest()}
+    if expected is not None and record != expected:
+        raise ValueError("OpenClash core binary or license differs from the verified preview")
+    recipe.write_text(adapted_recipe, encoding="utf-8", newline="\n")
     core = package / "root/etc/openclash/core/clash_meta"
     core.parent.mkdir(parents=True, exist_ok=True)
     core.write_bytes(binary)

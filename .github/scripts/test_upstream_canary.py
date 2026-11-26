@@ -2,6 +2,7 @@
 import importlib.util
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location("upstream_canary", Path(__file__).with_name("upstream-canary.py"))
 canary = importlib.util.module_from_spec(SPEC)
@@ -9,6 +10,21 @@ SPEC.loader.exec_module(canary)
 
 
 class UpstreamCanaryFormatTests(unittest.TestCase):
+    def test_tr3000_canary_rejects_wrong_ubi_length_and_image_size(self):
+        layout = b"partition@5c0000 { reg = <0x5c0000 0x4000000>; };"
+        recipe = b"define Device/cudy_tr3000-v1\n  IMAGE_SIZE := 65536k\n  BLOCKSIZE := 128k\n  PAGESIZE := 2048\nendef\n"
+        for dts, image, error in (
+            (layout.replace(b"4000000", b"8000000"), recipe, "Unexpected upstream UBI layout"),
+            (layout, recipe.replace(b"65536k", b"131072k"), "Unexpected TR3000-v1 layout setting"),
+        ):
+            files = {"mac80211.uc": b"", "mt7981b-cudy-tr3000-v1.dts": dts, "filogic.mk": image}
+            with patch.object(canary.wifi_mod, "patch_generator"), patch.object(
+                    canary, "fetch_bytes", side_effect=lambda url: files[url.rsplit("/", 1)[1]]):
+                with self.assertRaisesRegex(ValueError, error):
+                    canary.check_source_anchors("TR3000", "VIKINGYFY/immortalwrt", "owrt",
+                                                "TR3000-512", {"TR3000-512": {"commit": "a"*40}},
+                                                head_sha="b"*40)
+
     def test_markdown_summary_distinguishes_clean_and_drifted_items(self):
         clean = {
             "schema": 1,
@@ -19,7 +35,7 @@ class UpstreamCanaryFormatTests(unittest.TestCase):
             ],
         }
         md_ok = canary.format_markdown(clean)
-        self.assertIn("全部上游源码与插件当前均兼容", md_ok)
+        self.assertIn("已覆盖的上游适配预检全部通过", md_ok)
         self.assertIn("✅ 通过", md_ok)
 
         drifted = {

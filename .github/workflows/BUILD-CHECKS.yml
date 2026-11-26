@@ -2,24 +2,12 @@ name: Build logic checks
 
 on:
   push:
-    paths:
-      - '.github/**'
-      - 'Profiles/**'
-      - 'Config/**'
-      - 'Scripts/*.sh'
-      - 'Scripts/TR3000-512/**'
-      - 'Scripts/AP3000M/**'
-      - 'Files/TR3000-512/**'
   pull_request:
-    paths:
-      - '.github/**'
-      - 'Profiles/**'
-      - 'Config/**'
-      - 'Scripts/*.sh'
-      - 'Scripts/TR3000-512/**'
-      - 'Scripts/AP3000M/**'
-      - 'Files/TR3000-512/**'
   workflow_dispatch:
+
+concurrency:
+  group: build-logic-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -27,11 +15,30 @@ permissions:
 jobs:
   checks:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Check LuCI JavaScript syntax
+        run: |
+          node --check Scripts/AP3000M/luci-app-ap3000m-ota/htdocs/luci-static/resources/view/ap3000m-ota/overview.js
+          node --check Scripts/TR3000-512/luci-app-tr3000-ota/htdocs/luci-static/resources/view/tr3000-ota/overview.js
+          node .github/scripts/test_tr3000_ota_ui.js
+      - name: Check generated standalone OTA clients
+        run: python3 .github/scripts/render-ota.py --check
+      - name: Check shell syntax
+        run: python3 .github/scripts/check-shell-syntax.py
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.1'
+          cache: false
+      - name: Validate workflow syntax and expressions
+        run: |
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -shellcheck=
       - name: Install workflow test dependency
         run: python3 -m pip install PyYAML==6.0.2
       - name: Install image and runtime validation tools
@@ -51,18 +58,4 @@ jobs:
           GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
         run: |
           rustup target add aarch64-unknown-linux-musl
-          python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
-      - name: Check LuCI JavaScript syntax
-        run: |
-          node --check Scripts/AP3000M/luci-app-ap3000m-ota/htdocs/luci-static/resources/view/ap3000m-ota/overview.js
-          node --check Scripts/TR3000-512/luci-app-tr3000-ota/htdocs/luci-static/resources/view/tr3000-ota/overview.js
-          node .github/scripts/test_tr3000_ota_ui.js
-      - name: Check shell syntax
-        run: python3 .github/scripts/check-shell-syntax.py
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.26.1'
-          cache: false
-      - name: Validate workflow syntax and expressions
-        run: |
-          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -shellcheck=
+          python3 .github/scripts/run-build-tests.py

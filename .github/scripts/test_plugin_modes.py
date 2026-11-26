@@ -99,6 +99,17 @@ class PluginModeTests(unittest.TestCase):
         self.assertEqual(result["example"]["commit"], self.second)
         self.assertEqual((self.tree / "package/plugin/Makefile").read_text(), "version two\n")
 
+    def test_preview_replay_keeps_exact_plugin_after_branch_moves(self):
+        self.assertEqual(self.install("latest")["example"]["commit"], self.second)
+        preview = {"plugins": json.loads((self.reports / "plugin-resolution.json").read_text())}
+        self.commit("version three")
+        with patch.object(build, "replay", return_value=preview), patch.object(build, "resolve_plugin") as resolve:
+            self.assertEqual(self.install("latest")["example"]["commit"], self.second)
+            resolve.assert_not_called()
+            preview["plugins"]["plugins"]["example"]["url"] = "https://other.invalid/repo.git"
+            with self.assertRaisesRegex(ValueError, "package identity"):
+                self.install("latest")
+
     def test_latest_updates_next_run_and_invalidates_download_key(self):
         first = self.install("latest")
         key = build.download_key(self.tree, "cache", "source", {}, first, "config")
@@ -170,7 +181,7 @@ class PluginModeTests(unittest.TestCase):
 
         def check_hook(_repo, _profile, key, probe_tree, _mode):
             if key == "example" and "version two" in (probe_tree / "package/plugin/Makefile").read_text():
-                raise ValueError("simulated anchor drift in example v2")
+                raise build.PluginIncompatible("simulated anchor drift in example v2")
 
         result = self.install("auto", validator=check_hook)
         # Incompatible 'example' automatically fell back to locked v1, while 'other' stayed on latest v2!
@@ -190,6 +201,18 @@ class PluginModeTests(unittest.TestCase):
 
 
 class PluginWorkflowTests(unittest.TestCase):
+    def test_readme_defaults_match_both_workflows_and_reusable_core(self):
+        readme = (REPO / "README.md").read_text(encoding="utf-8")
+        core = yaml.safe_load((REPO / ".github/workflows/DEVICE-CORE.yml").read_text(encoding="utf-8"))
+        core_inputs = core["on"]["workflow_call"]["inputs"]
+        for workflow in ("AP3000M", "TR3000"):
+            data = yaml.safe_load((REPO / ".github/workflows" / f"{workflow}.yml").read_text(encoding="utf-8"))
+            manual = data[True]["workflow_dispatch"]["inputs"]
+            for name in ("SOURCE_MODE", "PLUGIN_MODE"):
+                default = manual[name]["default"]
+                self.assertIn(f"| `{name}` | `{default}` |", readme)
+                self.assertEqual(default, core_inputs["WRT_" + name]["default"])
+
     def test_every_device_exposes_and_passes_all_modes_independently(self):
         for name in ("TR3000", "AP3000M"):
             workflow = yaml.safe_load((REPO / f".github/workflows/{name}.yml").read_text(encoding="utf-8"))

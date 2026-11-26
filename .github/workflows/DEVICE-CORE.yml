@@ -50,6 +50,10 @@ name: DEVICE-CORE
         required: false
         default: false
         type: boolean
+      WRT_PREVIEW_RUN_ID:
+        description: Reproduce a successful configuration preview of this device
+        required: false
+        type: string
       WRT_SOURCE_MODE:
         description: Follow upstream source/feeds by default, or use locked revisions
         default: latest
@@ -72,6 +76,7 @@ env:
   WRT_REPO: ${{inputs.WRT_REPO}}
   WRT_BRANCH: ${{inputs.WRT_BRANCH}}
   WRT_SOURCE: ${{inputs.WRT_SOURCE}}
+  WRT_PREVIEW_RUN_ID: ${{inputs.WRT_PREVIEW_RUN_ID}}
   WRT_PACKAGE: ${{inputs.WRT_PACKAGE}}
   WRT_TEST: ${{inputs.WRT_TEST}}
   WRT_SOURCE_MODE: ${{inputs.WRT_SOURCE_MODE}}
@@ -146,6 +151,16 @@ jobs:
       uses: actions/checkout@v4
       with:
         persist-credentials: false
+    - name: Load Verified Configuration Preview
+      if: ${{ inputs.WRT_PREVIEW_RUN_ID != '' }}
+      env:
+        GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
+      run: |
+        if [ "$WRT_TEST" = true ]; then
+          echo 'PREVIEW_RUN_ID requires a full build with TEST=false.' >&2
+          exit 1
+        fi
+        python3 .github/scripts/build_snapshot.py load
     - name: Initialization Environment
       timeout-minutes: 15
       env:
@@ -221,12 +236,16 @@ jobs:
         bash "$GITHUB_WORKSPACE/Scripts/Settings.sh"
         bash "$GITHUB_WORKSPACE/.github/scripts/prepare-build-host.sh"
         python3 "$GITHUB_WORKSPACE/.github/scripts/device-build.py" defconfig
+    - name: Check and Record Resolved Build Snapshot
+      run: python3 .github/scripts/build_snapshot.py capture
     - name: Prepare Rust Toolchain
+      if: ${{ !inputs.WRT_TEST }}
       run: |
         cd ./wrt/
 
         $GITHUB_WORKSPACE/.github/scripts/prepare-rust.sh
     - name: Compute Device Cache Keys
+      if: ${{ !inputs.WRT_TEST }}
       id: device-cache
       working-directory: ./wrt
       run: python3 "$GITHUB_WORKSPACE/.github/scripts/device-build.py" cache
@@ -283,6 +302,7 @@ jobs:
         TOOLCHAIN_RESTORE_OUTCOME: ${{steps.device-staging.outcome}}
       run: python3 "$GITHUB_WORKSPACE/.github/scripts/toolchain_cache.py" restore
     - name: Refresh Runner Tool Links
+      if: ${{ !inputs.WRT_TEST }}
       working-directory: ./wrt
       run: bash "$GITHUB_WORKSPACE/.github/scripts/refresh-rust-links.sh"
     - name: Download Packages
@@ -380,14 +400,15 @@ jobs:
     - name: Prepare Configuration Preview
       if: ${{ inputs.WRT_TEST }}
       run: |
-        mkdir -p ./wrt/upload
-        cp ./wrt/.config "./wrt/upload/Config-$WRT_RELEASE_TAG.txt"
+        mkdir -p ./configuration-preview
+        cp ./wrt/.config "./configuration-preview/Config-$WRT_RELEASE_TAG.txt"
+        cp ./build-reports/build-snapshot.json ./configuration-preview/
     - name: Upload Configuration Preview
       if: ${{ inputs.WRT_TEST }}
       uses: actions/upload-artifact@v4
       with:
         name: config-${{inputs.WRT_PROFILE}}-${{github.run_id}}-${{github.run_attempt}}
-        path: ./wrt/upload/Config-*.txt
+        path: ./configuration-preview/
         if-no-files-found: error
     - name: Upload Validated Firmware
       if: ${{ !inputs.WRT_TEST }}
@@ -401,6 +422,7 @@ jobs:
         retention-days: 7
     permissions:
       contents: read
+      actions: read
   device-cache-rollover:
     name: Retain device cache generations
     needs: core
@@ -435,24 +457,44 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      actions: read
+    concurrency:
+      group: firmware-release-${{needs.core.outputs.release_tag}}
+      cancel-in-progress: false
+    env:
+      BUILD_SHA: ${{github.sha}}
     steps:
+    - name: Checkout trusted release verification
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+        sparse-checkout: .github/scripts
+    - name: Require successful build logic checks for the built commit
+      env:
+        GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
+      run: python3 .github/scripts/release-evidence.py logic
     - name: Download this run artifact
       uses: actions/download-artifact@v4
       with:
         # A publish-only retry must still download the successful build attempt.
         name: ${{needs.core.outputs.firmware_artifact}}
         path: ./release
+    - name: Verify transferred firmware provenance and checksums
+      env:
+        GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
+        RELEASE_TAG: ${{needs.core.outputs.release_tag}}
+      run: python3 .github/scripts/release-evidence.py local
     - name: Verify reserved tag points to the built commit
       env:
         GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
         RELEASE_TAG: ${{needs.core.outputs.release_tag}}
-      run: |
-        gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" > release-tag.json
-        jq -e --arg sha "$GITHUB_SHA" '.object.type == "commit" and .object.sha == $sha' release-tag.json
-    - name: Verify transferred checksums
-      working-directory: ./release/wrt/upload
-      run: |
-        sha256sum --check --strict sha256sums
+      run: python3 .github/scripts/release-evidence.py tag
+    - name: Refuse overwriting any existing release
+      env:
+        GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
+        RELEASE_TAG: ${{needs.core.outputs.release_tag}}
+      run: python3 .github/scripts/release-evidence.py new
     - name: Mark pipeline draft ownership
       env:
         RELEASE_TAG: ${{needs.core.outputs.release_tag}}
@@ -462,54 +504,29 @@ jobs:
           "$RELEASE_TAG" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> ./release/build-reports/release-notes.md
     - name: Create validated draft
       id: release
-      uses: softprops/action-gh-release@v2
-      with:
-        token: ${{secrets.GITHUB_TOKEN}}
-        tag_name: ${{needs.core.outputs.release_tag}}
-        # The existing tag was reserved and checked against the build SHA above.
-        # Do not resubmit a historical commit as target_commitish: main may have
-        # advanced during compilation, triggering GitHub's integration restriction.
-        draft: true
-        prerelease: ${{ github.ref != 'refs/heads/main' }}
-        make_latest: ${{ github.ref == 'refs/heads/main' && 'true' || 'false' }}
-        fail_on_unmatched_files: true
-        body_path: ./release/build-reports/release-notes.md
-        files: ./release/wrt/upload/*
+      env:
+        GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
+        RELEASE_TAG: ${{needs.core.outputs.release_tag}}
+      run: python3 .github/scripts/release-evidence.py draft
     - name: Verify uploaded release asset digests
       env:
         GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
-        RELEASE_ID: ${{steps.release.outputs.id}}
         RELEASE_TAG: ${{needs.core.outputs.release_tag}}
-      run: |
-        gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" > uploaded-release.json
-        python3 - <<'PY'
-        import hashlib, json
-        from pathlib import Path
-        import os
-        release = json.loads(Path('uploaded-release.json').read_text())
-        assert release['draft'] is True and release['tag_name'] == os.environ['RELEASE_TAG']
-        local = {p.name: p for p in Path('release/wrt/upload').iterdir() if p.is_file()}
-        assets = release['assets']
-        assert len(assets) == len(local) and {a['name'] for a in assets} == set(local)
-        for asset in assets:
-            path = local[asset['name']]
-            assert asset['size'] == path.stat().st_size, path.name
-            assert asset.get('digest') == 'sha256:' + hashlib.sha256(path.read_bytes()).hexdigest(), path.name
-        print(f'Verified {len(assets)} uploaded release asset sizes and SHA-256 digests')
-        PY
+        RELEASE_ID: ${{steps.release.outputs.id}}
+      run: python3 .github/scripts/release-evidence.py uploaded
     - name: Publish complete release
       env:
         GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
+        RELEASE_TAG: ${{needs.core.outputs.release_tag}}
         RELEASE_ID: ${{steps.release.outputs.id}}
-      run: |
-        gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -F draft=false
+      run: python3 .github/scripts/release-evidence.py publish
     - name: Remove this run's failed draft
       if: ${{ failure() || cancelled() }}
       env:
         GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
         RELEASE_TAG: ${{needs.core.outputs.release_tag}}
       run: |
-        # The action may have created a draft before failing to return its ID.
+        # Draft creation can succeed before attachment upload finishes.
         # Match this exact run/attempt; never delete a published or manual draft.
         gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" > releases.json
         marker="<!-- firmware-ci: repo=$GITHUB_REPOSITORY run=$GITHUB_RUN_ID attempt=$GITHUB_RUN_ATTEMPT sha=$GITHUB_SHA tag=$RELEASE_TAG started="

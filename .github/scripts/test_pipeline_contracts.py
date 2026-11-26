@@ -41,7 +41,7 @@ class PipelineTests(unittest.TestCase):
     def test_builder_has_no_publication_credentials(self):
         data = yaml.safe_load((REPO / ".github/workflows/DEVICE-CORE.yml").read_text(encoding="utf-8"))
         builder = data["jobs"]["core"]
-        self.assertEqual(builder["permissions"], {"contents": "read"})
+        self.assertEqual(builder["permissions"], {"contents": "read", "actions": "read"})
         self.assertNotIn("GITHUB_TOKEN", data["env"])
         identity = data["jobs"]["prepare-release"]
         self.assertEqual(builder["needs"], "prepare-release")
@@ -50,7 +50,7 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("$GITHUB_REF\" != 'refs/heads/main'", initialize)
         self.assertIn('WRT_RELEASE_TAG="preview-$WRT_RELEASE_TAG"', initialize)
         for step in builder["steps"]:
-            if step.get("name") == "Apply Device Source and Files":
+            if step.get("name") in ("Apply Device Source and Files", "Load Verified Configuration Preview"):
                 # This job's contents:read token authenticates public release API
                 # requests; it cannot publish. Keep the exception step-scoped.
                 self.assertEqual(step.get("env"), {"GH_TOKEN": "${{secrets.GITHUB_TOKEN}}"})
@@ -60,10 +60,10 @@ class PipelineTests(unittest.TestCase):
             if "checkout@" in step.get("uses", ""):
                 self.assertFalse(step["with"]["persist-credentials"])
         publisher = data["jobs"]["publish"]
-        self.assertEqual(publisher["permissions"], {"contents": "write"})
-        self.assertFalse(any("checkout@" in step.get("uses", "") for step in publisher["steps"]))
-        release = next(step for step in publisher["steps"] if step.get("id") == "release")
-        self.assertEqual(release["with"]["prerelease"], "${{ github.ref != 'refs/heads/main' }}")
+        self.assertEqual(publisher["permissions"], {"contents": "write", "actions": "read"})
+        checkout = next(step for step in publisher["steps"] if "checkout@" in step.get("uses", ""))
+        self.assertEqual(checkout["with"]["ref"], "${{ github.sha }}")
+        self.assertFalse(checkout["with"]["persist-credentials"])
         self.assertIn("inputs.WRT_PUBLISH", publisher["if"])
 
     def test_every_device_uses_isolated_core(self):

@@ -255,8 +255,8 @@ class DeviceContractTests(unittest.TestCase):
         versions["rust"] = "rustc 1.97.0"
         changed_rust = key()
         self.assertEqual(changed_feed["staging"], changed_rust["staging"])
-        self.assertNotEqual(changed_feed["ccache"], changed_rust["ccache"])
-        self.assertNotEqual(changed_feed["cargo"], changed_rust["cargo"])
+        self.assertEqual(changed_feed["ccache"], changed_rust["ccache"])
+        self.assertEqual(changed_feed["cargo"], changed_rust["cargo"])
         build.write(self.tree / "package/example/Cargo.lock", "version = 4\n")
         self.assertNotEqual(changed_rust["cargo"], key()["cargo"])
 

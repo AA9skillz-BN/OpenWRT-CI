@@ -1,0 +1,91 @@
+# @ota config
+cfg() { uci -q get "$CONF.$1" 2>/dev/null; }
+cfg_or() { v=$(cfg "$1"); [ -n "$v" ] && printf '%s' "$v" || printf '%s' "$2"; }
+
+repo()         { cfg_or repo "AA9skillz-BN/OpenWRT-CI"; }
+# @ota release_api
+valid_tag() {
+	case "$1" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
+	case "$1" in "$(tag_prefix)"*) return 0 ;; *) return 1 ;; esac
+}
+
+fetch_api() (
+	# A requested tag is independent of release pagination and retention order.
+	local page=1 batch all='[]' count url
+	if [ -n "${1:-}" ]; then
+		valid_tag "$1" || return 1
+		url="https://api.github.com/repos/$(repo)/releases/tags/$1"
+		batch=$(curl -fsSL --connect-timeout 8 --max-time 30 \
+			-H 'Accept: application/vnd.github+json' -H 'User-Agent: @OTA_CLI@/1.1' "$url") || return 1
+		printf '%s' "$batch" | jq -ce 'if type == "object" and .tag_name then [.] else error("invalid release") end'
+		return $?
+	fi
+	while :; do
+		url="https://api.github.com/repos/$(repo)/releases?per_page=100&page=$page"
+		batch=$(curl -fsSL --connect-timeout 8 --max-time 30 \
+			-H 'Accept: application/vnd.github+json' -H 'User-Agent: @OTA_CLI@/1.1' "$url") || return 1
+		count=$(printf '%s' "$batch" | jq -e 'if type == "array" then length else error("invalid releases") end') || return 1
+		all=$(printf '%s\n%s' "$all" "$batch" | jq -cs '.[0] + .[1]') || return 1
+		[ "$count" -eq 100 ] || break
+		page=$((page + 1))
+	done
+	printf '%s\n' "$all"
+)
+
+# @ota task_state
+acquire_lock() {
+	mkdir -p "${LOCK%/*}" || die "无法创建锁目录"
+	exec 9>"$LOCK"
+	flock -n 9 || die "已有下载或升级任务在运行"
+}
+
+operation_state() {
+	local state="$1" detail="${2:-}"
+	jq -n --arg action "$ACTION" --arg state "$state" --arg detail "$detail" \
+		'{action:$action,state:$state,detail:$detail}' > "$OP_FILE.tmp" && mv -f "$OP_FILE.tmp" "$OP_FILE"
+}
+
+# @ota task
+run_operation() {
+	ACTION="$1"; shift
+	trap operation_exit EXIT
+	trap 'exit 130' INT
+	trap 'exit 143' TERM
+	operation_state running
+	case "$ACTION" in
+		download) cmd_download "$@" ;;
+		upgrade) cmd_upgrade "$@" ;;
+	esac
+	local rc=$?
+	[ "$rc" -eq 0 ] || exit "$rc"
+	operation_state completed
+}
+
+background_operation() {
+	# FD 9 stays open in the child: flock releases automatically on every exit.
+	acquire_lock
+	ACTION="$1"
+	operation_state running || die "无法保存后台任务状态"
+	( trap '' HUP; run_operation "$@" ) </dev/null >"$OP_LOG" 2>&1 &
+	printf 'started\n'
+}
+
+# @ota download_helpers
+asset_url() {
+	printf 'https://github.com/%s/releases/download/%s/%s' "$(repo)" "$1" "$2"
+}
+
+mirror_list() (
+	[ "$(use_mirror)" = "1" ] || return 0
+	[ -f /lib/functions.sh ] || return 0
+	# OpenWrt config helpers read optional unset variables (e.g. IPKG_INSTROOT).
+	# Isolate their shell options and globals from the strict OTA caller.
+	set +u
+	. /lib/functions.sh
+	config_load @OTA_UCI@ 2>/dev/null || return 0
+	config_list_foreach main mirror echo
+)
+
+human_mb() {
+	awk -v b="${1:-0}" 'BEGIN{ printf "%.2f MB", b/1048576 }'
+}

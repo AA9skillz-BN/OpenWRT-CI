@@ -83,7 +83,8 @@ gh() {
 
     def test_publish_retry_uses_original_build_artifact(self):
         jobs = WORKFLOW["jobs"]
-        name = jobs["publish"]["steps"][0]["with"]["name"]
+        download = next(step for step in jobs["publish"]["steps"] if step.get("name") == "Download this run artifact")
+        name = download["with"]["name"]
         self.assertEqual(name, "${{needs.core.outputs.firmware_artifact}}")
         self.assertNotIn("github.run_attempt", name)
         self.assertIn("firmware_artifact", jobs["core"]["outputs"])

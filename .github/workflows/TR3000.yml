@@ -49,6 +49,10 @@ on:
         default: false
         required: false
         type: boolean
+      PREVIEW_RUN_ID:
+        description: '可选。复用同机型、同分支、同 CI 提交的成功 TEST 运行，锁定本次构建输入。'
+        required: false
+        type: string
       TEST:
         description: '仅输出配置文件，不编译固件。'
         default: false
@@ -105,4 +109,5 @@ jobs:
       #插件调整
       WRT_PACKAGE: ${{ inputs.PACKAGE }}
       #仅输出配置文件
+      WRT_PREVIEW_RUN_ID: ${{ inputs.PREVIEW_RUN_ID }}
       WRT_TEST: ${{ inputs.TEST || false }}

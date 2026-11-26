@@ -13,16 +13,20 @@ BEFORE = '''\t@if [ -n "$(TARGET_STRIP)" ] && [ -x "$(TARGET_STRIP)" ]; then \\
 AFTER = '''\t# Keep RUST_OUT identical to the binary after the package's RSTRIP pass.
 \t$(RSTRIP) $(RUST_OUT)
 '''
+CARGO_BUILD = "$(CARGO) build --$(RUST_PROFILE) --target $(RUST_TARGET)"
+LOCKED_BUILD = CARGO_BUILD + " --locked"
 
 
 def patch_makefile(data):
     text = data.decode("utf-8")
-    original = text.replace(AFTER, BEFORE)
+    original = text.replace(AFTER, BEFORE).replace(LOCKED_BUILD, CARGO_BUILD)
     if hashlib.sha256(original.encode("utf-8")).hexdigest() != UPSTREAM_SHA256:
         raise ValueError("FM350 recipe differs from the reviewed locked source")
     if original.count(BEFORE) != 1:
         raise ValueError("FM350 strip anchor changed")
-    return original.replace(BEFORE, AFTER).encode("utf-8")
+    if original.count(CARGO_BUILD) != 1:
+        raise ValueError("FM350 Cargo build anchor changed")
+    return original.replace(BEFORE, AFTER).replace(CARGO_BUILD, LOCKED_BUILD).encode("utf-8")
 
 
 if __name__ == "__main__":
