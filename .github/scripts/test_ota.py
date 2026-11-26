@@ -131,7 +131,7 @@ curl() {
 
     def test_self_update_rejects_new_abi_and_missing_dependencies(self):
         for info in ({"runtime_abi": "2"}, {"requires": ["nonexistent_ota_dependency_9001"]},
-                     {"tag": "AP3000M-other"}, {"model": "c8-688"}):
+                     {"tag": "AP3000M-other"}, {"model": "different-device"}):
             with self.subTest(info=info):
                 release = self.self_update_fixture(info)
                 result = self.self_update(release)
@@ -155,7 +155,7 @@ curl() {
                 self.assert_installed_untouched()
 
     def test_self_update_ignores_draft_preview_and_other_device(self):
-        for overrides in ({"draft": True}, {"prerelease": True}, {"tag_name": "C8-688-update"}, {"assets": []}):
+        for overrides in ({"draft": True}, {"prerelease": True}, {"tag_name": "OTHER-update"}, {"assets": []}):
             release = self.self_update_fixture()
             release.update(overrides)
             result = self.self_update(release)

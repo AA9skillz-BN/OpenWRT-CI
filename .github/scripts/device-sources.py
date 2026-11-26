@@ -74,16 +74,6 @@ def main():
     lock = resolve(repo, name, url, branch, mode)
     if args.command == "source":
         revision = lock["commit"] if mode == "locked" else branch
-        # Keep compatibility with the old C8 pin, but never mix two conflicting locks.
-        if name == "C8-688":
-            lines = (repo / "Scripts/C8-688/source-pin.txt").read_text().splitlines()
-            pin = next((line.split("#", 1)[0].strip() for line in lines if line.split("#", 1)[0].strip()), "auto")
-            if pin not in ("auto", "master", "main", "HEAD"):
-                pin = pin.lower()
-                sha(pin)
-                if mode == "locked" and pin != revision:
-                    raise ValueError("C8 source-pin conflicts with sources.lock.json")
-                revision = pin
         if revision.startswith("-"):
             raise ValueError("invalid source revision")
         git(tree, "init", "-q")

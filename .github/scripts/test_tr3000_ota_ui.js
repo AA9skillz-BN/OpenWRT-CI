@@ -45,6 +45,6 @@ function fixture(options = {}) {
  const lost=fixture({lost:true});lost.confirm(true);lost.button('升级（保留配置）').handlers.click();
  await new Promise(r=>setImmediate(r));assert(lost.button('升级（保留配置）').disabled);
  const pollLost=fixture({pollLost:true});await pollLost.refresh();assert(pollLost.button('升级（保留配置）').disabled);
- assert(!source.includes('official'),'TR must not inherit C8 boot environment actions');
+ assert(!source.includes('official'),'TR must not inherit foreign boot environment actions');
  console.log('TR OTA UI: confirmation, single submission, wipe choice, layout and status failures verified');
 })().catch(e=>{console.error(e);process.exit(1);});

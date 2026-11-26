@@ -1,6 +1,6 @@
-# TR3000 / AP3000M / C8-688 构建流程
+# TR3000 / AP3000M 构建流程
 
-这三个入口调用独立的 `DEVICE-CORE.yml`。其他入口继续使用 `WRT-CORE.yml`
+这两个入口调用独立的 `DEVICE-CORE.yml`。其他入口继续使用 `WRT-CORE.yml`
 的原有通用流程；通用核心只保留凭据清理与稳定 action 版本等必要调整。
 README 不作为构建配置来源。
 
@@ -17,7 +17,7 @@ Release 的标签；已验证固件的标签保留，以便重试发布。仅重
 上传完成后，公开前逐一核对远端附件清单、大小和 SHA-256；缺失或不一致即保留失败状态。
 
 若旧运行的发布任务失败，可手动运行 `Publish existing device artifact`
-（`RELEASE-EXISTING.yml`），填写原始 `run_id`。该入口只接受本仓库 main 的三款设备手动运行，
+（`RELEASE-EXISTING.yml`），填写原始 `run_id`。该入口只接受本仓库 main 的两款设备手动运行，
 要求原编译、镜像验证和固件上传成功，并且只有一份未过期固件 Artifact。
 它核对归档 API 摘要、构建提交、机型标签、预留 Git 标签和文件校验和后补发相同字节，
 不重新编译、不移动 Git 标签，也不覆盖已有 Release。存在多份 Artifact、已有 Release
@@ -42,8 +42,8 @@ Release 的标签；已验证固件的标签保留，以便重试发布。仅重
    下载、并行编译；失败时保留串行重试日志。
 7. 发布前要求唯一 sysupgrade、与设备对应的 manifest、全部必需包、非空
    kernel/root 以及 fwtool 提取的设备和平台标识全部正确。进一步从 sysupgrade
-   的实际 FIT kernel 提取默认 DTB：核对 compatible、TR3000 的 UBI reg、
-   C8-688 的第二系统 rootfs bootargs。解开实际 squashfs 检查关键脚本、执行权限、
+   的实际 FIT kernel 提取默认 DTB：核对 compatible、TR3000 的 UBI reg。
+   解开实际 squashfs 检查关键脚本、执行权限、
    启动链接、脚本内容和本次 build tag；证据保存为 `verified-payload.json`。
 8. 编译 job 只有 `contents: read`，无全局 GitHub token，checkout 不持久化凭据。
    固件与说明通过本次运行的 Artifact 交给独立发布 job；发布 job 不 checkout 或
@@ -80,7 +80,7 @@ Samba、USB 网卡、存储工具等功能。可在每个 profile 的 `config_fr
 机型配置最后生效。`required_packages` 是不能通过手动 PACKAGE 关闭的关键功能；
 确实需要移除关键功能时，必须同步修改此清单。
 
-三款机型补齐 `audio-support`，否则当前上游会在 defconfig 中静默取消
+两款机型补齐 `audio-support`，否则当前上游会在 defconfig 中静默取消
 `kmod-sound-core` 和 `kmod-usb-audio`；这三个包加入关键功能校验。
 `config-resolution.json` 记录请求的包与 defconfig 实际结果的差异，并在日志中警告。
 例如上游隐藏的 EHCI 选项、仅特定源码提供的 `fullconenat-sonic` 都不能仅凭
@@ -97,7 +97,7 @@ Samba、USB 网卡、存储工具等功能。可在每个 profile 的 `config_fr
 
 ### 独立选择插件版本
 
-三个机型的 Run workflow 都提供 `PLUGIN_MODE=auto/latest/locked`，默认 `auto`。
+两个机型的 Run workflow 都提供 `PLUGIN_MODE=auto/latest/locked`，默认 `auto`。
 `SOURCE_MODE` 默认 `latest`；入口参数缺省回退和共用核心默认值保持一致。
 组合行为如下：
 
@@ -116,14 +116,14 @@ Samba、USB 网卡、存储工具等功能。可在每个 profile 的 `config_fr
 在 `auto` 模式下，仅当插件拉取成功但上游改动破坏本仓库适配钩子时，才将该插件独立回退到
 已验证锁提交；`latest` 模式保持严格失败以便排查上游变更。两者均不会改写仓库内的插件锁。
 
-`UPSTREAM-CANARY.yml` 每日定时巡检三款机型主源码及受适配插件的最新分支，在不启动完整内核编译的前提下执行锚点与前端行为自检，发现漂移时自动维护去重 Issue 提醒。
+`UPSTREAM-CANARY.yml` 每日定时巡检两款机型主源码及受适配插件的最新分支，在不启动完整内核编译的前提下执行锚点与前端行为自检，发现漂移时自动维护去重 Issue 提醒。
 
 `build-reports/plugin-resolution.json` 记录模式、仓库、解析分支、原锁和实际提交；
 报告中的 `packages.lock.json` 记录实际使用的插件快照。这两份记录随固件打包并纳入
 sha256sums，`build-inputs.json` 和下载缓存使用实际插件提交及适配后的配方。
 工具链缓存仍按自身真实依赖计算，ccache 继续自行校验编译器与源内容。
 
-AP 的 FM350/风扇及 C8 风扇适配仍检查审阅过的上游内容。新版改变这些内容时，
+AP 的 FM350/风扇适配仍检查审阅过的上游内容。新版改变这些内容时，
 必须先审查并更新适配及测试；latest 不绕过检查，也不保证每个上游提交都兼容。
 本仓库自带的 OTA 和设备脚本随本仓库提交，feeds 内的软件包由 SOURCE_MODE 控制。
 该开关只影响后续编译，不会自动更新已刷设备上的插件。
@@ -135,7 +135,7 @@ AP 的 FM350/风扇及 C8 风扇适配仍检查审阅过的上游内容。新版
 
 更新上游时先在试验分支使用 latest 验证；将该次构建的 `source-lock.json`
 对应机型条目更新到 `Profiles/sources.lock.json`，再用 locked 跑 TEST 和 BUILD_ONLY。
-三款都通过后再合入 main。复查旧 Release 时可取其 `source-lock.json` 条目恢复
+两款都通过后再合入 main。复查旧 Release 时可取其 `source-lock.json` 条目恢复
 源码/feeds 锁，并一并恢复当时的 CI 提交、插件锁及实际配置。日期和 runner 等
 环境仍会变化，因此相同源码版本不代表固件字节必然一致。
 
@@ -167,7 +167,7 @@ AP 的 FM350/风扇及 C8 风扇适配仍检查审阅过的上游内容。新版
 
 ## 已知兼容处理
 
-三款机型通过 `.github/scripts/wifi-defaults.py` 修改上游 `mac80211.uc` 的新网络生成规则，
+两款机型通过 `.github/scripts/wifi-defaults.py` 修改上游 `mac80211.uc` 的新网络生成规则，
 使用入口中的 SSID 和密码，2.4G / 5G 显式设为 WPA2-PSK / CCMP（6GHz 使用 SAE）。
 旧的 `ssid '…'` / `key '…'` 替换不匹配当前 `set …=…` 格式，官方源默认 `none` 因而可能留下开放网络。
 生成器锚点变化或密码不合法时直接失败；不通过首启脚本覆盖已保存的无线配置。
@@ -182,21 +182,15 @@ TR3000 改为标准 `kmod-tcp-bbr` 依赖，不再硬编码修改 config-6.18；
 ImmortalWrt 于 2026-10-27 在提交
 `21ae803cc274b52f98f99f0f75864b114b11daab` 中修复 fullcone 补丁。
 已核对：旧补丁 SHA-256 `e043a5f7...` 对 firewall4 `bac1d656...` 应用失败，
-修复后的补丁 SHA-256 `2b419dae...` 可正常应用。AP3000M 和 C8-688 不再
+修复后的补丁 SHA-256 `2b419dae...` 可正常应用。AP3000M 不再
 删除该补丁；未来遇到不兼容会构建失败，不以静默关闭功能换取绿灯。
-
-C8-688 保留 `source-pin.txt` 的 auto / 跟随分支 / 完整 SHA 三种输入。
-auto 服从 SOURCE_MODE；locked 下跟随版本锁，latest 下跟随分支。旧 SHA 如果
-与版本锁冲突会失败，必须统一修改版本锁或显式选择 latest。拉取失败直接退出，
-不再偷偷回退到另一个版本。DTS、第二系统布局、LAN/WAN、MAC、风扇和覆盖层
-继续由机型钩子负责。MT5700M 固定为原 v3.0.7 对应提交，通过插件清单只安装一次。
 
 ## 同步 CI 模板与更新源码
 
 从 CI 模板上游同步时，保留本仓库的 `DEVICE-CORE.yml`、机型清单和版本锁。
 通用 `WRT-CORE.yml` 已撤出机型专属分支；Rust 准备脚本等仍有共用扩展，
 正常合并双方修改，不应整文件覆盖。同步后先跑 Build logic checks，再跑
-三个机型的 TEST；公共构建逻辑变化时应再跑 BUILD_ONLY。
+两个机型的 TEST；公共构建逻辑变化时应再跑 BUILD_ONLY。
 
 OpenWrt/ImmortalWrt 源码和 feeds 默认不会自动漂移；更新版本锁后，工具链缓存按其实际
 构建输入变化失效，设备与包清单校验可以阻止不完整镜像发布。上游接口发生变化时
@@ -205,5 +199,5 @@ OpenWrt/ImmortalWrt 源码和 feeds 默认不会自动漂移；更新版本锁�
 ## 验证
 
 本地和 PR 检查可执行 `python3 .github/scripts/test_device_build.py -v`，
-并用 actionlint 检查工作流。真实的 feeds/Kconfig 依赖需要分别运行三个入口的
+并用 actionlint 检查工作流。真实的 feeds/Kconfig 依赖需要分别运行两个入口的
 TEST 构建；完整 Rust、内核、驱动及固件生成还需要完整构建验证。

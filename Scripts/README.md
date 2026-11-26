@@ -1,15 +1,15 @@
 # Scripts 目录与机型扩展
 
-当前同时保留两条调用路径。三款机型的完整构建阶段、版本锁和发布规则以
+当前同时保留两条调用路径。两款机型的完整构建阶段、版本锁和发布规则以
 [构建流程](../docs/BUILD-PIPELINE.md)为准。
 
 后续机型优先评估复用当前在线升级能力，接入要求与实现入口见
 [在线升级设计](../docs/OTA-DESIGN.md)。当前实现限 AP3000M，其他机型需先适配升级路径。
 
-## 三款机型的当前流程
+## 两款机型的当前流程
 
 ```text
-TR3000.yml / AP3000M.yml / C8-688.yml
+TR3000.yml / AP3000M.yml
   → DEVICE-CORE.yml
   → bash Scripts/<机型>/private.sh
 ```
@@ -45,7 +45,7 @@ squashfs 内容。独立发布 job 只处理本次 Artifact，不再使用旧的
 `Scripts/PRIVATE.sh` 仍被通用 `Packages.sh` 引用，不能当作无用文件删除。
 它只负责分发，不在这里添加机型专属逻辑。兼容 source 调用的钩子应在开头判断
 `WRT_CONFIG`，使用 `return 0` 退出无关配置，并避免变量和 shell 选项影响其他机型。
-三款新流程不经过这条链；通过旧通用入口调用机型钩子也不能代替新流程的完整验证。
+两款新流程不经过这条链；通过旧通用入口调用机型钩子也不能代替新流程的完整验证。
 
 `Packages.sh`、`Settings.sh`、`Handles.sh`、`Config/GENERAL.txt` 和通用工作流均有用途。
 同步上游时审查变更，保留本仓库的定制，不整文件覆盖。

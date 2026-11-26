@@ -191,7 +191,7 @@ class PluginModeTests(unittest.TestCase):
 
 class PluginWorkflowTests(unittest.TestCase):
     def test_every_device_exposes_and_passes_all_modes_independently(self):
-        for name in ("TR3000", "AP3000M", "C8-688"):
+        for name in ("TR3000", "AP3000M"):
             workflow = yaml.safe_load((REPO / f".github/workflows/{name}.yml").read_text(encoding="utf-8"))
             inputs = workflow[True]["workflow_dispatch"]["inputs"]
             self.assertEqual(inputs["SOURCE_MODE"]["options"], ["locked", "latest"])

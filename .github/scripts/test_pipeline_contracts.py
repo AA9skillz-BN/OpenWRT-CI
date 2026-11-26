@@ -67,7 +67,7 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("inputs.WRT_PUBLISH", publisher["if"])
 
     def test_every_device_uses_isolated_core(self):
-        for name in ("TR3000", "AP3000M", "C8-688"):
+        for name in ("TR3000", "AP3000M"):
             data = yaml.safe_load((REPO / f".github/workflows/{name}.yml").read_text(encoding="utf-8"))
             self.assertTrue(all(job["uses"].endswith("/DEVICE-CORE.yml") for job in data["jobs"].values()))
 
@@ -87,7 +87,7 @@ class PipelineTests(unittest.TestCase):
 
     def test_every_source_and_feed_is_locked_to_a_full_commit(self):
         data = json.loads((REPO / "Profiles/sources.lock.json").read_text())
-        self.assertEqual(set(data), {"TR3000-512", "AP3000M", "C8-688"})
+        self.assertEqual(set(data), {"TR3000-512", "AP3000M"})
         for item in data.values():
             sources.sha(item["commit"])
             self.assertTrue(item["feeds"])
@@ -123,12 +123,6 @@ class PipelineTests(unittest.TestCase):
         profile = json.loads((REPO / "Profiles/TR3000-512.json").read_bytes())
         self.assertIn("/etc/init.d/tr3000-bbr", profile["forbidden_files"])
 
-    def test_c8_bootargs_must_use_second_system(self):
-        data = {"supported_device": "nradio,c8-688", "root_partition": "rootfs_2nd"}
-        def fdt(*args):
-            return "nradio,c8-688" if args[-1] == "compatible" else "root=PARTLABEL=rootfs"
-        with patch.object(device_image, "output", side_effect=fdt), self.assertRaisesRegex(ValueError, "wrong root"):
-            device_image.check_dtb(Path("fixture.dtb"), data)
 
     def test_missing_script_in_final_rootfs_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:

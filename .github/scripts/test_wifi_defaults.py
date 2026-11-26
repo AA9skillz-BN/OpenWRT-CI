@@ -105,14 +105,14 @@ class WifiPatchTests(unittest.TestCase):
                 wifi.patch_generator(broken, "AP3000M", "12345678", ap3000m_radio_defaults=True)
 
     def test_every_device_image_checks_the_installed_generator_bytes(self):
-        for name in ("AP3000M", "C8-688", "TR3000-512"):
+        for name in ("AP3000M", "TR3000-512"):
             data = json.loads((REPO / f"Profiles/{name}.json").read_text(encoding="utf-8"))
             items = [item for item in data["required_files"] if item["path"] == "/lib/wifi/mac80211.uc"]
             self.assertEqual(items, [{"path": "/lib/wifi/mac80211.uc", "build_source": wifi.GENERATOR.as_posix()}])
 
     @unittest.skipUnless(BASH, "Bash required")
     def test_settings_entry_point_uses_each_workflows_credentials_and_propagates_failure(self):
-        for workflow in ("AP3000M", "C8-688", "TR3000"):
+        for workflow in ("AP3000M", "TR3000"):
             data = yaml.safe_load((REPO / f".github/workflows/{workflow}.yml").read_text(encoding="utf-8"))
             options = next(iter(data["jobs"].values()))["with"]
             profile = options["WRT_PROFILE"]
@@ -142,7 +142,6 @@ class WifiPatchTests(unittest.TestCase):
                     source,
                     options["WRT_SSID"],
                     str(options["WRT_WORD"]),
-                    profile == "C8-688",
                     ap3000m_radio_defaults=(profile == "AP3000M"),
                 )
                 self.assertEqual(generator.read_text(encoding="utf-8"), expected)
@@ -157,15 +156,6 @@ class WifiPatchTests(unittest.TestCase):
 
 @unittest.skipUnless(UCODE, "ucode runtime required (installed by Linux CI)")
 class WifiGeneratorTests(unittest.TestCase):
-    def test_c8_reference_band_names_and_existing_settings(self):
-        data = yaml.safe_load((REPO / '.github/workflows/C8-688.yml').read_text(encoding='utf-8'))
-        options = next(iter(data['jobs'].values()))['with']
-        source = wifi.patch_generator(upstreams()['AP3000M'], options['WRT_SSID'], str(options['WRT_WORD']), True)
-        generated = assignments(self.execute(source))
-        self.assertEqual(generated['wireless.default_radio0.ssid'], 'NRadio-C8-688-2.4G')
-        self.assertEqual(generated['wireless.default_radio1.ssid'], 'NRadio-C8-688-5G')
-        saved = {f'radio{i}': {'.type': 'wifi-device', 'path': f'platform/test/radio{i}'} for i in (0, 1)}
-        self.assertEqual(self.execute(source, saved), '')
 
     def execute(self, source, saved=None, hardware=None):
         # Replace the actual fs/UCI reads and remove the loader's shebang before
@@ -200,7 +190,7 @@ const uci = { cursor: function() { return { get_all: function() { return SAVED; 
             self.assertEqual(generated[f"wireless.default_radio{index}.key"], "")
 
     def test_new_24_and_5ghz_networks_use_the_requested_credentials(self):
-        for name in ("AP3000M", "C8-688", "TR3000-512"):
+        for name in ("AP3000M", "TR3000-512"):
             source = upstreams()["TR3000-512" if name == "TR3000-512" else "AP3000M"]
             with self.subTest(profile=name):
                 generated = assignments(self.execute(wifi.patch_generator(source, name, "12345678")))

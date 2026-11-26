@@ -113,37 +113,5 @@
       "luci-theme-argon",
       "luci-app-argon-config"
     ]
-  },
-  "mt5700m": {
-    "url": "https://github.com/FAN789/luci-app-mt5700m.git",
-    "commit": "23f106d4248f7ba439a6d171f4290bb1c1c64b7e",
-    "directory": "mt5700m-source",
-    "replaces": [
-      "luci-app-mt5700m",
-      "mt5700m-transport"
-    ],
-    "subdirectories": [
-      "luci-app-mt5700m",
-      "mt5700m-transport"
-    ]
-  },
-  "c8-fancontrol": {
-    "url": "https://github.com/LianXia233/luci-app-h5000m-fancontrol.git",
-    "commit": "ec33e8c683f621a059fdea1d222a4292ecbf0b05",
-    "directory": "luci-app-h5000m-fancontrol",
-    "replaces": [
-      "luci-app-h5000m-fancontrol"
-    ]
-  },
-  "c8-cellular-webui": {
-    "url": "https://github.com/inotdream/mt5700webui-openwrt-server.git",
-    "commit": "7abccd44c81442b13dbf974ad9a0aa67cf527e90",
-    "directory": "c8-cellular-webui-source",
-    "replaces": [
-      "c8-cellular-webui",
-      "at-webserver",
-      "luci-app-at-webserver"
-    ],
-    "subdirectory": "at-webserver"
   }
 }

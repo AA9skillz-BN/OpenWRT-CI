@@ -9,7 +9,7 @@ import subprocess
 
 def main():
     prefix = os.environ["DEVICE_CACHE_PREFIX"]
-    if not re.fullmatch(r"wrt-v2-(?:ap3000m|c8-688|tr3000-512)-linux-x64", prefix):
+    if not re.fullmatch(r"wrt-v2-(?:ap3000m|tr3000-512)-linux-x64", prefix):
         raise ValueError("refusing to prune outside device cache namespace")
     repo = os.environ["GITHUB_REPOSITORY"]
     entries = json.loads(subprocess.check_output([

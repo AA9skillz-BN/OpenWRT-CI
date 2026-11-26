@@ -1,8 +1,0 @@
-{
-  "admin/status/c8-688": {
-    "title": "C8 设备状态",
-    "order": 5,
-    "action": { "type": "view", "path": "c8-688-status/overview" },
-    "depends": { "acl": [ "luci-app-c8-688-status" ] }
-  }
-}

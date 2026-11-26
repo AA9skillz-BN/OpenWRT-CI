@@ -24,8 +24,8 @@ def uci_literal(value):
     return "${" + json.dumps(quoted, ensure_ascii=True) + "}"
 
 
-def patch_generator(source, ssid, password, band_suffix=False, ap3000m_radio_defaults=False):
-    if not 1 <= len(ssid.encode("utf-8")) <= (27 if band_suffix else 32) or any(ord(char) < 32 or ord(char) == 127 for char in ssid):
+def patch_generator(source, ssid, password, ap3000m_radio_defaults=False):
+    if not 1 <= len(ssid.encode("utf-8")) <= 32 or any(ord(char) < 32 or ord(char) == 127 for char in ssid):
         raise ValueError("Wi-Fi SSID must be 1..32 UTF-8 bytes without control characters")
     if not 8 <= len(password) <= 63 or any(not 32 <= ord(char) <= 126 for char in password):
         raise ValueError("Wi-Fi passphrase must be 8..63 printable ASCII characters")
@@ -49,10 +49,6 @@ def patch_generator(source, ssid, password, band_suffix=False, ap3000m_radio_def
     if text.count(block) != 1:
         raise ValueError("Wi-Fi generator credential block changed; review upstream")
     ssid_value = uci_literal(ssid)
-    if band_suffix:
-        # Reuse UCI quoting for each complete name before selecting its band.
-        names = [uci_literal(ssid + suffix)[2:-1] for suffix in ("-2.4G", "-5G", "-6G")]
-        ssid_value = '${band_name == "2g" ? %s : band_name == "5g" ? %s : %s}' % tuple(names)
     encryption_expr = (
         "set ${si}.encryption='${band_name == \"6g\" ? \"sae\" : band_name == \"5g\" ? \"sae-mixed\" : \"psk2+ccmp\"}'"
         if ap3000m_radio_defaults else
@@ -66,10 +62,10 @@ def patch_generator(source, ssid, password, band_suffix=False, ap3000m_radio_def
     return text.replace(block, replacement, 1)
 
 
-def configure(tree, ssid, password, band_suffix=False, ap3000m_radio_defaults=False):
+def configure(tree, ssid, password, ap3000m_radio_defaults=False):
     path = tree / GENERATOR
     source = path.read_text(encoding="utf-8")
-    patched = patch_generator(source, ssid, password, band_suffix, ap3000m_radio_defaults)
+    patched = patch_generator(source, ssid, password, ap3000m_radio_defaults)
     # All validation precedes writing; no key or passphrase is printed.
     path.write_text(patched, encoding="utf-8", newline="\n")
 
@@ -77,12 +73,11 @@ def configure(tree, ssid, password, band_suffix=False, ap3000m_radio_defaults=Fa
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tree", type=Path, default=Path.cwd())
-    parser.add_argument("--band-suffix", action="store_true", help="Append -2.4G/-5G/-6G to new network names")
     parser.add_argument("--ap3000m-radio-defaults", action="store_true",
                         help="Default new AP3000M radios to CN, 5G HE160, mu_beamformer and WPA2/WPA3 mixed mode")
     args = parser.parse_args()
     configure(args.tree, os.environ["WRT_SSID"], os.environ["WRT_WORD"],
-              args.band_suffix, args.ap3000m_radio_defaults)
+              args.ap3000m_radio_defaults)
     print("New Wi-Fi radios: configured SSID and passphrase; existing radios preserved")
 
 

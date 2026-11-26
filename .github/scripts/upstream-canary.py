@@ -29,18 +29,15 @@ ap_sys_mod = load_module("canary_ap_sys", REPO / "Scripts/AP3000M/system-default
 openclash_mod = load_module("canary_openclash", REPO / ".github/scripts/ap3000m-openclash-core.py")
 
 SOURCE_TARGETS = (
-    ("AP3000M / C8-688 主源码", "immortalwrt/immortalwrt", "master", "AP3000M"),
+    ("AP3000M 主源码", "immortalwrt/immortalwrt", "master", "AP3000M"),
     ("TR3000-512 主源码", "VIKINGYFY/immortalwrt", "owrt", "TR3000-512"),
 )
 
 ADAPTED_PLUGINS = (
     ("openclash", ("AP3000M", "TR3000-512")),
-    ("turboacc", ("AP3000M", "TR3000-512", "C8-688")),
+    ("turboacc", ("AP3000M", "TR3000-512")),
     ("fancontrol", ("AP3000M",)),
     ("fm350", ("AP3000M",)),
-    ("c8-fancontrol", ("C8-688",)),
-    ("mt5700m", ("C8-688",)),
-    ("c8-cellular-webui", ("C8-688",)),
 )
 
 
@@ -91,7 +88,6 @@ def check_source_anchors(label, slug, branch, lock_key, sources_lock, head_sha=N
         mac_uc,
         "TestSSID",
         "12345678",
-        band_suffix=(lock_key == "C8-688"),
         ap3000m_radio_defaults=(lock_key == "AP3000M"),
     )
     if slug == "immortalwrt/immortalwrt":
@@ -99,13 +95,6 @@ def check_source_anchors(label, slug, branch, lock_key, sources_lock, head_sha=N
         dhcp = fetch_bytes(raw_base + "package/network/services/dnsmasq/files/dhcp.conf").decode("utf-8")
         ap_sys_mod.patch_config_generate(cg)
         ap_sys_mod.patch_dhcp_conf(dhcp)
-        net02 = fetch_bytes(raw_base + "target/linux/mediatek/filogic/base-files/etc/board.d/02_network").decode("utf-8")
-        if "nradio,c8-668gl|" not in net02 or "\tnradio,c8-668gl)" not in net02:
-            raise ValueError("C8-688 02_network anchor nradio,c8-668gl missing")
-        with tempfile.TemporaryDirectory() as tmp:
-            plat = Path(tmp) / "platform.sh"
-            plat.write_bytes(fetch_bytes(raw_base + "target/linux/mediatek/filogic/base-files/lib/upgrade/platform.sh"))
-            build.run_hook_check([sys.executable, str(REPO / "Scripts/C8-688/patch-upgrade.py"), str(plat)])
     else:
         dts = fetch_bytes(raw_base + "target/linux/mediatek/dts/mt7981b-cudy-tr3000-v1.dts").decode("utf-8")
         mk = fetch_bytes(raw_base + "target/linux/mediatek/image/filogic.mk").decode("utf-8")
@@ -133,7 +122,6 @@ def run_canary(repo=REPO):
                             "locked": sources_lock[lock_key]["commit"][:12], "latest": head_short,
                             "ok": False, "detail": str(exc)})
 
-    staged_c8 = {}
     for key, profiles in ADAPTED_PLUGINS:
         item = packages_lock[key]
         locked_sha = item["commit"]
@@ -154,16 +142,6 @@ def run_canary(repo=REPO):
                         prof_tree = Path(prof_tmp)
                         shutil.copytree(probe_tree / "package", prof_tree / "package")
                         build.default_plugin_validator(repo, prof, key, prof_tree, "latest")
-                if key in ("mt5700m", "c8-cellular-webui"):
-                    staged_c8[key] = (head_sha, {
-                        rel: probe_tree / "package" / rel
-                        for rel in (subdirs or [item["directory"]])
-                    })
-                    # Persist copy for coupled check below
-                    persist = Path(tempfile.mkdtemp(prefix=f"canary-{key}-"))
-                    for rel, src_dir in staged_c8[key][1].items():
-                        shutil.copytree(src_dir, persist / "package" / rel)
-                    staged_c8[key] = (head_sha, persist)
             results.append({"category": "plugin", "target": f"{key} ({','.join(profiles)})",
                             "locked": locked_sha[:12], "latest": head_sha[:12],
                             "ok": True, "detail": f"分支 {meta['branch']} 适配校验通过"})
@@ -171,22 +149,6 @@ def run_canary(repo=REPO):
             results.append({"category": "plugin", "target": f"{key} ({','.join(profiles)})",
                             "locked": locked_sha[:12], "latest": head_short,
                             "ok": False, "detail": f"auto 模式将自动回退锁版本；原因: {exc}"})
-
-    if {"mt5700m", "c8-cellular-webui"} <= set(staged_c8):
-        try:
-            with tempfile.TemporaryDirectory() as coupled_dir:
-                coupled = Path(coupled_dir)
-                for _, (_, src_root) in staged_c8.items():
-                    shutil.copytree(src_root / "package", coupled / "package", dirs_exist_ok=True)
-                build.run_hook_check([sys.executable, str(repo / "Scripts/C8-688/cellular/adapt.py"),
-                                      str(coupled / "package/luci-app-mt5700m"),
-                                      str(coupled / "package/at-webserver")])
-        except Exception as exc:
-            results.append({"category": "plugin", "target": "c8-cellular-coupled (C8-688)",
-                            "locked": packages_lock["mt5700m"]["commit"][:12], "latest": "HEAD",
-                            "ok": False, "detail": f"auto 模式将自动回退锁版本；原因: {exc}"})
-    for _, (_, persist_dir) in staged_c8.items():
-        shutil.rmtree(persist_dir, ignore_errors=True)
 
     try:
         mihomo = openclash_mod.resolve(openclash_lock, "latest")

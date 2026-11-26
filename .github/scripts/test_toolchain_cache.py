@@ -398,7 +398,7 @@ class SharedRetentionTests(unittest.TestCase):
                    {"id": 5, "key": "wrt-v3-toolchain-other-target-" + "5"*64,
                     "createdAt": "2020-01-01T00:00:00Z"}]
         device = [{"id": 6, "key": "wrt-v2-ap3000m-linux-x64-staging-old", "createdAt": "2020"},
-                  {"id": 7, "key": "wrt-v2-c8-688-linux-x64-staging-old", "createdAt": "2020"}]
+                  {"id": 7, "key": "wrt-v2-other-linux-x64-staging-old", "createdAt": "2020"}]
         env = {"TOOLCHAIN_CACHE_PREFIX": prefix, "DEVICE_STAGING_KEY": entries[0]["key"],
                "DEVICE_CACHE_PREFIX": "wrt-v2-ap3000m-linux-x64", "DEVICE_DL_KEY": "dl-current",
                "DEVICE_CCACHE_KEY": "ccache-current", "GITHUB_REPOSITORY": "owner/repo",

@@ -16,9 +16,6 @@ find ./feeds/luci/modules/luci-mod-status/ -type f -name "10_system.js" -exec se
 WIFI_UC="./package/network/config/wifi-scripts/files/lib/wifi/mac80211.uc"
 ROUTER_TOOL="./package/emortal/luci-app-router-tool/root/etc/config/router-tool"
 case "${WRT_PROFILE:-}" in
-	C8-688)
-		python3 "$GITHUB_WORKSPACE/.github/scripts/wifi-defaults.py" --tree . --band-suffix || exit 1
-		;;
 	AP3000M)
 		python3 "$GITHUB_WORKSPACE/.github/scripts/wifi-defaults.py" --tree . --ap3000m-radio-defaults || exit 1
 		;;

@@ -37,7 +37,7 @@ def write(path, text):
 
 
 def profile(repo, name):
-    if name not in ("TR3000-512", "AP3000M", "C8-688"):
+    if name not in ("TR3000-512", "AP3000M"):
         raise ValueError(f"unsupported device profile: {name}")
     return json.loads((repo / "Profiles" / f"{name}.json").read_text(encoding="utf-8"))
 
@@ -166,13 +166,6 @@ def default_plugin_validator(repo, profile_name, key, probe_tree, mode):
     elif profile_name == "TR3000-512" and key == "turboacc":
         run_hook_check([sys.executable, str(repo / ".github/scripts/tr3000-defaults.py"),
                         str(probe_tree / "package/luci-app-turboacc")])
-    elif profile_name == "C8-688":
-        if key == "turboacc":
-            run_hook_check([sys.executable, str(repo / ".github/scripts/c8-turboacc.py"),
-                            str(probe_tree / "package/luci-app-turboacc")])
-        elif key == "c8-fancontrol":
-            run_hook_check([sys.executable, str(repo / "Scripts/C8-688/fancontrol/adapt.py"),
-                            str(probe_tree / "package/luci-app-h5000m-fancontrol")])
 
 
 def append_compatibility_note(reports, note):
@@ -236,37 +229,6 @@ def install_packages(repo, tree, data, reports, profile_name=None, validator=Non
                         f"- 插件 `{key}`：上游最新提交 `{revision[:12]}` 适配预检未通过（{reason}），已自动回退至锁版本 `{locked_revision[:12]}`。",
                     )
         provenance[key] = item
-    # Coupled C8-688 cellular pair check in auto mode when both packages exist.
-    if mode == "auto" and profile_name == "C8-688" and {"mt5700m", "c8-cellular-webui"} <= set(data["packages"]):
-        with tempfile.TemporaryDirectory() as probe_dir:
-            probe_tree = Path(probe_dir)
-            for coupled in ("mt5700m", "c8-cellular-webui"):
-                copy_plugin_targets(provenance[coupled], tree, probe_tree)
-            try:
-                run_hook_check([sys.executable, str(repo / "Scripts/C8-688/cellular/adapt.py"),
-                                str(probe_tree / "package/luci-app-mt5700m"),
-                                str(probe_tree / "package/at-webserver")])
-            except Exception as exc:
-                reason = str(exc).strip() or exc.__class__.__name__
-                for coupled in ("mt5700m", "c8-cellular-webui"):
-                    cand = provenance[coupled]["commit"]
-                    lock_sha = locks[coupled]["commit"]
-                    if cand != lock_sha:
-                        print(f"::warning::Plugin {coupled}: latest @ {cand[:12]} failed C8 cellular check "
-                              f"({reason}); falling back to verified lock @ {lock_sha[:12]}", flush=True)
-                        fetch_plugin_revision(coupled, locks[coupled], tree, lock_sha)
-                        provenance[coupled] = dict(locks[coupled], commit=lock_sha)
-                        resolution[coupled].update({
-                            "candidate_commit": cand,
-                            "resolved_commit": lock_sha,
-                            "effective_mode": "locked",
-                            "fallback": True,
-                            "fallback_reason": reason,
-                        })
-                        append_compatibility_note(
-                            reports,
-                            f"- 插件 `{coupled}`：上游最新提交 `{cand[:12]}` 蜂窝适配预检未通过（{reason}），已自动回退至锁版本 `{lock_sha[:12]}`。",
-                        )
     write(reports / "plugin-resolution.json", json.dumps({"schema": 1, "mode": mode,
           "plugins": resolution}, indent=2) + "\n")
     for directory in data.get("excluded_feed_packages", {}):
@@ -365,7 +327,7 @@ def verify_image(tree, data, reports, repo=None):
 
 
 def package_ota_update(repo, upload, tag, name="AP3000M"):
-    model = {"AP3000M": "ap3000m", "C8-688": "c8-688", "TR3000-512": "tr3000"}[name]
+    model = {"AP3000M": "ap3000m", "TR3000-512": "tr3000"}[name]
     source = repo / "Scripts" / name / "ota"
     abi = (source / "runtime-abi").read_text().strip()
     if not re.fullmatch(r"[0-9]+", abi):
@@ -376,8 +338,6 @@ def package_ota_update(repo, upload, tag, name="AP3000M"):
                 "tag": tag, "asset": f"{model}-ota", "size": len(script),
                 "sha256": hashlib.sha256(script).hexdigest(),
                 "requires": ["curl", "jq", "sha256sum", "sysupgrade", "flock"]}
-    if name == "C8-688":
-        metadata["requires"] += ["fw_printenv", "fw_setenv"]
     if name == "TR3000-512":
         metadata["model"] = "tr3000-512"
         metadata["requires"] += ["od"]
@@ -409,7 +369,7 @@ def package(tree, repo, name, data, reports):
     outname = f"{image.stem}-{os.environ['WRT_INFO']}-{branch}-{os.environ['WRT_DATE']}.bin"
     shutil.copy2(image, upload / outname)
     shutil.copy2(manifest, upload / manifest.name)
-    if name in ("AP3000M", "C8-688", "TR3000-512"):
+    if name in ("AP3000M", "TR3000-512"):
         # verify_image has already checked these exact files in the squashfs.
         package_ota_update(repo, upload, tag, name)
     if name == "TR3000-512":

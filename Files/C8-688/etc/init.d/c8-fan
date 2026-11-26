@@ -1,7 +1,0 @@
-#!/bin/sh /etc/rc.common
-# Legacy entry has no daemon: never compete for the PWM node.
-START=95
-STOP=10
-start() { /etc/init.d/h5000m-fancontrol start; }
-stop() { :; }
-restart() { /etc/init.d/h5000m-fancontrol reload; }

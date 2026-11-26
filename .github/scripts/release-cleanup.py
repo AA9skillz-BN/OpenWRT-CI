@@ -7,8 +7,8 @@ import os
 import re
 import subprocess
 
-MODELS = {"ap3000m", "tr3000-512", "c8-688"}
-WORKFLOWS = {"ap3000m": "AP3000M.yml", "tr3000-512": "TR3000.yml", "c8-688": "C8-688.yml"}
+MODELS = {"ap3000m", "tr3000-512"}
+WORKFLOWS = {"ap3000m": "AP3000M.yml", "tr3000-512": "TR3000.yml"}
 OWNER = re.compile(r"<!-- firmware-ci: repo=([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+) "
                    r"run=([1-9][0-9]*) attempt=([1-9][0-9]*) sha=([0-9a-f]{40}) "
                    r"tag=([A-Za-z0-9._-]+) started=([^\s]+) -->")
@@ -87,8 +87,7 @@ def model_of(release):
         return model if model in MODELS else None
     tag = re.sub(r"^preview-", "", release["tag_name"], flags=re.I)
     for pattern, model in ((r"^AP3000M-", "ap3000m"),
-                           (r"^TR3000[-_]512(?:MB)?-", "tr3000-512"),
-                           (r"^C8-688-", "c8-688")):
+                           (r"^TR3000[-_]512(?:MB)?-", "tr3000-512")):
         if re.match(pattern, tag, re.I):
             return model
     return None

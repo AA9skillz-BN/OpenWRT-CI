@@ -21,24 +21,6 @@ def check_dtb(dtb, data):
     compatible = prop("/", "compatible")
     if data["supported_device"] not in compatible:
         raise ValueError(f"kernel DTB has wrong compatible: {compatible}")
-    if data.get("root_partition"):
-        args = prop("/chosen", "bootargs")
-        if "root=PARTLABEL=" + data["root_partition"] not in args:
-            raise ValueError("kernel DTB bootargs select the wrong root partition")
-    for link in data.get("ethernet_links", []):
-        mac, phy = link["mac"], link["phy"]
-        if cells(phy, "reg") != [link["address"]]:
-            raise ValueError(f"kernel DTB has wrong PHY address: {phy}")
-        handle = cells(phy, "phandle")
-        if len(handle) != 1 or handle[0] == 0 or cells(mac, "phy-handle") != handle:
-            raise ValueError(f"kernel DTB has wrong PHY connection: {mac}")
-        if prop(mac, "phy-mode") != [link["mode"]]:
-            raise ValueError(f"kernel DTB has wrong PHY mode: {mac}")
-        if prop(phy, "compatible") != ["ethernet-phy-ieee802.3-c45"]:
-            raise ValueError(f"kernel DTB has wrong PHY binding: {phy}")
-        reset = cells(phy, "reset-gpios")
-        if len(reset) != 3 or reset[1:] != [link["reset_gpio"], 1]:
-            raise ValueError(f"kernel DTB has wrong PHY reset GPIO: {phy}")
     if data.get("ubi_reg"):
         pending, partitions = ["/"], []
         while pending:
@@ -125,8 +107,7 @@ def verify_payload(archive, kernel, root, data, repo, reports, tree=None):
         if not tag.is_file() or tag.read_text().strip() != os.environ["WRT_RELEASE_TAG"]:
             raise ValueError("rootfs build tag differs from this build")
         report = {"dtb_compatible": compatible, "ubi_reg": data.get("ubi_reg"),
-                  "ethernet_links": data.get("ethernet_links", []),
-                  "root_partition": data.get("root_partition"), "verified_files": paths}
+                  "verified_files": paths}
         if forbidden:
             report["verified_absent_files"] = forbidden
         (reports / "verified-payload.json").write_text(json.dumps(report, indent=2) + "\n")

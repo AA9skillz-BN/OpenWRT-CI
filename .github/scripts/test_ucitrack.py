@@ -31,7 +31,7 @@ class UcitrackProviderTests(unittest.TestCase):
         adapted = adapt.patched(originals)["Makefile"].decode()
         self.assertIn("+luci-base", adapted)
         self.assertNotIn("+ucitrack", adapted)
-        revisions = {FAILED_LUCI, *(sources[device]["feeds"]["luci"]["commit"] for device in ("TR3000-512", "AP3000M", "C8-688"))}
+        revisions = {FAILED_LUCI, *(sources[device]["feeds"]["luci"]["commit"] for device in ("TR3000-512", "AP3000M"))}
         for revision in sorted(revisions):
             with self.subTest(luci=revision), tempfile.TemporaryDirectory() as directory:
                 top = Path(directory)
@@ -78,7 +78,7 @@ $(eval $(Probe))
                 installed = top / "rootfs/etc/init.d/ucitrack"
                 self.assertEqual(installed.read_bytes(), service.read_bytes())
                 self.assertTrue(installed.stat().st_mode & 0o111)
-                for device in ("TR3000-512", "AP3000M", "C8-688"):
+                for device in ("TR3000-512", "AP3000M"):
                     profile = json.loads((REPO / f"Profiles/{device}.json").read_bytes())
                     self.assertIn("luci-base", profile["required_packages"])
                     self.assertNotIn("ucitrack", profile["required_packages"])

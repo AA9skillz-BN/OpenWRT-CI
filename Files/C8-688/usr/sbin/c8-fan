@@ -1,8 +1,0 @@
-#!/bin/sh
-# SPDX-License-Identifier: MIT
-# Compatibility for existing operator commands; Rust daemon is the sole writer.
-case "${1:-}" in
- once) exec /usr/sbin/h5000m-fancontrol apply ;;
- status) exec /usr/sbin/h5000m-fancontrol status ;;
- *) echo '请使用 /etc/init.d/h5000m-fancontrol 或 LuCI 风扇管理' >&2; exit 2 ;;
-esac

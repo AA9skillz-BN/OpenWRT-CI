@@ -35,7 +35,7 @@ jobs:
         run = json.loads(Path('source-run.json').read_text())
         assert run['status'] == 'completed' and run['head_branch'] == 'main'
         assert run['event'] == 'workflow_dispatch' and run['head_repository']['full_name'] == os.environ['GITHUB_REPOSITORY']
-        profiles = {'.github/workflows/TR3000.yml': 'TR3000-512', '.github/workflows/AP3000M.yml': 'AP3000M', '.github/workflows/C8-688.yml': 'C8-688'}
+        profiles = {'.github/workflows/TR3000.yml': 'TR3000-512', '.github/workflows/AP3000M.yml': 'AP3000M'}
         profile = profiles[run['path']]
         Path('source-profile.txt').write_text(profile)
         with open(os.environ['GITHUB_ENV'], 'a') as f:

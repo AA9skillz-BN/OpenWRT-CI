@@ -59,7 +59,7 @@ class DeviceContractTests(unittest.TestCase):
             return build.verify_image(self.tree, self.data, self.reports, REPO)
 
     def test_feature_fragments_preserve_existing_general_choices(self):
-        for name in ("AP3000M", "TR3000-512", "C8-688"):
+        for name in ("AP3000M", "TR3000-512"):
             data = build.profile(REPO, name)
             fragments = {}
             for item in data["config_fragments"]:
@@ -102,7 +102,7 @@ class DeviceContractTests(unittest.TestCase):
             build.merge_config(REPO, self.tree, "AP3000M", self.data)
 
     def test_every_device_critical_package_is_explicitly_configured(self):
-        for name in ("AP3000M", "TR3000-512", "C8-688"):
+        for name in ("AP3000M", "TR3000-512"):
             data = build.profile(REPO, name)
             build.merge_config(REPO, self.tree, name, data)
             # Settings.sh adds the workflow theme after fragment merging.
@@ -213,21 +213,6 @@ class DeviceContractTests(unittest.TestCase):
             digest, file = line.split("  ", 1)
             self.assertEqual(digest, build.hashlib.sha256((self.tree / "upload" / file).read_bytes()).hexdigest())
 
-    def test_c8_update_attachment_has_distinct_model_and_dependencies(self):
-        import hashlib
-        upload = self.tree / "ota-assets"
-        upload.mkdir()
-        tag = "C8-688-immortalwrt-master-fixture"
-        build.package_ota_update(REPO, upload, tag, "C8-688")
-        raw = (upload / "c8-688-ota").read_bytes()
-        meta = json.loads((upload / "c8-688-ota-update.json").read_text())
-        self.assertEqual(meta["model"], "c8-688")
-        self.assertEqual(meta["tag"], tag)
-        self.assertEqual(meta["runtime_abi"], "1")
-        self.assertEqual(meta["sha256"], hashlib.sha256(raw).hexdigest())
-        self.assertEqual(meta["size"], len(raw))
-        self.assertIn("fw_setenv", meta["requires"])
-        self.assertFalse((upload / "ap3000m-ota").exists())
 
     def test_provenance_keeps_feed_and_rust_outside_toolchain_identity(self):
         build.write(self.reports / "packages.lock.json", "{}")
