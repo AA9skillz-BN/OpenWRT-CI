@@ -290,6 +290,31 @@ probe_mtu eth2
         result = self.run_sh(harness)
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
 
+    def test_fm350_identity_lookup_follows_usb_bus_symlinks(self):
+        for script in ("fm350-ap3000m", "rdnis-guard/ap3000m-rdnis-guard"):
+            with self.subTest(script=script):
+                source = (REPO / "Scripts/AP3000M" / script).read_text(encoding="utf-8")
+                start = source.index("is_fm350_ifc() {")
+                identity_check = source[start:source.index("\n}\n", start) + 3]
+                result = self.run_sh(identity_check + r'''
+set -eu
+export MSYS=winsymlinks:nativestrict
+bus="$TASK_TMP/bus/usb/devices"
+fm350="$TASK_TMP/devices/2-1"
+other="$TASK_TMP/devices/1-1"
+mkdir -p "$bus" "$fm350/interface" "$other/interface"
+printf '0e8d\n' > "$fm350/idVendor"
+printf '7127\n' > "$fm350/idProduct"
+printf '0e8d\n' > "$other/idVendor"
+printf '1234\n' > "$other/idProduct"
+ln -s "$fm350/interface" "$bus/fm350"
+ln -s "$other/interface" "$bus/other"
+is_fm350_ifc "$bus/fm350" || exit 90
+if is_fm350_ifc "$bus/other"; then exit 91; fi
+if is_fm350_ifc "$bus/missing"; then exit 92; fi
+''')
+                self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+
     def test_rdnis_guard_stops_daemon_before_cfun_and_filters_usb_vid_pid(self):
         source = (REPO / "Scripts/AP3000M/rdnis-guard/ap3000m-rdnis-guard").read_text(encoding="utf-8")
         funcs = source.rsplit('\nmain "$@"', 1)[0]

@@ -23,7 +23,10 @@ set -u
 LOG() { logger -t ap3000m-fm350 "$*"; echo "[ap3000m-fm350] $*"; }
 
 is_fm350_ifc() {
-	local parent="${1%/*}" v p
+	local interface parent v p
+	# sysfs bus entries are symlinks to interfaces under their USB device.
+	interface=$(readlink -f "$1") || return 1
+	parent="${interface%/*}"
 	[ -f "$parent/idVendor" ] && [ -f "$parent/idProduct" ] || return 1
 	v=$(cat "$parent/idVendor" 2>/dev/null)
 	p=$(cat "$parent/idProduct" 2>/dev/null)
