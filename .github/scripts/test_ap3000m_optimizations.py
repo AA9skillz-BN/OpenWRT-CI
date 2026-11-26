@@ -347,8 +347,9 @@ at_port_from_usb() {{
 
 # Verify watch_once is silent when offline
 uci() {{ printf '1'; }}
-fm350d_init() {{ printf 'init:%s\\n' "$1" >> "$TASK_TMP/events"; [ "$1" != status ]; }}
-fm350d() {{ printf 'at:%s\\n' "$*" >> "$TASK_TMP/events"; return 0; }}
+fm350d_init() {{ printf 'init:%s\\n' "$1" >> "$TASK_TMP/events"; [ "$1" != running ]; }}
+fm350d() {{ printf 'at:%s\\n' "$*" >> "$TASK_TMP/events"; printf '{{"ok":false}}'; }}
+jsonfilter() {{ cat >/dev/null; printf 'false'; }}
 verify_healed() {{ return 0; }}
 watch_once
 [ ! -e "$TASK_TMP/logs" ] || exit 91
@@ -357,7 +358,8 @@ watch_once
 rm -f "$TASK_TMP/events"
 uci() {{ if [ "$1" = "-q" ]; then printf '/dev/ttyUSB3'; fi; }}
 level1
-head -n 2 "$TASK_TMP/events" | tr '\\n' ',' | grep -q '^init:stop,at:at AT+CFUN=1,1,' || exit 92
+head -n 3 "$TASK_TMP/events" | tr '\\n' ',' | grep -q '^init:stop,init:running,at:at AT+CFUN=1,1,' || exit 92
+grep -q '未收到 AT 复位确认' "$TASK_TMP/logs" || exit 93
 """
         result = self.run_sh(harness)
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)

@@ -7,7 +7,7 @@
 #
 # 恢复手段（2026-10-26 真机对照测试后确定，只保留有效的一级）：
 #   一级：fm350d at 'AT+CFUN=1,1' → 等重新枚举 → 重新定位 AT 口 → 重启 fm350d
-#   兜底：一级失败就写日志提示"需要人工重启整机"
+#   默认由 fm350d 自愈，AP 巡检独立采样。仅当其两层守卫均明确关闭时才自动复位。
 #
 # 不要用 USB authorized 置 0/1 那一招：真机实测（2026-10-26）切完后设备确实重新枚举、
 # 也拿回了运营商地址，但 rx_packets 依旧是 0（数据面还是死的），等于把链路弄断而没有修好。
@@ -29,6 +29,7 @@ DEV_DEFAULT="eth2"
 DELAY=120
 MODE="auto"
 LOCK=/var/lock/ap3000m-rdnis.lock
+LAST_RESET=/var/run/ap3000m-rdnis-last-reset
 
 log() { logger -t ap3000m-rdnis "$*" 2>/dev/null; printf '%s\n' "ap3000m-rdnis-guard: $*" >&2; }
 
@@ -45,30 +46,25 @@ while [ $# -gt 0 ]; do
 done
 
 dev() {
-	d=$(uci -q get network.fm350.device 2>/dev/null)
+	local iface d
+	iface=$(uci -q get fm350.main.iface 2>/dev/null)
+	iface=${iface:-fm350}
+	d=$(ubus call "network.interface.$iface" status 2>/dev/null |
+		jsonfilter -e '@.l3_device' 2>/dev/null)
+	[ -n "$d" ] || d=$(uci -q get "network.$iface.device" 2>/dev/null)
 	[ -n "$d" ] && printf '%s' "$d" || printf '%s' "$DEV_DEFAULT"
 }
 
 dev_exists() { [ -d "/sys/class/net/$(dev)" ]; }
-stat() { cat "/sys/class/net/$(dev)/statistics/$1" 2>/dev/null; }
+stat() { cat "/sys/class/net/${2:-$(dev)}/statistics/$1" 2>/dev/null; }
 
 snapshot() {
 	local rx tx err
-	rx=$(stat rx_packets) && tx=$(stat tx_packets) && err=$(stat tx_errors) || return 1
+	rx=$(stat rx_packets "${1:-}") && tx=$(stat tx_packets "${1:-}") &&
+		err=$(stat tx_errors "${1:-}") || return 1
 	case "$rx:$tx:$err" in *[!0-9:]*) return 1 ;; esac
 	[ -n "$rx" ] && [ -n "$tx" ] && [ -n "$err" ] || return 1
 	printf '%s %s %s' "$rx" "$tx" "$err"
-}
-
-# 端点卡死判定：一个包都没收到，但明确尝试发过（或有发送错误）
-stalled() {
-	local sample rx tx err
-	sample=$(snapshot) || return 1
-	set -- $sample
-	rx=$1 tx=$2 err=$3
-	[ "$rx" -eq 0 ] || return 1
-	[ "$tx" -gt 0 ] || [ "$err" -gt 0 ] || return 1
-	return 0
 }
 
 is_fm350_ifc() {
@@ -98,11 +94,61 @@ at_port_from_usb() {
 }
 
 have_ipv4() {
-	ip -4 -o addr show dev "$(dev)" 2>/dev/null | grep -q 'inet '
+	ip -4 -o addr show dev "${1:-$(dev)}" scope global 2>/dev/null | grep -q 'inet '
 }
 
 have_route() {
-	ip -4 route show default dev "$(dev)" 2>/dev/null | grep -q '^default '
+	ip -4 route show default dev "${1:-$(dev)}" 2>/dev/null | grep -q '^default '
+}
+
+modem_link() {
+	local name="$1" path driver index
+	case "$name" in ''|*[!a-zA-Z0-9_.-]*) return 1 ;; esac
+	path=$(readlink -f "/sys/class/net/$name/device") || return 1
+	driver=$(readlink -f "$path/driver") || return 1
+	[ "${driver##*/}" = rndis_host ] && is_fm350_ifc "$path" || return 1
+	index=$(cat "/sys/class/net/$name/ifindex") || return 1
+	printf '%s %s\n' "$index" "$path"
+}
+
+# Return 0 on a reply, 1 for no replies, 2 when the probe itself is unavailable.
+probe_link() {
+	local name="$1" rc
+	ping -4 -I "$name" -c 1 -W 2 223.5.5.5 >/dev/null 2>&1 && return 0
+	rc=$?
+	[ "$rc" -eq 1 ] || return 2
+	ping -4 -I "$name" -c 1 -W 2 119.29.29.29 >/dev/null 2>&1 && return 0
+	rc=$?
+	[ "$rc" -eq 1 ] || return 2
+	if ip -6 -o addr show dev "$name" scope global 2>/dev/null | grep -q 'inet6 '; then
+		ping -6 -I "$name" -c 1 -W 2 2400:3200::1 >/dev/null 2>&1 && return 0
+	fi
+	return 1
+}
+
+# 0: probe reply, 10: TX without RX, 11: inconclusive, 12: fresh TX errors without RX.
+sample_window() {
+	local name="$1" link="$2" before after rc rx tx err
+	[ "$(dev)" = "$name" ] && [ "$(modem_link "$name")" = "$link" ] &&
+		have_ipv4 "$name" && have_route "$name" || return 11
+	before=$(snapshot "$name") || return 11
+	probe_link "$name"
+	rc=$?
+	[ "$(dev)" = "$name" ] && [ "$(modem_link "$name")" = "$link" ] &&
+		have_ipv4 "$name" && have_route "$name" || return 11
+	after=$(snapshot "$name") || return 11
+	set -- $before
+	rx=$1 tx=$2 err=$3
+	set -- $after
+	[ "$1" -ge "$rx" ] && [ "$2" -ge "$tx" ] && [ "$3" -ge "$err" ] || return 11
+	[ "$rc" -eq 0 ] && return 0
+	[ "$rc" -eq 1 ] || return 11
+	# Unsolicited ingress is evidence against a completely stalled USB endpoint.
+	# It does not, by itself, confirm public connectivity.
+	[ "$1" -eq "$rx" ] || return 11
+	[ "$3" -gt "$err" ] && [ "$2" -eq "$tx" ] && return 12
+	[ "$2" -gt "$tx" ] && return 10
+	return 11
 }
 
 # 等"地址 + 默认路由"都就位，最多等 $1 秒
@@ -123,26 +169,31 @@ record() {
 	printf '%s %s %s\n' "$1" "$(date +%s)" "$2" > /etc/ap3000m-rdnis-result
 }
 
-# 等拨号完成 + 静置后判定是否真的恢复
+# A fresh reply after redial avoids counting traffic from before the reset.
 verify_healed() {
-	local sample
+	local name link
 	wait_dial 120 || { log "  120s 内没等到地址+默认路由"; return 1; }
 	sleep 10
-	dev_exists && have_ipv4 && have_route || return 1
-	sample=$(snapshot) || return 1
-	log "  采样 rx/tx/err = $sample"
-	set -- $sample
-	[ "$1" -gt 0 ]
+	name=$(dev)
+	link=$(modem_link "$name") || return 1
+	sample_window "$name" "$link"
 }
 
 level1() {
+	local response new_port old_port
+	[ "$(uci -q get fm350.main.enabled)" != 0 ] || return 1
+	old_port=$(uci -q get fm350.main.at_port)
+	new_port=$(at_port_from_usb) || { log '复位前未找到 FM350 AT 口'; return 1; }
+	[ "$old_port" = "$new_port" ] || { log '复位前 AT 口与配置不一致'; return 1; }
 	# 先停止后台 fm350d 释放 /dev/ttyUSB* 独占权，防止与轮询争抢串口导致 CFUN=1,1 下发失败
-	/etc/init.d/fm350d stop >/dev/null 2>&1 || true
+	/etc/init.d/fm350d stop >/dev/null 2>&1 || return 1
 	sleep 1
-	if timeout 15 fm350d at 'AT+CFUN=1,1' >/dev/null 2>&1; then
-		log "一级恢复：已独占下发 AT+CFUN=1,1，等模组重新枚举（90s）"
+	/etc/init.d/fm350d running >/dev/null 2>&1 && return 1
+	if response=$(timeout 15 fm350d at 'AT+CFUN=1,1' 2>/dev/null) &&
+		[ "$(printf '%s' "$response" | jsonfilter -e '@.ok' 2>/dev/null)" = true ]; then
+		log "一级恢复：AT+CFUN=1,1 已获确认，等待模组重新枚举"
 	else
-		log "一级恢复：AT 通道无响应，等待后直接重启 fm350d"
+		log "一级恢复：未收到 AT 复位确认，等待后重启 fm350d 并探测连通性"
 	fi
 	sleep 90
 
@@ -170,41 +221,65 @@ heal() {
 		return 0
 	fi
 
-	log "自愈失败（rx/tx/err = $(snapshot)）：端点死锁较深，软件层已尽力，需要人工重启整机"
+	log "自愈后未确认公网连通（rx/tx/err = $(snapshot)）"
 	record failed "$before"
 	return 1
 }
 
 cmd_check() {
-	if ! dev_exists || ! have_ipv4 || ! have_route; then
-		log '判定: 接口/地址/默认路由未就绪'
-		return 11
-	fi
-	local sample
-	sample=$(snapshot) || { log "统计读取失败，无法判定数据面状态"; return 11; }
-	log "设备 $(dev) 统计: rx/tx/err = $sample"
-	log "IPv4: $(have_ipv4 && echo 有 || echo 无)  默认路由: $(have_route && echo 有 || echo 无)"
-	if stalled; then
-		log "判定: RNDIS 端点卡死（rx=0 且有发送尝试）"
-		return 10
-	fi
-	log "判定: 数据面正常"
-	return 0
+	local name link
+	name=$(dev)
+	link=$(modem_link "$name") || { log '判定: 未找到 FM350 RNDIS 接口'; return 11; }
+	sample_window "$name" "$link"
+	case "$?" in
+		0) log "判定: $name 公网探测收到应答"; return 0 ;;
+		10|12) log "判定: $name 探测期间无收包，发送或发送错误计数增长"; return 10 ;;
+		*) log "判定: $name 暂无足够证据确认连通或断流"; return 11 ;;
+	esac
 }
 
-# 运行期巡检：只在"已经拨号成功但收包为 0"时动手，常规跳过态保持静默不刷屏 syslog
+watch_enabled() {
+	[ "$(uci -q get fm350.main.rdnis_watch)" != 0 ] &&
+		[ "$(uci -q get fm350.main.enabled)" != 0 ] &&
+		/etc/init.d/fm350d running >/dev/null 2>&1
+}
+
+# The daemon's guards default to enabled even when the UCI options are absent.
+shell_recovery_enabled() {
+	[ "$(uci -q get fm350.main.data_guard)" = 0 ] &&
+		[ "$(uci -q get fm350.main.net_guard)" = 0 ]
+}
+
+claim_reset() {
+	local now last
+	read -r now _ < /proc/uptime || return 1
+	now=${now%%.*}
+	case "$now" in ''|*[!0-9]*) return 1 ;; esac
+	last=$(cat "$LAST_RESET" 2>/dev/null) || last=
+	case "$last" in ''|*[!0-9]*) ;; *) [ "$((now - last))" -ge 900 ] || return 1 ;; esac
+	printf '%s\n' "$now" > "$LAST_RESET"
+}
+
 watch_once() {
-	[ "$(uci -q get fm350.main.rdnis_watch)" != 0 ] || return 0
-
-	/etc/init.d/fm350d status >/dev/null 2>&1 || return 0
-	have_ipv4 || return 0
-	stalled || return 0
-
-	# 连续两次（间隔 15s）都卡死才动手
+	local name link first second
+	watch_enabled || return 0
+	name=$(dev)
+	link=$(modem_link "$name") || return 0
+	sample_window "$name" "$link"
+	first=$?
+	case "$first" in 10|12) ;; *) return 0 ;; esac
 	sleep 15
-	stalled || { log "第二次采样已恢复，跳过"; return 0; }
-
-	log "巡检发现端点卡死，开始自愈"
+	sample_window "$name" "$link"
+	second=$?
+	case "$second" in 10|12) ;; *) return 0 ;; esac
+	if ! shell_recovery_enabled; then
+		log "$name 连续两轮无收包，恢复由 fm350d 负责"
+		return 0
+	fi
+	[ "$first:$second" = 12:12 ] || { log "$name 连续两轮无收包，暂无 USB 发送错误证据"; return 0; }
+	watch_enabled && shell_recovery_enabled && [ "$(dev)" = "$name" ] && [ "$(modem_link "$name")" = "$link" ] &&
+		have_ipv4 "$name" && have_route "$name" && claim_reset || return 0
+	log "$name 连续两轮无收包且发送错误增加，开始自愈"
 	heal
 }
 
@@ -215,36 +290,21 @@ acquire_lock() {
 }
 
 main() {
+	case "$MODE" in auto|watch) [ "$(uci -q get fm350.main.rdnis_watch)" != 0 ] || return 0 ;; esac
+	if [ "$MODE" = auto ]; then
+		sleep "$DELAY"
+		watch_enabled && wait_dial 180 || return 0
+	fi
 	if [ "$MODE" != check ]; then
-		if [ "$MODE" = watch ] && [ "$(uci -q get fm350.main.rdnis_watch)" = 0 ]; then return 0; fi
 		acquire_lock || { log '已有自愈实例在运行，跳过'; return 0; }
 	fi
 	case "$MODE" in
 	check) cmd_check ;;
-	force) heal ;;
-	watch) watch_once ;;
-	auto)
-		# 开机路径：先等拨号完成（最多 delay + 180 秒），再采样两次判定。
-		# 2026-10-26 修正：旧版只 sleep 120 秒就开始判，若当时还在拨号（rx=0、tx>0），
-		# 会被误判成"端点卡死"而白白复位一次模组。现在必须先有 IPv4 才判定。
-		sleep "$DELAY"
-		if /etc/init.d/fm350d status >/dev/null 2>&1; then
-			if ! wait_dial 180; then
-				log "开机 $((${DELAY} + 180))s 内仍未拿到 IPv4/默认路由，跳过自愈（可能是无信号或运营商侧问题）"
-			elif stalled; then
-				sleep 20
-				if stalled; then
-					heal
-				else
-					log "首次采样异常但第二次已恢复，跳过"
-				fi
-			else
-				log "开机检查：数据面正常（rx/tx/err = $(snapshot)）"
-			fi
-		else
-			log "fm350d 未运行，跳过"
-		fi
+	force)
+		claim_reset || { log '复位仍在 15 分钟冷却期内，或无法记录本次复位'; return 1; }
+		heal
 		;;
+	auto|watch) watch_once ;;
 esac
 }
 
