@@ -114,6 +114,22 @@ if [ "$(uci -q get fm350.main.cid)" != "$CID" ]; then
 	LOG "数据承载 CID 设为 $CID（避开 ims 承载）"
 fi
 
+# ---- 4b. 首启默认优先使用运营商 5G 核心网 UPF 下发 DNS，并降低后台 AT 轮询争抢 ----
+if [ "$(uci -q get fm350.main.dns_force)" = "1" ]; then
+	uci set fm350.main.dns_force='0'
+	CHANGED=1
+	LOG "关闭强制公共 DNS，优先使用运营商核心网低延迟 DNS"
+fi
+if [ "$(uci -q get fm350.main.dns4_secondary)" = "223.5.5.5" ]; then
+	uci set fm350.main.dns4_secondary='180.184.1.1'
+	CHANGED=1
+fi
+if [ "$(uci -q get fm350.main.poll_interval)" = "30" ]; then
+	uci set fm350.main.poll_interval='60'
+	CHANGED=1
+	LOG "FM350 状态轮询间隔调优为 60s，降低基带 AT 串口打断"
+fi
+
 # ---- 5. 落盘并按需重启守护 ----
 if [ "$CHANGED" = 1 ]; then
 	uci commit fm350

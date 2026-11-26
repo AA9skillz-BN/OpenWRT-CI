@@ -51,28 +51,71 @@ def patch_config_generate(source):
 
 def patch_dhcp_conf(source):
     # ImmortalWrt sets min_cache_ttl=3600, locking short-TTL CDN/DDNS records
-    # for an hour; OpenWrt mainline omits min_cache_ttl. Normalize to 300s.
-    if re.search(r"^\toption min_cache_ttl\t300[ \t]*$", source, re.MULTILINE):
-        return source
-    immortal_matches = re.findall(r"^\toption min_cache_ttl\t3600[ \t]*$", source, re.MULTILINE)
-    if len(immortal_matches) == 1:
-        return re.sub(
-            r"^\toption min_cache_ttl\t3600[ \t]*$",
-            "\toption min_cache_ttl\t300",
-            source,
+    # for an hour; OpenWrt mainline omits min_cache_ttl. Normalize to 300s,
+    # expand cachesize to 10000, enable parallel upstream DNS racing
+    # (all_servers=1), and allow brief negative caching (nonegcache=0).
+    text = source
+    if not re.search(r"^\toption min_cache_ttl\t300[ \t]*$", text, re.MULTILINE):
+        immortal_matches = re.findall(r"^\toption min_cache_ttl\t3600[ \t]*$", text, re.MULTILINE)
+        if len(immortal_matches) == 1:
+            text = re.sub(
+                r"^\toption min_cache_ttl\t3600[ \t]*$",
+                "\toption min_cache_ttl\t300",
+                text,
+                count=1,
+                flags=re.MULTILINE,
+            )
+        else:
+            cachesize_matches = re.findall(r"^\toption cachesize\t[0-9]+[ \t]*$", text, re.MULTILINE)
+            if len(cachesize_matches) == 1 and "min_cache_ttl" not in text:
+                text = re.sub(
+                    r"^(\toption cachesize\t[0-9]+)[ \t]*$",
+                    r"\1\n\toption min_cache_ttl\t300",
+                    text,
+                    count=1,
+                    flags=re.MULTILINE,
+                )
+            else:
+                raise ValueError("dhcp.conf cache anchors changed; review upstream")
+
+    cachesize_matches = re.findall(r"^\toption cachesize\t[0-9]+[ \t]*$", text, re.MULTILINE)
+    if len(cachesize_matches) != 1:
+        raise ValueError("dhcp.conf cachesize anchor changed; review upstream")
+    text = re.sub(
+        r"^\toption cachesize\t[0-9]+[ \t]*$",
+        "\toption cachesize\t10000",
+        text,
+        count=1,
+        flags=re.MULTILINE,
+    )
+
+    if not re.search(r"^\toption all_servers\t1[ \t]*$", text, re.MULTILINE):
+        if "all_servers" in text:
+            text = re.sub(
+                r"^\toption all_servers\t[0-9]+[ \t]*$",
+                "\toption all_servers\t1",
+                text,
+                count=1,
+                flags=re.MULTILINE,
+            )
+        else:
+            text = re.sub(
+                r"^(\toption cachesize\t10000)[ \t]*$",
+                r"\1\n\toption all_servers\t1",
+                text,
+                count=1,
+                flags=re.MULTILINE,
+            )
+
+    if re.search(r"^\toption nonegcache\t1[ \t]*$", text, re.MULTILINE):
+        text = re.sub(
+            r"^\toption nonegcache\t1[ \t]*$",
+            "\toption nonegcache\t0",
+            text,
             count=1,
             flags=re.MULTILINE,
         )
-    cachesize_matches = re.findall(r"^\toption cachesize\t[0-9]+[ \t]*$", source, re.MULTILINE)
-    if len(cachesize_matches) == 1 and "min_cache_ttl" not in source:
-        return re.sub(
-            r"^(\toption cachesize\t[0-9]+)[ \t]*$",
-            r"\1\n\toption min_cache_ttl\t300",
-            source,
-            count=1,
-            flags=re.MULTILINE,
-        )
-    raise ValueError("dhcp.conf cache anchors changed; review upstream")
+    return text
 
 
 def configure(tree):

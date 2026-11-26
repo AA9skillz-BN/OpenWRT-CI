@@ -81,11 +81,15 @@ class Ap3000mDefaultsTests(unittest.TestCase):
             self.assertNotIn("0.openwrt.pool.ntp.org", patched)
 
     def test_dhcp_conf_normalizes_min_cache_ttl_to_300_repeatably(self):
-        for source in (IMMORTAL_DHCP, OPENWRT_DHCP):
+        immortal_with_neg = IMMORTAL_DHCP + "\toption nonegcache\t1\n"
+        for source in (immortal_with_neg, OPENWRT_DHCP):
             patched = sys_defaults.patch_dhcp_conf(source)
             self.assertEqual(patched, sys_defaults.patch_dhcp_conf(patched))
             self.assertIn("\toption min_cache_ttl\t300\n", patched)
+            self.assertIn("\toption cachesize\t10000\n", patched)
+            self.assertIn("\toption all_servers\t1\n", patched)
             self.assertNotIn("min_cache_ttl\t3600", patched)
+            self.assertNotIn("nonegcache\t1", patched)
 
     def test_drift_in_config_generate_or_dhcp_conf_fails_before_writing(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -109,6 +113,7 @@ class Ap3000mDefaultsTests(unittest.TestCase):
         required = {item["path"]: item for item in profile["required_files"]}
         expected_sources = {
             "/etc/uci-defaults/98-ap3000m-gpt-fix": ("Scripts/AP3000M/98-ap3000m-gpt-fix", True),
+            "/etc/init.d/ap3000m-net-tune": ("Scripts/AP3000M/net-tune/ap3000m-net-tune.init", True),
             "/etc/hotplug.d/net/90-ap3000m-net-tune": ("Scripts/AP3000M/net-tune/90-ap3000m-net-tune", True),
             "/etc/hotplug.d/iface/90-ap3000m-iface-tune": ("Scripts/AP3000M/net-tune/90-ap3000m-iface-tune", True),
             "/etc/sysctl.d/99-ap3000m-tune.conf": ("Scripts/AP3000M/net-tune/99-ap3000m-tune.conf", False),
@@ -129,6 +134,9 @@ class Ap3000mDefaultsTests(unittest.TestCase):
         tune_conf = (REPO / "Scripts/AP3000M/net-tune/99-ap3000m-tune.conf").read_text(encoding="utf-8")
         self.assertIn("net.core.rps_sock_flow_entries=32768", tune_conf)
         self.assertIn("net.core.netdev_budget=600", tune_conf)
+        self.assertIn("net.netfilter.nf_conntrack_tcp_be_liberal=1", tune_conf)
+        self.assertIn("net.ipv4.tcp_slow_start_after_idle=0", tune_conf)
+        self.assertIn("net.core.rmem_max=16777216", tune_conf)
 
     def test_ota_overview_uses_darkmode_safe_tokens_and_luci_modal(self):
         view_path = REPO / "Scripts/AP3000M/luci-app-ap3000m-ota/htdocs/luci-static/resources/view/ap3000m-ota/overview.js"
@@ -214,13 +222,20 @@ grep -q '^-e ' "$TASK_TMP/calls" || exit 92
 USB3_PORT="$TASK_TMP/usb/port1"
 USB3_DEV="$TASK_TMP/usb/2-1"
 USB3_BUS="$TASK_TMP/usb/usb2"
+USB2_BUS="$TASK_TMP/usb/usb1"
+USBCORE_AUTOSUSPEND="$TASK_TMP/usb/usbcore_autosuspend"
+IEEE80211_DEBUG="$TASK_TMP/ieee80211"
 MTU_CACHE="$TASK_TMP/ap3000m-mtu"
-mkdir -p "$USB3_PORT" "$USB3_DEV/power" "$USB3_BUS/power" "$TASK_TMP/irq/73" "$TASK_TMP/irq/78"
-mkdir -p "$TASK_TMP/net/eth2/queues/rx-0" "$TASK_TMP/net/eth2/queues/tx-0"
+mkdir -p "$USB3_PORT" "$USB3_DEV/power" "$USB3_BUS/power" "$USB2_BUS/power" "$IEEE80211_DEBUG/phy1" "$TASK_TMP/irq/73" "$TASK_TMP/irq/78"
+mkdir -p "$TASK_TMP/net/eth2/queues/rx-0" "$TASK_TMP/net/eth2/queues/tx-0" "$TASK_TMP/net/phy1-ap0/queues/rx-0"
 
 printf 'u1_u2\\n' > "$USB3_PORT/usb3_lpm_permit"
 printf 'auto\\n' > "$USB3_DEV/power/control"
 printf 'auto\\n' > "$USB3_BUS/power/control"
+printf 'auto\\n' > "$USB2_BUS/power/control"
+printf '2\\n' > "$USBCORE_AUTOSUSPEND"
+printf '24000\\n' > "$IEEE80211_DEBUG/phy1/aql_threshold"
+printf '' > "$IEEE80211_DEBUG/phy1/aql_txq_limit"
 printf '0e8d\\n' > "$USB3_DEV/idVendor"
 printf '7127\\n' > "$USB3_DEV/idProduct"
 printf '3\\n' > "$TASK_TMP/irq/73/smp_affinity"
@@ -228,6 +243,8 @@ printf '3\\n' > "$TASK_TMP/irq/78/smp_affinity"
 printf '0\\n' > "$TASK_TMP/net/eth2/queues/rx-0/rps_cpus"
 printf '0\\n' > "$TASK_TMP/net/eth2/queues/rx-0/rps_flow_cnt"
 printf '0\\n' > "$TASK_TMP/net/eth2/queues/tx-0/xps_cpus"
+printf '2\\n' > "$TASK_TMP/net/phy1-ap0/queues/rx-0/rps_cpus"
+printf '0\\n' > "$TASK_TMP/net/phy1-ap0/queues/rx-0/rps_flow_cnt"
 printf '0\\n' > "$TASK_TMP/net/eth2/gro_flush_timeout"
 printf '0\\n' > "$TASK_TMP/net/eth2/napi_defer_hard_irqs"
 printf '1000\\n' > "$TASK_TMP/net/eth2/tx_queue_len"
@@ -256,15 +273,20 @@ printf '1234\\n' > "$USB3_DEV/idVendor"
 apply_tuning eth2
 [ "$(cat "$USB3_PORT/usb3_lpm_permit")" = "u1_u2" ] || exit 89
 
-# Reviewed FM350 locks LPM=0, power=on, RFS=4096, GRO=20000, IRQ=2
+# Reviewed FM350 locks LPM=0, power=on, RFS=4096, GRO=20000, IRQ 78->2 & 73->1, AQL=12000
 printf '0e8d\\n' > "$USB3_DEV/idVendor"
 apply_tuning eth2
 [ "$(cat "$USB3_PORT/usb3_lpm_permit")" = "0" ] || exit 90
 [ "$(cat "$USB3_DEV/power/control")" = "on" ] || exit 91
 [ "$(cat "$USB3_BUS/power/control")" = "on" ] || exit 92
+[ "$(cat "$USBCORE_AUTOSUSPEND")" = "-1" ] || exit 85
 [ "$(cat "$TASK_TMP/irq/78/smp_affinity")" = "2" ] || exit 93
+[ "$(cat "$TASK_TMP/irq/73/smp_affinity")" = "1" ] || exit 86
 [ "$(cat "$TASK_TMP/net/eth2/queues/rx-0/rps_cpus")" = "3" ] || exit 94
 [ "$(cat "$TASK_TMP/net/eth2/queues/rx-0/rps_flow_cnt")" = "4096" ] || exit 95
+[ "$(cat "$TASK_TMP/net/phy1-ap0/queues/rx-0/rps_cpus")" = "3" ] || exit 87
+[ "$(cat "$TASK_TMP/net/phy1-ap0/queues/rx-0/rps_flow_cnt")" = "2048" ] || exit 88
+[ "$(cat "$IEEE80211_DEBUG/phy1/aql_threshold")" = "12000" ] || exit 84
 [ "$(cat "$TASK_TMP/net/eth2/gro_flush_timeout")" = "20000" ] || exit 96
 [ "$(cat "$TASK_TMP/net/eth2/napi_defer_hard_irqs")" = "2" ] || exit 97
 

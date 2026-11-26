@@ -1,0 +1,40 @@
+#!/bin/sh /etc/rc.common
+# SPDX-License-Identifier: MIT
+# S99ap3000m-net-tune —— 开机末尾及 network/firewall/wireless 重载后锁定 AP3000M 全链路调优
+#
+# 真机根因：/etc/init.d/packet_steering 监听了 network、firewall 与 interface.* (1000ms)，
+# 会在 fw4 重载后把 eth2/phy1-ap0/eth0/eth1 的 rps_cpus 改回单核 2、rps_flow_cnt 归零，
+# 导致 98.8% 软中断挤在 CPU1。本服务在 S99（Wi-Fi phy 就绪后）及各配置重载末尾重申双核调优与 AQL。
+
+START=99
+USE_PROCD=1
+
+quiet_packet_steering() {
+	# 若用户未在 UCI 显式开启 packet_steering，则停止通用单核分配脚本，交由 ap3000m-net-tune 管理
+	if [ -z "$(uci -q get network.globals.packet_steering 2>/dev/null)" ] ||
+		[ "$(uci -q get network.globals.packet_steering 2>/dev/null)" = "0" ]; then
+		/etc/init.d/packet_steering stop >/dev/null 2>&1 || true
+	fi
+}
+
+start_service() {
+	[ -x /usr/sbin/ap3000m-net-tune ] || return 0
+	quiet_packet_steering
+	/usr/sbin/ap3000m-net-tune apply >/dev/null 2>&1 || true
+}
+
+reload_service() {
+	[ -x /usr/sbin/ap3000m-net-tune ] || return 0
+	quiet_packet_steering
+	/usr/sbin/ap3000m-net-tune apply >/dev/null 2>&1 || true
+	(
+		sleep 3
+		quiet_packet_steering
+		/usr/sbin/ap3000m-net-tune apply >/dev/null 2>&1 || true
+	) </dev/null >/dev/null 2>&1 &
+}
+
+service_triggers() {
+	procd_add_reload_trigger "network" "firewall" "wireless"
+	procd_add_raw_trigger "interface.*" 2500 /etc/init.d/ap3000m-net-tune reload
+}

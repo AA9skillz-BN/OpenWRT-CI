@@ -1,19 +1,20 @@
 #!/bin/sh
 # SPDX-License-Identifier: MIT
-# ap3000m-net-tune —— FM350-GL (USB 3.0 RNDIS) 稳定性锁死与数据面极限调优
+# ap3000m-net-tune —— FM350-GL (USB 3.0 RNDIS) 稳定性锁死与全链路低延迟高吞吐调优
 #
 # FM350 只有 RNDIS 一种数据通路（GTUSBMODE 40/41 都是 RNDIS），没有 ECM/NCM 可选。
-# 围绕「满速 USB 3.0 不掉线 + 双核吞吐榨干」做六件事：
+# 围绕「满速 USB 3.0 不掉线 + 双核吞吐榨干 + 无线空口低延迟」做七件事：
 #   1. USB 3.0 U0 锁定：在核对 AP3000M 端口拓扑与 FM350 VID:PID 后关闭 usb3_lpm_permit
-#      (禁用易诱发 MTK T750 RNDIS Bulk-IN 卡死的 U1/U2 低功耗跳变) 并锁定 power/control=on
-#   2. xhci-hcd 硬中断亲和性：无线 mt7915e 硬中断在 CPU0，将 USB 3.0 硬中断绑到 CPU1
-#   3. RPS/XPS + RFS：软中断双核分摊（mask=3）并开启 rps_flow_cnt=4096 提升缓存命中
-#   4. GRO 微秒聚合：gro_flush_timeout=20000 + napi_defer_hard_irqs=2 合并突发帧减负协议栈
-#   5. txqueuelen：加大至 2000 适配 5G 高带宽时延积
-#   6. 双栈 MTU 探测：用 DF ping 实测 IPv4/IPv6 不分片上限并持久化
+#      (禁用易诱发 MTK T750 RNDIS Bulk-IN 卡死的 U1/U2 低功耗跳变)，锁定 power/control=on 与 autosuspend=-1
+#   2. 硬中断双核物理隔离：CPU1 专职 xhci-hcd (USB 3.0)，CPU0 专职 mt7915e (Wi-Fi 6) 与以太网硬中断
+#   3. 全接口 RPS/XPS + RFS：eth2 (rfs=4096) 与 LAN/Wi-Fi (rfs=2048) 双核分摊，解决 packet_steering 单核拥塞
+#   4. MT7981 Wi-Fi 6 AQL 空口降延迟：收紧 phy* aql_threshold=12000 与各 AC aql_txq_limit，压低满载抖动
+#   5. GRO 微秒聚合：gro_flush_timeout=20000 + napi_defer_hard_irqs=2 合并突发帧减负协议栈
+#   6. txqueuelen：加大至 2000 配合 fq_codel 适配 5G 高带宽时延积
+#   7. 双栈 MTU 探测：用 DF ping 实测 IPv4/IPv6 不分片上限并持久化
 #
 # 用法：
-#   ap3000m-net-tune apply [dev]   应用即时参数（USB3 U0/IRQ/RPS/RFS/GRO/队列/已缓存 MTU）
+#   ap3000m-net-tune apply [dev]   应用即时参数（USB3 U0/IRQ/RPS/RFS/AQL/GRO/队列/已缓存 MTU）
 #   ap3000m-net-tune probe [dev]   实测双栈 MTU 并缓存到 /etc/ap3000m-mtu
 #   ap3000m-net-tune status [dev]  打印当前生效值
 
@@ -25,6 +26,9 @@ PING_HOST6=2400:3200::1
 USB3_PORT=/sys/bus/usb/devices/usb2/2-0:1.0/usb2-port1
 USB3_DEV=/sys/bus/usb/devices/2-1
 USB3_BUS=/sys/bus/usb/devices/usb2
+USB2_BUS=/sys/bus/usb/devices/usb1
+USBCORE_AUTOSUSPEND=/sys/module/usbcore/parameters/autosuspend
+IEEE80211_DEBUG=/sys/kernel/debug/ieee80211
 
 log() { logger -t ap3000m-net "$*" 2>/dev/null; printf '%s\n' "ap3000m-net-tune: $*" >&2; }
 
@@ -63,22 +67,24 @@ is_reviewed_fm350_usb() {
 }
 
 lock_usb3_power_u0() {
-	# 保留 5000M USB 3.0 全速，仅禁止 U1/U2 链路低功耗睡眠与控制器自动挂起，消除唤醒卡死与抖动
+	# 保留 5000M USB 3.0 全速，禁止 U1/U2 链路低功耗睡眠与控制器/全局自动挂起，消除唤醒卡死与抖动
 	is_reviewed_fm350_usb || return 0
 	state=""
 	if [ -w "$USB3_PORT/usb3_lpm_permit" ]; then
 		echo 0 >"$USB3_PORT/usb3_lpm_permit" 2>/dev/null && state="lpm=0"
 	fi
-	for ctrl in "$USB3_DEV/power/control" "$USB3_BUS/power/control"; do
+	for ctrl in "$USB3_DEV/power/control" "$USB3_BUS/power/control" "$USB2_BUS/power/control"; do
 		[ -w "$ctrl" ] && echo on >"$ctrl" 2>/dev/null
 	done
+	[ -w "$USB3_DEV/power/autosuspend" ] && echo -1 >"$USB3_DEV/power/autosuspend" 2>/dev/null
+	[ -w "$USBCORE_AUTOSUSPEND" ] && echo -1 >"$USBCORE_AUTOSUSPEND" 2>/dev/null
 	[ -r "$USB3_DEV/power/control" ] && state="${state:+$state,}pwr=$(cat "$USB3_DEV/power/control" 2>/dev/null)"
 	printf '%s' "$state"
 }
 
 pin_xhci_irq() {
-	# MT7981B 双核下 mt7915e 无线硬中断全部落在 CPU0；将 FM350 所在的 xhci-hcd
-	# 硬中断迁至 CPU1（掩码 2），避免 5G 蜂窝与 Wi-Fi 并发时争抢同一个核心。
+	# MT7981B 双核硬中断物理隔离：CPU1 专职 FM350 所在的 xhci-hcd，
+	# CPU0 专职 mt7915e 无线与 15100000.ethernet 有线网口硬中断。
 	[ "$(cpu_count)" -ge 2 ] || return 0
 	pinned=""
 	for irq in $(awk '/xhci-hcd/ {sub(/:/, "", $1); print $1}' /proc/interrupts 2>/dev/null); do
@@ -87,12 +93,18 @@ pin_xhci_irq() {
 			pinned="${pinned:+$pinned,}$irq->2"
 		fi
 	done
+	for irq in $(awk '/mt7915e|15100000\.ethernet/ {sub(/:/, "", $1); print $1}' /proc/interrupts 2>/dev/null); do
+		[ -w "/proc/irq/$irq/smp_affinity" ] || continue
+		if echo 1 >"/proc/irq/$irq/smp_affinity" 2>/dev/null; then
+			pinned="${pinned:+$pinned,}$irq->1"
+		fi
+	done
 	printf '%s' "$pinned"
 }
 
 xhci_irq_status() {
 	out=""
-	for irq in $(awk '/xhci-hcd/ {sub(/:/, "", $1); print $1}' /proc/interrupts 2>/dev/null); do
+	for irq in $(awk '/xhci-hcd|mt7915e/ {sub(/:/, "", $1); print $1}' /proc/interrupts 2>/dev/null); do
 		[ -r "/proc/irq/$irq/smp_affinity" ] || continue
 		val=$(cat "/proc/irq/$irq/smp_affinity" 2>/dev/null)
 		out="${out:+$out,}$irq:$val"
@@ -100,13 +112,28 @@ xhci_irq_status() {
 	printf '%s' "${out:-na}"
 }
 
-apply_tuning() {
-	dev=$(dev_of "${1:-}")
-	[ -d "/sys/class/net/$dev" ] || { log "设备 $dev 不存在，跳过"; return 1; }
+tune_wifi_aql() {
+	# 收紧 mt76 Wi-Fi 6 空口排队上限（默认 5000/12000us -> 1500~2500/3000~5000us），保留 HE160 聚合并压低满载抖动
+	aql_done=0
+	for phy in "$IEEE80211_DEBUG"/phy*; do
+		[ -d "$phy" ] || continue
+		if [ -w "$phy/aql_threshold" ]; then
+			echo 12000 >"$phy/aql_threshold" 2>/dev/null
+		fi
+		if [ -w "$phy/aql_txq_limit" ]; then
+			echo "0 1500 3000" >"$phy/aql_txq_limit" 2>/dev/null
+			echo "1 2000 4000" >"$phy/aql_txq_limit" 2>/dev/null
+			echo "2 2500 5000" >"$phy/aql_txq_limit" 2>/dev/null
+			echo "3 2000 4000" >"$phy/aql_txq_limit" 2>/dev/null
+			aql_done=$((aql_done + 1))
+		fi
+	done
+	printf '%s' "$aql_done"
+}
 
-	usb_u0=$(lock_usb3_power_u0)
-	irq_pin=$(pin_xhci_irq)
-	mask=$(rps_mask)
+tune_rps_xps_all() {
+	dev="$1"
+	mask="$2"
 	nq=0
 	for f in /sys/class/net/"$dev"/queues/rx-*/rps_cpus; do
 		[ -w "$f" ] || continue
@@ -121,6 +148,30 @@ apply_tuning() {
 		[ -w "$f" ] || continue
 		echo "$mask" >"$f" 2>/dev/null
 	done
+	for lan_dev in eth0 eth1 phy0-ap0 phy1-ap0; do
+		[ -d "/sys/class/net/$lan_dev" ] || continue
+		for f in /sys/class/net/"$lan_dev"/queues/rx-*/rps_cpus; do
+			[ -w "$f" ] && echo "$mask" >"$f" 2>/dev/null
+		done
+		for f in /sys/class/net/"$lan_dev"/queues/rx-*/rps_flow_cnt; do
+			[ -w "$f" ] && echo 2048 >"$f" 2>/dev/null
+		done
+		for f in /sys/class/net/"$lan_dev"/queues/tx-*/xps_cpus; do
+			[ -w "$f" ] && echo "$mask" >"$f" 2>/dev/null
+		done
+	done
+	printf '%s' "$nq"
+}
+
+apply_tuning() {
+	dev=$(dev_of "${1:-}")
+	aql_cnt=$(tune_wifi_aql)
+	[ -d "/sys/class/net/$dev" ] || { log "设备 $dev 不存在（已应用 Wi-Fi AQL=$aql_cnt），跳过网卡项"; return 1; }
+
+	usb_u0=$(lock_usb3_power_u0)
+	irq_pin=$(pin_xhci_irq)
+	mask=$(rps_mask)
+	nq=$(tune_rps_xps_all "$dev" "$mask")
 
 	# RNDIS 单帧送交协议栈开销高；开启 20us GRO 聚合窗口合并 5G 突发流
 	[ -w "/sys/class/net/$dev/gro_flush_timeout" ] && echo 20000 >"/sys/class/net/$dev/gro_flush_timeout" 2>/dev/null
@@ -137,7 +188,7 @@ apply_tuning() {
 	for f in /sys/class/net/"$dev"/queues/rx-*/rps_cpus; do
 		[ -r "$f" ] && real="$real $(cat "$f" 2>/dev/null)"
 	done
-	log "已应用：dev=$dev cpus=$(cpu_count) mask=$mask usb3=[${usb_u0:-跳过}] xhci_irq=${irq_pin:-不变} rx队列=$nq 回读=[$real] gro=$(cat /sys/class/net/"$dev"/gro_flush_timeout 2>/dev/null) txqueuelen=$(cat /sys/class/net/"$dev"/tx_queue_len 2>/dev/null) mtu=${mtu:-默认}"
+	log "已应用：dev=$dev cpus=$(cpu_count) mask=$mask usb3=[${usb_u0:-跳过}] irq=${irq_pin:-不变} rx队列=$nq 回读=[$real] aql_phy=$aql_cnt gro=$(cat /sys/class/net/"$dev"/gro_flush_timeout 2>/dev/null) txqueuelen=$(cat /sys/class/net/"$dev"/tx_queue_len 2>/dev/null) mtu=${mtu:-默认}"
 }
 
 probe_mtu() {
@@ -195,8 +246,11 @@ show_status() {
 			"$(cat "$USB3_BUS/power/control" 2>/dev/null)"
 	fi
 	printf 'cached_mtu=%s\n' "$(cat "$MTU_CACHE" 2>/dev/null)"
-	printf 'cc=%s qdisc=%s\n' "$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)" \
-		"$(sysctl -n net.core.default_qdisc 2>/dev/null)"
+	printf 'cc=%s qdisc=%s liberal=%s slow_start_idle=%s\n' \
+		"$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)" \
+		"$(sysctl -n net.core.default_qdisc 2>/dev/null)" \
+		"$(sysctl -n net.netfilter.nf_conntrack_tcp_be_liberal 2>/dev/null)" \
+		"$(sysctl -n net.ipv4.tcp_slow_start_after_idle 2>/dev/null)"
 }
 
 case "${1:-apply}" in

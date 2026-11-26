@@ -173,16 +173,21 @@ else
 	exit 1
 fi
 
-# 10) RNDIS 数据面与 USB 3.0 U0 稳定性调优（net + iface 双 hotplug 防止 packet_steering 覆盖）
+# 10) RNDIS 数据面与 USB 3.0 U0 稳定性调优（net + iface + procd S99 防止 packet_steering 覆盖）
 _ap3000m_tune="$GITHUB_WORKSPACE/Scripts/AP3000M/net-tune"
 if [ -d "$_ap3000m_tune" ]; then
 	mkdir -p "$_ap3000m_bf/usr/sbin" "$_ap3000m_bf/etc/hotplug.d/net" \
-		"$_ap3000m_bf/etc/hotplug.d/iface" "$_ap3000m_bf/etc/sysctl.d" "$_ap3000m_bf/etc/uci-defaults"
+		"$_ap3000m_bf/etc/hotplug.d/iface" "$_ap3000m_bf/etc/sysctl.d" \
+		"$_ap3000m_bf/etc/init.d" "$_ap3000m_bf/etc/rc.d" "$_ap3000m_bf/etc/uci-defaults"
 
 	rm -f "$_ap3000m_bf/etc/hotplug.d/net/20-ap3000m-net-tune"
 
 	cp -f "$_ap3000m_tune/ap3000m-net-tune" "$_ap3000m_bf/usr/sbin/ap3000m-net-tune"
 	chmod 0755 "$_ap3000m_bf/usr/sbin/ap3000m-net-tune"
+
+	cp -f "$_ap3000m_tune/ap3000m-net-tune.init" "$_ap3000m_bf/etc/init.d/ap3000m-net-tune"
+	chmod 0755 "$_ap3000m_bf/etc/init.d/ap3000m-net-tune"
+	ln -sf ../init.d/ap3000m-net-tune "$_ap3000m_bf/etc/rc.d/S99ap3000m-net-tune"
 
 	cp -f "$_ap3000m_tune/90-ap3000m-net-tune" "$_ap3000m_bf/etc/hotplug.d/net/90-ap3000m-net-tune"
 	chmod 0755 "$_ap3000m_bf/etc/hotplug.d/net/90-ap3000m-net-tune"
@@ -191,7 +196,7 @@ if [ -d "$_ap3000m_tune" ]; then
 	chmod 0755 "$_ap3000m_bf/etc/hotplug.d/iface/90-ap3000m-iface-tune"
 
 	cp -f "$_ap3000m_tune/99-ap3000m-tune.conf" "$_ap3000m_bf/etc/sysctl.d/99-ap3000m-tune.conf"
-	_ap3000m_log "已投放 FM350 USB3 U0 与 RNDIS 调优（net/iface hotplug + sysctl；分载及 BBR 由 TurboACC 管理）"
+	_ap3000m_log "已投放 FM350 USB3 U0、双核硬中断隔离、Wi-Fi AQL 与 RNDIS 调优（S99 + hotplug + sysctl）"
 else
 	echo "Missing required network tuning" >&2
 	exit 1

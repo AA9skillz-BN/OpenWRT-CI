@@ -16,7 +16,9 @@ RECIPE_HASHES = {RECIPE_SHA256,
 CONFIG = "luci-app-airpi-fancontrol/files/etc/config/airpi-fan"
 CONFIG_SHA256 = "5115e2d358c5bf188d2fa2a19f5867ab0bce80f4554d528f98fd85fe0a38864b"
 CONFIG_EDITS = (
+    ("\toption temp_high '85'\n", "\toption temp_high '75'\n"),
     ("\toption temp_mid '60'\n", "\toption temp_mid '68'\n"),
+    ("\toption temp_low '50'\n", "\toption temp_low '48'\n"),
     ("\toption hysteresis '2'\n", "\toption hysteresis '4'\n"),
     ("\toption min_hold '30'\n", "\toption min_hold '60'\n"),
     ("\toption log_level '2'\n", "\toption log_level '1'\n"),
