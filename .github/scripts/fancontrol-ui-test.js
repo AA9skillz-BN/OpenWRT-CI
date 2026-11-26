@@ -4,10 +4,66 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync(process.argv[2], 'utf8');
 
+function makeNode(tag, attrs = {}, children = []) {
+  return {
+    tag,
+    attrs,
+    children: Array.isArray(children) ? children : [children],
+    style: {},
+    parentNode: null,
+    classList: { toggle() {} },
+    appendChild(child) {
+      if (child && typeof child === 'object')
+        child.parentNode = this;
+      this.children.push(child);
+      return child;
+    },
+    removeChild(child) {
+      const idx = this.children.indexOf(child);
+      if (idx >= 0)
+        this.children.splice(idx, 1);
+      if (child && typeof child === 'object')
+        child.parentNode = null;
+    }
+  };
+}
+
 function fixture(reply = { code: 0, stdout: 'result=ok\n', stderr: '' }) {
-  const calls = [], notices = [];
+  const calls = [], notices = [], elementsById = new Map();
   let modal, hidden = 0, refreshed = 0;
+  const body = makeNode('body');
+  body.appendChild = function(child) {
+    if (child && child.attrs && child.attrs.id)
+      elementsById.set(child.attrs.id, child);
+    if (child && typeof child === 'object') {
+      child.parentNode = body;
+      const origAppend = child.appendChild.bind(child);
+      child.appendChild = function(toast) {
+        const cls = (toast && toast.attrs && toast.attrs.class) || '';
+        const match = cls.match(/\bis-(info|success|warning|error)\b/);
+        if (match)
+          notices.push({ body: toast, kind: match[1] === 'success' ? 'info' : match[1] });
+        return origAppend(toast);
+      };
+    }
+    body.children.push(child);
+    return child;
+  };
+  const win = {
+    setTimeout: () => 1,
+    clearTimeout: () => {},
+    getComputedStyle: () => ({ position: 'static', bottom: '0px' })
+  };
+  const doc = {
+    body,
+    getElementById: id => elementsById.get(id) || null,
+    querySelector: () => null
+  };
   const context = vm.createContext({
+    window: win,
+    document: doc,
+    location: { reload() {}, hash: '' },
+    L: { bind: (fn, self) => fn.bind(self) },
     view: { extend: spec => spec },
     fs: { exec: (path, args) => {
       calls.push({ path, args: Array.from(args) });
@@ -17,10 +73,10 @@ function fixture(reply = { code: 0, stdout: 'result=ok\n', stderr: '' }) {
     ui: {
       showModal: (title, children) => { modal = { title, children }; },
       hideModal: () => { hidden++; },
-      addNotification: (title, body, kind) => notices.push({ body, kind })
+      addNotification: (title, bodyNode, kind) => notices.push({ body: bodyNode, kind })
     },
     _: value => value,
-    E: (tag, attrs, children) => ({ tag, attrs, children })
+    E: (tag, attrs, children) => makeNode(tag, attrs, children)
   });
   vm.runInContext(`String.prototype.format = function(...args) {
     let index = 0; return this.replace(/%[sd]/g, () => String(args[index++]));
@@ -30,7 +86,7 @@ function fixture(reply = { code: 0, stdout: 'result=ok\n', stderr: '' }) {
   view.fetch = () => { refreshed++; return Promise.resolve(); };
   const choose = accepted => {
     const row = modal.children[modal.children.length - 1];
-    row.children[accepted ? 2 : 0].attrs.click();
+    row.children[accepted ? 2 : 0].attrs.click({ preventDefault() {} });
   };
   return { view, calls, notices, choose, modal: () => modal,
     hidden: () => hidden, refreshed: () => refreshed };
@@ -70,7 +126,8 @@ async function main() {
 
   for (const reply of [{ code: 1, stdout: '', stderr: 'denied' },
                        { code: 0, stdout: 'result=fail\nerror=bad pin\n' },
-                       { rc: 0, stdout: 'result=ok\n' }]) {
+                       { rc: 0, stdout: 'result=ok\n' },
+                       null]) {
     f = fixture(reply);
     f.view.status.mode = 'manual';
     await f.view.command(['set', '128', '1'], 'cruise');

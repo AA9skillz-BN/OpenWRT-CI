@@ -83,7 +83,7 @@ def verify_payload(archive, kernel, root, data, repo, reports, tree=None):
         paths.append(data["build_tag_file"].lstrip("/"))
         extracted = temp / "root"
         subprocess.run(["unsquashfs", "-no-progress", "-d", str(extracted), str(root_file), *paths], check=True)
-        for item in data["required_files"]:
+        for idx, item in enumerate(data["required_files"]):
             file = extracted / item["path"].lstrip("/")
             if not file.is_file() or file.stat().st_size == 0:
                 raise ValueError(f"rootfs missing required file: {item['path']}")
@@ -101,6 +101,26 @@ def verify_payload(archive, kernel, root, data, repo, reports, tree=None):
             if item.get("build_source"):
                 if tree is None or file.read_bytes() != (tree / item["build_source"]).read_bytes():
                     raise ValueError(f"rootfs file differs from adapted source: {item['path']}")
+            if item.get("luci_view_entry"):
+                menu_doc = json.loads(file.read_bytes())
+                action = menu_doc.get(item["luci_view_entry"], {}).get("action", {})
+                view_path = action.get("path")
+                if (action.get("type") != "view" or not isinstance(view_path, str) or not view_path or
+                        view_path.startswith("/") or ".." in Path(view_path).parts):
+                    raise ValueError(f"invalid LuCI menu view entry in {item['path']}: {action}")
+                view_rel = "www/luci-static/resources/view/" + view_path + ".js"
+                view_root = temp / f"luci-view-{idx}"
+                subprocess.run(["unsquashfs", "-no-progress", "-d", str(view_root), str(root_file), view_rel], check=True)
+                view_file = view_root / view_rel
+                if not view_file.is_file() or view_file.stat().st_size == 0:
+                    raise ValueError(f"rootfs missing menu-selected LuCI view: /{view_rel}")
+                if not view_file.resolve().is_relative_to(view_root.resolve()):
+                    raise ValueError("menu-selected LuCI view resolves outside rootfs")
+                if item.get("luci_view_build_root"):
+                    expected_view = None if tree is None else tree / item["luci_view_build_root"] / (view_path + ".js")
+                    if expected_view is None or not expected_view.is_file() or view_file.read_bytes() != expected_view.read_bytes():
+                        raise ValueError(f"rootfs LuCI view differs from adapted source: /{view_rel}")
+                paths.append(view_rel)
         tag = extracted / data["build_tag_file"].lstrip("/")
         if not tag.is_file() or tag.read_text().strip() != os.environ["WRT_RELEASE_TAG"]:
             raise ValueError("rootfs build tag differs from this build")

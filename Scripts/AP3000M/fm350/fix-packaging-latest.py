@@ -4,7 +4,10 @@ from pathlib import Path
 import sys
 
 UPSTREAM_SHA256 = "e9d61f3000df33a5f712fcd669f6db2f82951e2f3eb36ba5d10a776f36bba84d"
-REVIEWED_SHA256 = {UPSTREAM_SHA256}
+# Reviewed 1.2.0-r7 (a78e780cc6) bumps PKG_RELEASE to 7 and caches AT+CGMR per
+# session; its Makefile strip block is identical to 1.2.0-r6 (5c655563ea).
+LATEST_R7_SHA256 = "43815b4de759e2a1dab203e6578c07ab2ce2003962272fd2133c35bdd0e6cdf9"
+REVIEWED_SHA256 = {UPSTREAM_SHA256, LATEST_R7_SHA256}
 BEFORE = '''\t@if [ -n "$(TARGET_STRIP)" ] && [ -x "$(TARGET_STRIP)" ]; then \\
 \t\t$(TARGET_STRIP) $(RUST_OUT) || true; \\
 \telse \\

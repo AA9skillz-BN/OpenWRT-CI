@@ -21,8 +21,14 @@ python3 "$GITHUB_WORKSPACE/.github/scripts/ap3000m-openclash-core.py" --tree .
 # Same reviewed Arthur source as TR, with AP-owned settings import/cleanup.
 python3 "$GITHUB_WORKSPACE/.github/scripts/ap3000m-turboacc.py" package/luci-app-turboacc
 
-# Adapt the reviewed, locked fan plugin without changing its source lock.
-python3 "$GITHUB_WORKSPACE/Scripts/AP3000M/fancontrol/fix-confirm.py" \
+# Apply the independently reviewed plugin adaptations for the selected mode.
+case "${WRT_PLUGIN_MODE:-locked}" in
+	locked) _ap3000m_plugin_suffix='' ;;
+	latest) _ap3000m_plugin_suffix='-latest' ;;
+	*) echo "Unsupported AP3000M plugin mode: ${WRT_PLUGIN_MODE}" >&2; exit 1 ;;
+esac
+
+python3 "$GITHUB_WORKSPACE/Scripts/AP3000M/fancontrol/fix-confirm${_ap3000m_plugin_suffix}.py" \
 	package/luci-app-airpi3000m-fancontrol
 
 # Fresh-install system timezone/NTP/cronloglevel and Dnsmasq min_cache_ttl=300.
@@ -40,15 +46,9 @@ else
 	exit 1
 fi
 
-# Apply the independently reviewed patch for the selected plugin mode.
-case "${WRT_PLUGIN_MODE:-locked}" in
-	locked) _fm350_patch_suffix='' ;;
-	latest) _fm350_patch_suffix='-latest' ;;
-	*) echo "Unsupported FM350 plugin mode: ${WRT_PLUGIN_MODE}" >&2; exit 1 ;;
-esac
-python3 "$GITHUB_WORKSPACE/Scripts/AP3000M/fm350/fix-pdp-dns${_fm350_patch_suffix}.py" \
+python3 "$GITHUB_WORKSPACE/Scripts/AP3000M/fm350/fix-pdp-dns${_ap3000m_plugin_suffix}.py" \
 	package/luci-app-fm350
-python3 "$GITHUB_WORKSPACE/Scripts/AP3000M/fm350/fix-packaging${_fm350_patch_suffix}.py" \
+python3 "$GITHUB_WORKSPACE/Scripts/AP3000M/fm350/fix-packaging${_ap3000m_plugin_suffix}.py" \
 	package/luci-app-fm350
 
 # 6) 投放 AP3000M 专属的首次开机配置（FM350 的 AT 口 / APN / CID 自动纠正）

@@ -52,25 +52,32 @@ class Fm350PackagingTests(unittest.TestCase):
         lock = json.loads((REPO / "Profiles/packages.lock.json").read_bytes())["fm350"]
         if lock["url"] != "https://github.com/LianXia233/luci-app-fm350.git":
             raise AssertionError("review FM350 packaging for a changed source")
-        cls.archive = download("https://codeload.github.com/LianXia233/luci-app-fm350/tar.gz/" + "5c655563eab95dfb47677ca1bc15339eaecaadb8")
+        cls.archive = download("https://codeload.github.com/LianXia233/luci-app-fm350/tar.gz/" +
+                               "a78e780cc6b989117fd53d6ef02650b8bcada20c")
         with tarfile.open(fileobj=io.BytesIO(cls.archive)) as archive:
             recipe = next(m for m in archive.getmembers() if m.name.count("/") == 1 and m.name.endswith("/Makefile"))
             cls.recipe = archive.extractfile(recipe).read()
-        if hashlib.sha256(cls.recipe).hexdigest() != fix.UPSTREAM_SHA256:
-            raise AssertionError("locked FM350 recipe hash mismatch")
+        if hashlib.sha256(cls.recipe).hexdigest() != fix.LATEST_R7_SHA256:
+            raise AssertionError("latest FM350 r7 recipe hash mismatch")
+        cls.recipe_r6 = download("https://raw.githubusercontent.com/LianXia233/luci-app-fm350/"
+                                 "5c655563eab95dfb47677ca1bc15339eaecaadb8/Makefile")
+        if hashlib.sha256(cls.recipe_r6).hexdigest() != fix.UPSTREAM_SHA256:
+            raise AssertionError("reviewed FM350 r6 recipe hash mismatch")
 
     def test_recipe_patch_is_exact_repeatable_and_rejects_drift(self):
-        patched = fix.patch_makefile(self.recipe)
-        self.assertEqual(fix.patch_makefile(patched), patched)
-        for data in (self.recipe + b"\n", patched + b"\n",
-                     patched.replace(b"$(RSTRIP) $(RUST_OUT)", b"true")):
-            with self.assertRaisesRegex(ValueError, "reviewed locked source"):
-                fix.patch_makefile(data)
+        for raw in (self.recipe_r6, self.recipe):
+            patched = fix.patch_makefile(raw)
+            self.assertEqual(fix.patch_makefile(patched), patched)
+            for data in (raw + b"\n", patched + b"\n",
+                         patched.replace(b"$(RSTRIP) $(RUST_OUT)", b"true")):
+                with self.assertRaisesRegex(ValueError, "reviewed locked source"):
+                    fix.patch_makefile(data)
 
     def test_locked_recipe_patch_rejects_latest_source(self):
         locked = module("fix-packaging")
-        with self.assertRaisesRegex(ValueError, "reviewed locked source"):
-            locked.patch_makefile(self.recipe)
+        for raw in (self.recipe_r6, self.recipe):
+            with self.assertRaisesRegex(ValueError, "reviewed locked source"):
+                locked.patch_makefile(raw)
 
     @unittest.skipIf(os.name == "nt", "actual OpenWrt strip/ELF regression requires Linux")
     def test_real_recipe_compile_install_and_repeated_package_strip(self):

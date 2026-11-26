@@ -25,7 +25,8 @@ class Fm350PdpTests(unittest.TestCase):
         lock = json.loads((REPO / "Profiles/packages.lock.json").read_text())["fm350"]
         if lock["url"] != "https://github.com/LianXia233/luci-app-fm350.git":
             raise AssertionError("review the FM350 patch for a changed package source")
-        url = ("https://codeload.github.com/LianXia233/luci-app-fm350/tar.gz/" + "5c655563eab95dfb47677ca1bc15339eaecaadb8")
+        url = ("https://codeload.github.com/LianXia233/luci-app-fm350/tar.gz/" +
+               "a78e780cc6b989117fd53d6ef02650b8bcada20c")
         with urllib.request.urlopen(url, timeout=60) as response:
             cls.archive = response.read()
         with tarfile.open(fileobj=io.BytesIO(cls.archive)) as archive:

@@ -73,13 +73,19 @@ class FanUiTests(unittest.TestCase):
             profile = json.loads((REPO / "Profiles/AP3000M.json").read_bytes())
             required = {p["path"]: p for p in profile["required_files"]}
             paths = {
-                "/www/luci-static/resources/view/" + view_name + ".js": alias,
+                "/www/luci-static/resources/view/airpi-fancontrol/fancontrol.js": root / fix.VIEW,
                 "/usr/share/luci/menu.d/luci-app-airpi-fancontrol.json": root / fix.MENU,
                 "/etc/config/airpi-fan": root / fix.CONFIG,
             }
             for installed, source in paths.items():
                 expected = "package/luci-app-airpi3000m-fancontrol/" + source.relative_to(root).as_posix()
                 self.assertEqual(required[installed]["build_source"], expected)
+            menu_gate = required["/usr/share/luci/menu.d/luci-app-airpi-fancontrol.json"]
+            self.assertEqual(menu_gate["luci_view_entry"], "admin/status/airpi-fancontrol")
+            self.assertEqual(
+                menu_gate["luci_view_build_root"] + "/" + view_name + ".js",
+                "package/luci-app-airpi3000m-fancontrol/" + alias.relative_to(root).as_posix(),
+            )
             cfg_text = (root / fix.CONFIG).read_text(encoding="utf-8")
             for needle in ("option temp_mid '68'", "option hysteresis '4'",
                            "option min_hold '60'", "option log_level '1'"):

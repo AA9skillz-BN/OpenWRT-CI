@@ -145,6 +145,73 @@ class PipelineTests(unittest.TestCase):
                  patch.object(device_image.subprocess, "run"), self.assertRaisesRegex(ValueError, "missing required file"):
                 device_image.verify_payload(archive, *archive.getmembers(), data, REPO, root)
 
+    def test_menu_selected_luci_view_gate_verifies_exact_installed_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tree = root / "tree"
+            menu_rel = "usr/share/luci/menu.d/luci-app-airpi-fancontrol.json"
+            view_rel = "www/luci-static/resources/view/airpi-fancontrol/fancontrol-abc123def456.js"
+            menu_bytes = json.dumps({
+                "admin/status/airpi-fancontrol": {
+                    "action": {"type": "view", "path": "airpi-fancontrol/fancontrol-abc123def456"}
+                }
+            }).encode("utf-8")
+            view_bytes = b"'use strict';\n"
+            menu_src = tree / "pkg/files" / menu_rel
+            view_src = tree / "pkg/htdocs/luci-static/resources/view/airpi-fancontrol/fancontrol-abc123def456.js"
+            menu_src.parent.mkdir(parents=True)
+            view_src.parent.mkdir(parents=True)
+            menu_src.write_bytes(menu_bytes)
+            view_src.write_bytes(view_bytes)
+            image = root / "image.tar"
+            with tarfile.open(image, "w") as archive:
+                for name in ("kernel", "root"):
+                    item = tarfile.TarInfo("sysupgrade-device/" + name)
+                    item.size = 4
+                    archive.addfile(item, io.BytesIO(b"test"))
+            data = {
+                "required_files": [{
+                    "path": "/" + menu_rel,
+                    "build_source": "pkg/files/" + menu_rel,
+                    "luci_view_entry": "admin/status/airpi-fancontrol",
+                    "luci_view_build_root": "pkg/htdocs/luci-static/resources/view",
+                }],
+                "build_tag_file": "/etc/build.tag",
+            }
+
+            def make_unsquash(installed_view_bytes):
+                def fake_run(cmd, check=True):
+                    if cmd[0] == "unsquashfs":
+                        dest = Path(cmd[cmd.index("-d") + 1])
+                        for target in cmd[cmd.index("-d") + 3:]:
+                            out = dest / target
+                            out.parent.mkdir(parents=True, exist_ok=True)
+                            if target == menu_rel:
+                                out.write_bytes(menu_bytes)
+                            elif target == "etc/build.tag":
+                                out.write_text("tag-1\n", encoding="utf-8")
+                            elif target == view_rel and installed_view_bytes is not None:
+                                out.write_bytes(installed_view_bytes)
+                return fake_run
+
+            env = {"WRT_RELEASE_TAG": "tag-1"}
+            with tarfile.open(image) as archive, patch.dict(os.environ, env), \
+                 patch.object(device_image, "output", side_effect=["config-1", "fdt-1", "kernel-1 fdt-1"]), \
+                 patch.object(device_image, "check_dtb", return_value=["airpi,ap3000m"]), \
+                 patch.object(device_image.subprocess, "run", side_effect=make_unsquash(view_bytes)):
+                device_image.verify_payload(archive, *archive.getmembers(), data, REPO, root, tree=tree)
+            report = json.loads((root / "verified-payload.json").read_text(encoding="utf-8"))
+            self.assertIn(view_rel, report["verified_files"])
+
+            for bad_bytes, err in ((None, "missing menu-selected LuCI view"),
+                                   (b"stale", "LuCI view differs from adapted source")):
+                with tarfile.open(image) as archive, patch.dict(os.environ, env), \
+                     patch.object(device_image, "output", side_effect=["config-1", "fdt-1", "kernel-1 fdt-1"]), \
+                     patch.object(device_image, "check_dtb", return_value=["airpi,ap3000m"]), \
+                     patch.object(device_image.subprocess, "run", side_effect=make_unsquash(bad_bytes)), \
+                     self.assertRaisesRegex(ValueError, err):
+                    device_image.verify_payload(archive, *archive.getmembers(), data, REPO, root, tree=tree)
+
 
 if __name__ == "__main__":
     unittest.main()
