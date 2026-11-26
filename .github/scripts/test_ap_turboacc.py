@@ -88,7 +88,7 @@ class ApTurboAccTests(unittest.TestCase):
         self.assertFalse((REPO / "Scripts/AP3000M/net-tune/99-ap3000m-flowoffload").exists())
         tune = (REPO / "Scripts/AP3000M/net-tune/99-ap3000m-tune.conf").read_text(encoding="utf8")
         self.assertNotRegex(tune, r"(?m)^\s*net\.ipv4\.tcp_congestion_control\s*=")
-        self.assertIn("net.core.rmem_max=8388608", tune)
+        self.assertIn("net.core.rmem_max=16777216", tune)
 
     def test_real_ucode_imports_existing_firewall_and_actual_wed_once(self):
         actual = self.runtime(self.template(), "defaults(); apply(); defaults(); apply();")
