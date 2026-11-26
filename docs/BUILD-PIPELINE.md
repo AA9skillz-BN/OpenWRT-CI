@@ -97,22 +97,26 @@ Samba、USB 网卡、存储工具等功能。可在每个 profile 的 `config_fr
 
 ### 独立选择插件版本
 
-三个机型的 Run workflow 都提供 `PLUGIN_MODE=locked/latest`，默认 `latest`。
-`SOURCE_MODE` 同样默认 `latest`；入口参数缺省回退和共用核心默认值保持一致。
-两者独立，四种组合均可使用：
+三个机型的 Run workflow 都提供 `PLUGIN_MODE=auto/latest/locked`，默认 `auto`。
+`SOURCE_MODE` 默认 `latest`；入口参数缺省回退和共用核心默认值保持一致。
+组合行为如下：
 
 | SOURCE_MODE | PLUGIN_MODE | 主源码 / feeds | 单独拉取的第三方插件 |
 | --- | --- | --- | --- |
 | locked | locked | 版本锁 | 插件版本锁 |
-| locked | latest | 版本锁 | 插件分支最新提交 |
+| locked | latest | 版本锁 | 严格使用插件分支最新提交（不兼容即终止） |
 | latest | locked | 所选上游 | 插件版本锁 |
-| latest | latest | 所选上游 | 插件分支最新提交 |
+| latest | latest | 所选上游 | 严格使用插件分支最新提交（不兼容即终止） |
+| locked / latest | auto（默认） | 按 SOURCE_MODE | 逐插件优先使用最新提交并执行适配预检；单插件不兼容时自动回退至 `packages.lock.json` 并写入 `compatibility.txt` 与 Release 说明 |
 
-`PLUGIN_MODE=latest` 默认跟随每个仓库的默认分支，也支持在插件 lock 条目中
+`PLUGIN_MODE=auto/latest` 默认跟随每个仓库的默认分支，也支持在插件 lock 条目中
 增加可选的 `"branch": "分支名"`。这里的 latest 指分支最新提交，不是最新 Release。
 一次构建中每个插件只解析一次分支，然后 fetch 得到的确切 SHA；后续分支移动
-不改变本次快照。分支不存在、默认分支无法解析、拉取失败或提交不一致时直接失败，
-不会悄悄改用旧 lock。选择 latest 不会改写仓库内的插件锁。
+不改变本次快照。分支不存在、默认分支无法解析、拉取失败或提交不一致时直接失败。
+在 `auto` 模式下，仅当插件拉取成功但上游改动破坏本仓库适配钩子时，才将该插件独立回退到
+已验证锁提交；`latest` 模式保持严格失败以便排查上游变更。两者均不会改写仓库内的插件锁。
+
+`UPSTREAM-CANARY.yml` 每日定时巡检三款机型主源码及受适配插件的最新分支，在不启动完整内核编译的前提下执行锚点与前端行为自检，发现漂移时自动维护去重 Issue 提醒。
 
 `build-reports/plugin-resolution.json` 记录模式、仓库、解析分支、原锁和实际提交；
 报告中的 `packages.lock.json` 记录实际使用的插件快照。这两份记录随固件打包并纳入
@@ -141,6 +145,7 @@ AP 的 FM350/风扇及 C8 风扇适配仍检查审阅过的上游内容。新版
   未命中可借用本机型旧缓存补齐。下载由 OpenWrt 检查哈希。
 - `.ccache`：独立滚动缓存，上限 1 GiB，每次运行产生新 key 以积累结果；
   即使编译失败也保留已完成的缓存。
+- Cargo 依赖缓存：按 Rust 工具链版本与包内 `Cargo.lock` 摘要缓存 `~/.cargo/registry` 与 `~/.cargo/git/db`，精确命中时不重复上传，支持同工具链前缀回退。
 - host/toolchain staging：使用 `wrt-v3-toolchain-<target>-<subtarget>-<hash>`，仅精确匹配，
   不使用前缀回退。缓存范围为 `staging_dir/host`、`staging_dir/toolchain-*` 和完整性清单，
   不含 `hostpkg`、目标平台的 `host` 或 `build_dir`。详细输入、验证和限制见

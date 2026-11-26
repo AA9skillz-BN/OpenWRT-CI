@@ -29,7 +29,8 @@ class PipelineTests(unittest.TestCase):
         data = yaml.safe_load((REPO / ".github/workflows/DEVICE-CORE.yml").read_text(encoding="utf-8"))
         steps = {step.get("name"): step for step in data["jobs"]["core"]["steps"]}
         for name in ("Seal Installed Toolchain Cache", "Save Exact Toolchain Cache", "Save Downloads",
-                     "Save Compiler Cache", "Report Toolchain Cache Reuse", "Restore Exact Toolchain Cache"):
+                     "Save Compiler Cache", "Save Cargo Crate Cache", "Report Toolchain Cache Reuse",
+                     "Restore Exact Toolchain Cache", "Restore Cargo Crate Cache"):
             self.assertTrue(steps[name]["continue-on-error"], name)
         self.assertNotIn("continue-on-error", steps["Verify and Package Device Firmware"])
         self.assertIn("steps.device-dl.outputs.cache-hit != 'true'", steps["Save Downloads"]["if"])

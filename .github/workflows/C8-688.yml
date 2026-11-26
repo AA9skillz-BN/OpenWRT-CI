@@ -39,10 +39,10 @@ on:
         options: [locked, latest]
         default: latest
       PLUGIN_MODE:
-        description: 'latest 默认跟随插件分支，保留适配检查；locked 使用插件版本锁。'
+        description: 'auto 默认优先使用插件最新分支，不兼容时单插件自动回退版本锁；latest 严格跟随最新分支；locked 使用插件版本锁。'
         type: choice
-        options: [locked, latest]
-        default: latest
+        options: [auto, latest, locked]
+        default: auto
       BUILD_ONLY:
         description: '编译并校验固件，只上传 Artifact，不发布 Release。'
         default: false
@@ -75,7 +75,7 @@ jobs:
       WRT_CONFIG: ${{ matrix.CONFIG }}
       WRT_PROFILE: C8-688
       WRT_SOURCE_MODE: ${{ inputs.SOURCE_MODE || 'latest' }}
-      WRT_PLUGIN_MODE: ${{ inputs.PLUGIN_MODE || 'latest' }}
+      WRT_PLUGIN_MODE: ${{ inputs.PLUGIN_MODE || 'auto' }}
       WRT_PUBLISH: ${{ !inputs.BUILD_ONLY }}
       WRT_THEME: aurora
       WRT_NAME: C8-688

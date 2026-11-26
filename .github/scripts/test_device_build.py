@@ -271,6 +271,9 @@ class DeviceContractTests(unittest.TestCase):
         changed_rust = key()
         self.assertEqual(changed_feed["staging"], changed_rust["staging"])
         self.assertNotEqual(changed_feed["ccache"], changed_rust["ccache"])
+        self.assertNotEqual(changed_feed["cargo"], changed_rust["cargo"])
+        build.write(self.tree / "package/example/Cargo.lock", "version = 4\n")
+        self.assertNotEqual(changed_rust["cargo"], key()["cargo"])
 
     def test_download_identity_tracks_effective_snapshots_config_and_patched_recipes(self):
         prefix = "wrt-v2-ap3000m-linux-x64"

@@ -16,7 +16,9 @@ def main():
         "gh", "cache", "list", "--repo", repo, "--ref", os.environ["GITHUB_REF"],
         "--key", prefix + "-", "--limit", "100", "--json", "id,key,createdAt"], text=True))
     current = {os.environ[key] for key in ("DEVICE_DL_KEY", "DEVICE_CCACHE_KEY", "DEVICE_STAGING_KEY")}
-    for kind in ("dl", "ccache", "staging"):
+    if os.environ.get("DEVICE_CARGO_KEY"):
+        current.add(os.environ["DEVICE_CARGO_KEY"])
+    for kind in ("dl", "ccache", "cargo", "staging"):
         group = sorted((e for e in entries if e["key"].startswith(f"{prefix}-{kind}-")),
                        key=lambda e: e["createdAt"], reverse=True)
         # If the current cache was not saved (or hasn't become visible), keep all

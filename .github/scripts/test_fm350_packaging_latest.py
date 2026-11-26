@@ -57,20 +57,19 @@ class Fm350PackagingTests(unittest.TestCase):
         with tarfile.open(fileobj=io.BytesIO(cls.archive)) as archive:
             recipe = next(m for m in archive.getmembers() if m.name.count("/") == 1 and m.name.endswith("/Makefile"))
             cls.recipe = archive.extractfile(recipe).read()
-        if hashlib.sha256(cls.recipe).hexdigest() != fix.LATEST_R7_SHA256:
-            raise AssertionError("latest FM350 r7 recipe hash mismatch")
         cls.recipe_r6 = download("https://raw.githubusercontent.com/LianXia233/luci-app-fm350/"
                                  "5c655563eab95dfb47677ca1bc15339eaecaadb8/Makefile")
-        if hashlib.sha256(cls.recipe_r6).hexdigest() != fix.UPSTREAM_SHA256:
-            raise AssertionError("reviewed FM350 r6 recipe hash mismatch")
 
-    def test_recipe_patch_is_exact_repeatable_and_rejects_drift(self):
-        for raw in (self.recipe_r6, self.recipe):
+    def test_recipe_patch_is_repeatable_tolerates_version_bumps_and_rejects_strip_drift(self):
+        bumped = self.recipe.replace(b"PKG_RELEASE:=7", b"PKG_RELEASE:=99\n# benign comment")
+        for raw in (self.recipe_r6, self.recipe, bumped):
             patched = fix.patch_makefile(raw)
             self.assertEqual(fix.patch_makefile(patched), patched)
-            for data in (raw + b"\n", patched + b"\n",
-                         patched.replace(b"$(RSTRIP) $(RUST_OUT)", b"true")):
-                with self.assertRaisesRegex(ValueError, "reviewed locked source"):
+            self.assertIn(b"$(RSTRIP) $(RUST_OUT)", patched)
+            for data in (raw.replace(b"$(TARGET_STRIP)", b"strip"),
+                         patched.replace(b"$(RSTRIP) $(RUST_OUT)", b"true"),
+                         raw.replace(b"PKG_NAME:=luci-app-fm350", b"PKG_NAME:=other")):
+                with self.assertRaises(ValueError):
                     fix.patch_makefile(data)
 
     def test_locked_recipe_patch_rejects_latest_source(self):

@@ -32,15 +32,15 @@ class Fm350PdpTests(unittest.TestCase):
         with tarfile.open(fileobj=io.BytesIO(cls.archive)) as archive:
             member = next(m for m in archive.getmembers() if m.name.endswith("/rust/" + fix.SOURCE.removeprefix("rust/")))
             cls.original = archive.extractfile(member).read()
-        if hashlib.sha256(cls.original).hexdigest() != fix.UPSTREAM_SHA256:
-            raise AssertionError("locked PDP source hash mismatch")
 
-    def test_patch_is_repeatable_and_rejects_source_or_patch_drift(self):
+    def test_patch_is_repeatable_tolerates_unrelated_comments_and_rejects_anchor_drift(self):
         patched = fix.patch_pdp(self.original)
         self.assertEqual(fix.patch_pdp(patched), patched)
-        for data in (self.original + b"\n", patched + b"\n",
-                     patched.replace(b"contr_dns.push(a6)", b"contr_ipv6 = a6")):
-            with self.assertRaisesRegex(ValueError, "reviewed locked source"):
+        benign = self.original + b"\n// benign trailing comment\n"
+        self.assertIn(b"contr_dns.push(a6);", fix.patch_pdp(benign))
+        for data in (self.original.replace(b'"+CGCONTRDP"', b'"+OTHER"'),
+                     patched.replace(b"contr_dns.push(a6);", b"contr_ipv6 = a6;")):
+            with self.assertRaises(ValueError):
                 fix.patch_pdp(data)
 
     def test_locked_patch_rejects_latest_source(self):

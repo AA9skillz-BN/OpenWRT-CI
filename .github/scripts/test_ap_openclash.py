@@ -178,7 +178,7 @@ qstrip=$(subst ",,$(1))
                     original_config = config.read_bytes()
                     self.assertIn(b"option enable '0'", original_config)
                     with patch.object(core, "fetch", cached_fetch):
-                        record = core.install(repo, tree, "locked", device)
+                        record = core.install(repo, tree, "locked", device, reports=top / "reports")
                     original_core = (package / "root/etc/openclash/core/clash_meta").read_bytes()
                     # Reproduce the missed package finalization stage with real
                     # upstream rules/sstrip, rather than a fake mutating command.

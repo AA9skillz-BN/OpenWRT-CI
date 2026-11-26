@@ -98,22 +98,48 @@ def unpack(archive, snapshot):
     return binary
 
 
-def install(repo, tree, mode, device="AP3000M"):
+def install(repo, tree, mode, device="AP3000M", reports=None):
     if device not in ("AP3000M", "TR3000-512"):
         raise ValueError("Unsupported OpenClash core device")
+    if mode not in ("locked", "latest", "auto"):
+        raise ValueError("OpenClash core plugin mode must be locked, latest or auto")
     metadata_name = "ap3000m-core.json" if device == "AP3000M" else "tr3000-core.json"
     package = tree / "package/luci-app-openclash"
     if not (package / "Makefile").is_file() or not (package / "root/etc/config/openclash").is_file():
         raise ValueError("OpenClash package must be installed before adding its core")
     recipe = package / "Makefile"
     adapted_recipe = preserve_package_core(recipe.read_text(encoding="utf-8"))
-    snapshot = resolve(json.loads((repo / "Profiles/openclash-core.lock.json").read_bytes()), mode)
-    base = "https://github.com/" + REPOSITORY + "/releases/download/" + snapshot["tag"] + "/"
-    binary = unpack(fetch(base + snapshot["asset"], MAX_ARCHIVE), snapshot)
+    lock_data = json.loads((repo / "Profiles/openclash-core.lock.json").read_bytes())
+    reports_dir = Path(reports or os.environ.get("WRT_BUILD_REPORTS") or (repo / "build-reports"))
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    effective_mode = mode
+    if mode == "auto":
+        try:
+            snapshot = resolve(lock_data, "latest")
+            base = "https://github.com/" + REPOSITORY + "/releases/download/" + snapshot["tag"] + "/"
+            binary = unpack(fetch(base + snapshot["asset"], MAX_ARCHIVE), snapshot)
+            effective_mode = "latest"
+        except Exception as exc:
+            reason = str(exc).strip() or exc.__class__.__name__
+            print(f"::warning::{device} OpenClash core: latest release incompatible ({reason}); "
+                  f"falling back to locked {lock_data.get('tag')}", flush=True)
+            snapshot = resolve(lock_data, "locked")
+            base = "https://github.com/" + REPOSITORY + "/releases/download/" + snapshot["tag"] + "/"
+            binary = unpack(fetch(base + snapshot["asset"], MAX_ARCHIVE), snapshot)
+            effective_mode = "locked"
+            compat = reports_dir / "compatibility.txt"
+            existing = compat.read_text(encoding="utf-8") if compat.exists() else ""
+            note = f"- OpenClash Mihomo 内核：最新正式版校验未通过（{reason}），已自动回退至锁版本 `{snapshot['tag']}`。\n"
+            if note not in existing:
+                compat.write_text(existing + note, encoding="utf-8", newline="\n")
+    else:
+        snapshot = resolve(lock_data, mode)
+        base = "https://github.com/" + REPOSITORY + "/releases/download/" + snapshot["tag"] + "/"
+        binary = unpack(fetch(base + snapshot["asset"], MAX_ARCHIVE), snapshot)
     license_url = "https://raw.githubusercontent.com/" + REPOSITORY + "/" + snapshot["tag"] + "/LICENSE"
     license_text = fetch(license_url, 128 * 1024)
     recipe.write_text(adapted_recipe, encoding="utf-8", newline="\n")
-    record = {"schema": 1, "mode": mode, **snapshot,
+    record = {"schema": 1, "mode": effective_mode, "requested_mode": mode, **snapshot,
               "binary_sha256": hashlib.sha256(binary).hexdigest(), "binary_size": len(binary),
               "elf_machine": 183, "static": True,
               "source": "https://github.com/" + REPOSITORY + "/tree/" + snapshot["tag"],
@@ -133,10 +159,8 @@ def install(repo, tree, mode, device="AP3000M"):
     keep = package / "root/lib/upgrade/keep.d/luci-app-openclash"
     keep.parent.mkdir(parents=True, exist_ok=True)
     keep.write_text("/etc/openclash/\n", encoding="utf-8", newline="\n")
-    reports = repo / "build-reports"
-    reports.mkdir(exist_ok=True)
-    (reports / "openclash-core.json").write_text(metadata, encoding="utf-8", newline="\n")
-    print(f"{device} OpenClash core: {mode} {snapshot['tag']} ARM64 static SHA256={record['binary_sha256']}", flush=True)
+    (reports_dir / "openclash-core.json").write_text(metadata, encoding="utf-8", newline="\n")
+    print(f"{device} OpenClash core: {effective_mode} {snapshot['tag']} ARM64 static SHA256={record['binary_sha256']}", flush=True)
     return record
 
 
@@ -144,10 +168,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", type=Path, default=Path(os.environ.get("GITHUB_WORKSPACE", ".")))
     parser.add_argument("--tree", type=Path, default=Path.cwd())
-    parser.add_argument("--mode", choices=("locked", "latest"), default=os.environ.get("WRT_PLUGIN_MODE", "locked"))
+    parser.add_argument("--mode", choices=("locked", "latest", "auto"), default=os.environ.get("WRT_PLUGIN_MODE", "locked"))
     parser.add_argument("--device", choices=("AP3000M", "TR3000-512"), default="AP3000M")
+    parser.add_argument("--reports", type=Path, default=None)
     args = parser.parse_args()
-    install(args.repo.resolve(), args.tree.resolve(), args.mode, args.device)
+    install(args.repo.resolve(), args.tree.resolve(), args.mode, args.device, args.reports)
 
 
 if __name__ == "__main__":

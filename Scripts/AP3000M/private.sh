@@ -37,16 +37,29 @@ else
 fi
 
 # Apply the independently reviewed patch for the selected plugin mode.
-case "${WRT_PLUGIN_MODE:-locked}" in
-	locked) _ap3000m_plugin_suffix='' ;;
-	latest) _ap3000m_plugin_suffix='-latest' ;;
-	*) echo "Unsupported AP3000M plugin mode: ${WRT_PLUGIN_MODE}" >&2; exit 1 ;;
-esac
-python3 "$GITHUB_WORKSPACE/Scripts/AP3000M/fancontrol/fix-confirm${_ap3000m_plugin_suffix}.py" \
+_ap3000m_resolve_suffix() {
+	local key="$1" mode="${WRT_PLUGIN_MODE:-locked}" res_file="${WRT_BUILD_REPORTS:-$GITHUB_WORKSPACE/build-reports}/plugin-resolution.json" eff=""
+	case "$mode" in
+		locked) printf '%s' '' ;;
+		latest) printf '%s' '-latest' ;;
+		auto)
+			if [ -f "$res_file" ] && command -v jq >/dev/null 2>&1; then
+				eff=$(jq -r --arg k "$key" '.plugins[$k].effective_mode // "latest"' "$res_file" 2>/dev/null || printf 'latest')
+			else
+				eff="latest"
+			fi
+			if [ "$eff" = "locked" ]; then printf '%s' ''; else printf '%s' '-latest'; fi
+			;;
+		*) echo "Unsupported AP3000M plugin mode: ${mode}" >&2; return 1 ;;
+	esac
+}
+_ap3000m_fan_suffix="$(_ap3000m_resolve_suffix fancontrol)"
+_ap3000m_fm350_suffix="$(_ap3000m_resolve_suffix fm350)"
+python3 "$GITHUB_WORKSPACE/Scripts/AP3000M/fancontrol/fix-confirm${_ap3000m_fan_suffix}.py" \
 	package/luci-app-airpi3000m-fancontrol
-python3 "$GITHUB_WORKSPACE/Scripts/AP3000M/fm350/fix-pdp-dns${_ap3000m_plugin_suffix}.py" \
+python3 "$GITHUB_WORKSPACE/Scripts/AP3000M/fm350/fix-pdp-dns${_ap3000m_fm350_suffix}.py" \
 	package/luci-app-fm350
-python3 "$GITHUB_WORKSPACE/Scripts/AP3000M/fm350/fix-packaging${_ap3000m_plugin_suffix}.py" \
+python3 "$GITHUB_WORKSPACE/Scripts/AP3000M/fm350/fix-packaging${_ap3000m_fm350_suffix}.py" \
 	package/luci-app-fm350
 
 # 6) 投放 AP3000M 专属的首次开机配置（FM350 的 AT 口 / APN / CID 自动纠正）

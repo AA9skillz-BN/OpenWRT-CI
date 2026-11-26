@@ -51,16 +51,16 @@ class PluginModeTests(unittest.TestCase):
     def write_lock(self):
         build.write(self.lock, json.dumps({"example": self.item}))
 
-    def install(self, plugin_mode=None, source_mode="locked"):
+    def install(self, plugin_mode=None, source_mode="locked", validator=None):
         before = self.lock.read_bytes()
         with patch.dict(os.environ, {"WRT_SOURCE_MODE": source_mode}):
             if plugin_mode is None:
                 with patch.dict(os.environ):
                     os.environ.pop("WRT_PLUGIN_MODE", None)
-                    build.install_packages(self.repo, self.tree, self.data, self.reports)
+                    build.install_packages(self.repo, self.tree, self.data, self.reports, validator=validator)
             else:
                 with patch.dict(os.environ, {"WRT_PLUGIN_MODE": plugin_mode}):
-                    build.install_packages(self.repo, self.tree, self.data, self.reports)
+                    build.install_packages(self.repo, self.tree, self.data, self.reports, validator=validator)
         self.assertEqual(before, self.lock.read_bytes())
         return json.loads((self.reports / "packages.lock.json").read_text())
 
@@ -145,22 +145,67 @@ class PluginModeTests(unittest.TestCase):
         for name in ("app", "backend"):
             self.assertEqual((self.tree / "package" / name / "Makefile").read_text(), "version two\n")
 
+    def test_auto_keeps_compatible_latest_and_falls_back_per_plugin_when_incompatible(self):
+        other_remote = self.root / "upstream-other"
+        other_remote.mkdir()
+        subprocess.run(["git", "-C", str(other_remote), "init", "-q", "--initial-branch=main"], check=True)
+        build.write(other_remote / "Makefile", "other v1\n")
+        subprocess.run(["git", "-c", "user.name=T", "-c", "user.email=t@e.invalid",
+                        "-C", str(other_remote), "add", "."], check=True)
+        subprocess.run(["git", "-c", "user.name=T", "-c", "user.email=t@e.invalid",
+                        "-C", str(other_remote), "commit", "-qm", "v1"], check=True)
+        other_first = subprocess.check_output(["git", "-C", str(other_remote), "rev-parse", "HEAD"], text=True).strip()
+        build.write(other_remote / "Makefile", "other v2\n")
+        subprocess.run(["git", "-c", "user.name=T", "-c", "user.email=t@e.invalid",
+                        "-C", str(other_remote), "commit", "-qam", "v2"], check=True)
+        other_second = subprocess.check_output(["git", "-C", str(other_remote), "rev-parse", "HEAD"], text=True).strip()
+
+        locks = {
+            "example": self.item,
+            "other": {"url": other_remote.as_uri(), "commit": other_first,
+                      "directory": "other-pkg", "replaces": ["other-pkg"]},
+        }
+        build.write(self.lock, json.dumps(locks))
+        self.data = {"packages": ["example", "other"]}
+
+        def check_hook(_repo, _profile, key, probe_tree, _mode):
+            if key == "example" and "version two" in (probe_tree / "package/plugin/Makefile").read_text():
+                raise ValueError("simulated anchor drift in example v2")
+
+        result = self.install("auto", validator=check_hook)
+        # Incompatible 'example' automatically fell back to locked v1, while 'other' stayed on latest v2!
+        self.assertEqual(result["example"]["commit"], self.first)
+        self.assertEqual(result["other"]["commit"], other_second)
+        self.assertEqual((self.tree / "package/plugin/Makefile").read_text(), "version one\n")
+        self.assertEqual((self.tree / "package/other-pkg/Makefile").read_text(), "other v2\n")
+        record = json.loads((self.reports / "plugin-resolution.json").read_text())
+        self.assertEqual(record["mode"], "auto")
+        self.assertEqual(record["plugins"]["example"]["effective_mode"], "locked")
+        self.assertTrue(record["plugins"]["example"]["fallback"])
+        self.assertEqual(record["plugins"]["example"]["candidate_commit"], self.second)
+        self.assertEqual(record["plugins"]["other"]["effective_mode"], "latest")
+        compat = (self.reports / "compatibility.txt").read_text(encoding="utf-8")
+        self.assertIn("example", compat)
+        self.assertIn(self.first[:12], compat)
+
 
 class PluginWorkflowTests(unittest.TestCase):
-    def test_every_device_exposes_and_passes_both_modes_independently(self):
+    def test_every_device_exposes_and_passes_all_modes_independently(self):
         for name in ("TR3000", "AP3000M", "C8-688"):
             workflow = yaml.safe_load((REPO / f".github/workflows/{name}.yml").read_text(encoding="utf-8"))
             inputs = workflow[True]["workflow_dispatch"]["inputs"]
-            for mode in ("SOURCE_MODE", "PLUGIN_MODE"):
-                self.assertEqual(inputs[mode]["options"], ["locked", "latest"])
-                self.assertEqual(inputs[mode]["default"], "latest")
+            self.assertEqual(inputs["SOURCE_MODE"]["options"], ["locked", "latest"])
+            self.assertEqual(inputs["SOURCE_MODE"]["default"], "latest")
+            self.assertEqual(inputs["PLUGIN_MODE"]["options"], ["auto", "latest", "locked"])
+            self.assertEqual(inputs["PLUGIN_MODE"]["default"], "auto")
             for job in workflow["jobs"].values():
-                for mode in ("SOURCE_MODE", "PLUGIN_MODE"):
-                    self.assertEqual(job["with"]["WRT_" + mode], "${{ inputs." + mode + " || 'latest' }}")
+                self.assertEqual(job["with"]["WRT_SOURCE_MODE"], "${{ inputs.SOURCE_MODE || 'latest' }}")
+                self.assertEqual(job["with"]["WRT_PLUGIN_MODE"], "${{ inputs.PLUGIN_MODE || 'auto' }}")
         core = yaml.safe_load((REPO / ".github/workflows/DEVICE-CORE.yml").read_text(encoding="utf-8"))
+        self.assertEqual(core["on"]["workflow_call"]["inputs"]["WRT_SOURCE_MODE"]["default"], "latest")
+        self.assertEqual(core["on"]["workflow_call"]["inputs"]["WRT_PLUGIN_MODE"]["default"], "auto")
         for mode in ("SOURCE_MODE", "PLUGIN_MODE"):
             key = "WRT_" + mode
-            self.assertEqual(core["on"]["workflow_call"]["inputs"][key]["default"], "latest")
             self.assertEqual(core["env"][key], "${{inputs." + key + "}}")
 
 

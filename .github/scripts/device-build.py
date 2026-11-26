@@ -9,7 +9,9 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tarfile
+import tempfile
 from device_image import verify_payload
 import toolchain_cache
 
@@ -99,55 +101,174 @@ def resolve_plugin(key, item, mode):
                       "locked_commit": item["commit"], "resolved_commit": revision}
 
 
-def install_packages(repo, tree, data, reports):
+def fetch_plugin_revision(key, item, tree, revision):
+    for name in item["replaces"]:
+        for feed in (tree / "feeds").iterdir() if (tree / "feeds").exists() else []:
+            if feed.is_dir():
+                for found in list(feed.rglob(name)):
+                    if found.is_dir() and found.name == name:
+                        remove_package(found)
+        feeds = tree / "package/feeds"
+        if feeds.exists():
+            for feed in feeds.iterdir():
+                remove_package(feed / name)
+    dest = tree / "package" / item["directory"]
+    remove_package(dest)
+    dest.mkdir(parents=True)
+    run("git", "init", "-q", str(dest))
+    run("git", "-C", str(dest), "remote", "add", "origin", item["url"])
+    subprocess.run(["git", "-C", str(dest), "fetch", "--depth=1", "origin", revision], check=True)
+    run("git", "-C", str(dest), "checkout", "--detach", "FETCH_HEAD")
+    if run("git", "-C", str(dest), "rev-parse", "HEAD^{commit}") != revision:
+        raise ValueError(f"{key}: fetched revision mismatch")
+    subdirs = item.get("subdirectories", [item["subdirectory"]] if item.get("subdirectory") else [])
+    if subdirs:
+        for subdir in subdirs:
+            source = dest / subdir
+            if not (source / "Makefile").is_file():
+                raise ValueError(f"{key}: package Makefile missing: {subdir}")
+            extracted = tree / "package" / subdir
+            remove_package(extracted)
+            shutil.copytree(source, extracted)
+        remove_package(dest)
+
+
+def run_hook_check(cmd):
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip().splitlines()
+        raise ValueError(detail[-1] if detail else f"hook exited with {result.returncode}")
+
+
+def default_plugin_validator(repo, profile_name, key, probe_tree, mode):
+    suffix = "-latest" if mode == "latest" else ""
+    if key == "openclash" and profile_name in ("AP3000M", "TR3000-512"):
+        pkg = probe_tree / "package/luci-app-openclash"
+        if not (pkg / "Makefile").is_file() or not (pkg / "root/etc/config/openclash").is_file():
+            raise ValueError("OpenClash Makefile or default config missing")
+        recipe = (pkg / "Makefile").read_text(encoding="utf-8")
+        anchor = "\ninclude $(INCLUDE_DIR)/package.mk\n"
+        if recipe.count(anchor) != 1 or re.search(r"(?m)^\s*(?:override\s+)?RSTRIP\s*[:?+]?=", recipe):
+            raise ValueError("OpenClash package strip rules changed")
+        return
+    if profile_name == "AP3000M":
+        if key == "turboacc":
+            run_hook_check([sys.executable, str(repo / ".github/scripts/ap3000m-turboacc.py"),
+                            str(probe_tree / "package/luci-app-turboacc")])
+        elif key == "fancontrol":
+            run_hook_check([sys.executable, str(repo / f"Scripts/AP3000M/fancontrol/fix-confirm{suffix}.py"),
+                            str(probe_tree / "package/luci-app-airpi3000m-fancontrol")])
+        elif key == "fm350":
+            run_hook_check([sys.executable, str(repo / f"Scripts/AP3000M/fm350/fix-pdp-dns{suffix}.py"),
+                            str(probe_tree / "package/luci-app-fm350")])
+            run_hook_check([sys.executable, str(repo / f"Scripts/AP3000M/fm350/fix-packaging{suffix}.py"),
+                            str(probe_tree / "package/luci-app-fm350")])
+    elif profile_name == "TR3000-512" and key == "turboacc":
+        run_hook_check([sys.executable, str(repo / ".github/scripts/tr3000-defaults.py"),
+                        str(probe_tree / "package/luci-app-turboacc")])
+    elif profile_name == "C8-688":
+        if key == "turboacc":
+            run_hook_check([sys.executable, str(repo / ".github/scripts/c8-turboacc.py"),
+                            str(probe_tree / "package/luci-app-turboacc")])
+        elif key == "c8-fancontrol":
+            run_hook_check([sys.executable, str(repo / "Scripts/C8-688/fancontrol/adapt.py"),
+                            str(probe_tree / "package/luci-app-h5000m-fancontrol")])
+
+
+def append_compatibility_note(reports, note):
+    compat = reports / "compatibility.txt"
+    existing = compat.read_text(encoding="utf-8") if compat.exists() else ""
+    if note not in existing:
+        write(compat, existing + note.rstrip("\n") + "\n")
+
+
+def copy_plugin_targets(item, src_tree, dst_tree):
+    targets = item.get("subdirectories", [item["subdirectory"]] if item.get("subdirectory") else [item["directory"]])
+    for rel in targets:
+        source = src_tree / "package" / rel
+        if source.exists():
+            dest = dst_tree / "package" / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(source, dest)
+
+
+def install_packages(repo, tree, data, reports, profile_name=None, validator=None):
     mode = os.environ.get("WRT_PLUGIN_MODE", "locked")
-    if mode not in ("locked", "latest"):
-        raise ValueError("plugin mode must be locked or latest")
+    if mode not in ("locked", "latest", "auto"):
+        raise ValueError("plugin mode must be locked, latest or auto")
     locks = json.loads((repo / "Profiles/packages.lock.json").read_text(encoding="utf-8"))
+    validate = validator or default_plugin_validator
+    resolve_mode = "latest" if mode in ("latest", "auto") else "locked"
     # Resolve each moving branch once, then fetch that exact SHA. A branch
     # advancing during checkout must not change this run's snapshot or records.
     resolved, resolution = {}, {}
     for key in data["packages"]:
-        resolved[key], resolution[key] = resolve_plugin(key, locks[key], mode)
-    write(reports / "plugin-resolution.json", json.dumps({"schema": 1, "mode": mode,
-          "plugins": resolution}, indent=2) + "\n")
+        resolved[key], resolution[key] = resolve_plugin(key, locks[key], resolve_mode)
+        resolution[key]["effective_mode"] = resolve_mode
     provenance = {}
     for key in data["packages"]:
         item = resolved[key]
         revision = item["commit"]
+        locked_revision = locks[key]["commit"]
         print(f"Plugin {key}: {mode} {resolution[key]['branch'] or 'commit'} @ {revision}", flush=True)
-        # Remove exact conflicting package directories and installed feed links.
-        # Never use substring matches: e.g. 'argon' must not delete unrelated packages.
-        for name in item["replaces"]:
-            for feed in (tree / "feeds").iterdir():
-                if feed.is_dir():
-                    for found in list(feed.rglob(name)):
-                        if found.is_dir() and found.name == name:
-                            remove_package(found)
-            feeds = tree / "package/feeds"
-            if feeds.exists():
-                for feed in feeds.iterdir():
-                    remove_package(feed / name)
-        dest = tree / "package" / item["directory"]
-        remove_package(dest)
-        dest.mkdir(parents=True)
-        run("git", "init", "-q", str(dest))
-        run("git", "-C", str(dest), "remote", "add", "origin", item["url"])
-        subprocess.run(["git", "-C", str(dest), "fetch", "--depth=1", "origin", revision], check=True)
-        run("git", "-C", str(dest), "checkout", "--detach", "FETCH_HEAD")
-        if run("git", "-C", str(dest), "rev-parse", "HEAD^{commit}") != revision:
-            raise ValueError(f"{key}: fetched revision mismatch")
-        subdirs = item.get("subdirectories", [item["subdirectory"]] if item.get("subdirectory") else [])
-        if subdirs:
-            for subdir in subdirs:
-                source = dest / subdir
-                if not (source / "Makefile").is_file():
-                    raise ValueError(f"{key}: package Makefile missing: {subdir}")
-                extracted = tree / "package" / subdir
-                remove_package(extracted)
-                shutil.copytree(source, extracted)
-            remove_package(dest)
+        fetch_plugin_revision(key, item, tree, revision)
+        if mode == "auto":
+            with tempfile.TemporaryDirectory() as probe_dir:
+                probe_tree = Path(probe_dir)
+                copy_plugin_targets(item, tree, probe_tree)
+                try:
+                    validate(repo, profile_name, key, probe_tree, "latest")
+                except Exception as exc:
+                    reason = str(exc).strip() or exc.__class__.__name__
+                    print(f"::warning::Plugin {key}: latest @ {revision[:12]} failed adaptation check "
+                          f"({reason}); falling back to verified lock @ {locked_revision[:12]}", flush=True)
+                    fetch_plugin_revision(key, locks[key], tree, locked_revision)
+                    item = dict(locks[key], commit=locked_revision)
+                    resolution[key].update({
+                        "candidate_commit": revision,
+                        "resolved_commit": locked_revision,
+                        "effective_mode": "locked",
+                        "fallback": True,
+                        "fallback_reason": reason,
+                    })
+                    append_compatibility_note(
+                        reports,
+                        f"- 插件 `{key}`：上游最新提交 `{revision[:12]}` 适配预检未通过（{reason}），已自动回退至锁版本 `{locked_revision[:12]}`。",
+                    )
         provenance[key] = item
+    # Coupled C8-688 cellular pair check in auto mode when both packages exist.
+    if mode == "auto" and profile_name == "C8-688" and {"mt5700m", "c8-cellular-webui"} <= set(data["packages"]):
+        with tempfile.TemporaryDirectory() as probe_dir:
+            probe_tree = Path(probe_dir)
+            for coupled in ("mt5700m", "c8-cellular-webui"):
+                copy_plugin_targets(provenance[coupled], tree, probe_tree)
+            try:
+                run_hook_check([sys.executable, str(repo / "Scripts/C8-688/cellular/adapt.py"),
+                                str(probe_tree / "package/luci-app-mt5700m"),
+                                str(probe_tree / "package/at-webserver")])
+            except Exception as exc:
+                reason = str(exc).strip() or exc.__class__.__name__
+                for coupled in ("mt5700m", "c8-cellular-webui"):
+                    cand = provenance[coupled]["commit"]
+                    lock_sha = locks[coupled]["commit"]
+                    if cand != lock_sha:
+                        print(f"::warning::Plugin {coupled}: latest @ {cand[:12]} failed C8 cellular check "
+                              f"({reason}); falling back to verified lock @ {lock_sha[:12]}", flush=True)
+                        fetch_plugin_revision(coupled, locks[coupled], tree, lock_sha)
+                        provenance[coupled] = dict(locks[coupled], commit=lock_sha)
+                        resolution[coupled].update({
+                            "candidate_commit": cand,
+                            "resolved_commit": lock_sha,
+                            "effective_mode": "locked",
+                            "fallback": True,
+                            "fallback_reason": reason,
+                        })
+                        append_compatibility_note(
+                            reports,
+                            f"- 插件 `{coupled}`：上游最新提交 `{cand[:12]}` 蜂窝适配预检未通过（{reason}），已自动回退至锁版本 `{lock_sha[:12]}`。",
+                        )
+    write(reports / "plugin-resolution.json", json.dumps({"schema": 1, "mode": mode,
+          "plugins": resolution}, indent=2) + "\n")
     for directory in data.get("excluded_feed_packages", {}):
         # Exclude only unused broken recipes, keeping upstream feed sources intact.
         for feed in (tree / "package/feeds").iterdir() if (tree / "package/feeds").exists() else []:
@@ -368,10 +489,18 @@ def cache_keys(repo, tree, name, reports):
     downloads = download_key(tree, prefix, inputs["source"], feeds, inputs["packages"], config)
     # ccache validates compiler/content itself; toolchain staging never falls back.
     ccache = hashlib.sha256((compiler + inputs["rust"] + inputs["os"]).encode()).hexdigest()[:16]
+    cargo_locks = {
+        p.relative_to(tree).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+        for p in sorted((tree / "package").rglob("Cargo.lock")) if p.is_file()
+    } if (tree / "package").exists() else {}
+    cargo_prefix = f"{prefix}-cargo-{ccache}-"
+    cargo_key = cargo_prefix + toolchain_cache.json_digest({"rust": inputs["rust"], "locks": cargo_locks})[:16]
     with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as stream:
         stream.write(f"prefix={prefix}\nstaging={staging}\n"
                      f"toolchain_prefix={staging.rsplit('-', 1)[0]}\n"
-                     f"ccache={prefix}-ccache-{ccache}-\ndl={downloads}\n")
+                     f"ccache={prefix}-ccache-{ccache}-\n"
+                     f"cargo_prefix={cargo_prefix}\ncargo={cargo_key}\n"
+                     f"dl={downloads}\n")
 
 
 def main():
@@ -383,12 +512,12 @@ def main():
     args = parser.parse_args()
     repo, tree = args.repo.resolve(), args.tree.resolve()
     data = profile(repo, args.profile)
-    reports = repo / "build-reports"
-    reports.mkdir(exist_ok=True)
+    reports = Path(os.environ.get("WRT_BUILD_REPORTS") or (repo / "build-reports"))
+    reports.mkdir(parents=True, exist_ok=True)
     if args.command == "merge":
         merge_config(repo, tree, args.profile, data)
     elif args.command == "packages":
-        install_packages(repo, tree, data, reports)
+        install_packages(repo, tree, data, reports, profile_name=args.profile)
     elif args.command == "check":
         check_config(tree, data)
     elif args.command == "defconfig":

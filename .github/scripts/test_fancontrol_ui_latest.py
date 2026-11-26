@@ -1,4 +1,4 @@
-"""Exercise the reviewed latest fan view (v7.0.5) against router LuCI APIs."""
+"""Exercise the anchor-based latest fan hook (v7.0.5+) and behavioral UI gate."""
 import hashlib
 import importlib.util
 import io
@@ -44,14 +44,6 @@ class FanUiLatestTests(unittest.TestCase):
         cls.menu = files[fix.MENU]
         cls.recipe = files[fix.RECIPE]
         cls.config = files[fix.CONFIG]
-        if hashlib.sha256(cls.original).hexdigest() != fix.UPSTREAM_SHA256:
-            raise AssertionError("latest fan view hash mismatch")
-        if hashlib.sha256(cls.menu).hexdigest() != fix.MENU_SHA256:
-            raise AssertionError("latest fan menu hash mismatch")
-        if hashlib.sha256(cls.recipe).hexdigest() != fix.RECIPE_SHA256:
-            raise AssertionError("latest fan recipe hash mismatch")
-        if hashlib.sha256(cls.config).hexdigest() != fix.CONFIG_SHA256:
-            raise AssertionError("latest fan config hash mismatch")
 
     def package_fixture(self, root):
         for name, data in ((fix.VIEW, self.original), (fix.MENU, self.menu),
@@ -60,10 +52,13 @@ class FanUiLatestTests(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
 
-    def test_menu_selects_distinct_latest_url_and_image_gates_resolve_it(self):
+    def test_menu_selects_distinct_latest_url_and_tolerates_benign_version_bumps(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             self.package_fixture(root)
+            # Simulate a benign upstream PKG_VERSION bump and comment update.
+            bumped_recipe = self.recipe.replace(b"PKG_VERSION:=7.0.5", b"PKG_VERSION:=7.0.6\n# harmless comment")
+            (root / fix.RECIPE).write_bytes(bumped_recipe)
             subprocess.run([sys.executable, str(spec.origin), str(root)],
                            capture_output=True, check=True, timeout=30)
             menu = json.loads((root / fix.MENU).read_bytes())
@@ -87,33 +82,37 @@ class FanUiLatestTests(unittest.TestCase):
                            "option min_hold '60'", "option log_level '1'"):
                 self.assertIn(needle, cfg_text)
 
-    def test_locked_and_latest_hooks_reject_cross_mode_or_drifted_sources(self):
+    def test_locked_hook_rejects_latest_and_latest_hook_rejects_broken_semantics(self):
         with self.assertRaisesRegex(ValueError, "reviewed locked source"):
             locked_fix.patch_view(self.original)
         patched = fix.patch_view(self.original)
         self.assertEqual(fix.patch_view(patched), patched)
-        for data in (self.original + b"\n", patched + b"\n",
-                     patched.replace(b"res.code !== 0", b"false")):
-            with self.assertRaisesRegex(ValueError, "reviewed latest source"):
-                fix.patch_view(data)
+        # Breaking the exit-code check must fail the contract / behavioral gate.
+        with self.assertRaises(ValueError):
+            fix.patch_view(patched.replace(b"res.code !== 0", b"false"))
+        # Breaking command() arguments must be caught by the built-in Node UI check.
+        if shutil.which("node"):
+            with self.assertRaisesRegex(ValueError, "behavioral UI check"):
+                fix.patch_view(patched.replace(b"var CTL = '/usr/bin/airpi-fanctl.sh';",
+                                               b"var CTL = '/usr/bin/wrong-ctl.sh';"))
 
-    def test_drift_fails_before_any_files_are_written(self):
+    def test_structural_anchor_drift_fails_before_any_files_are_written(self):
         digest = hashlib.sha256(fix.patch_view(self.original)).hexdigest()[:12]
-        for bad in ("menu", "partial_menu", "alias", "recipe", "patched_recipe", "config"):
+        for bad in ("menu_json", "partial_menu", "alias", "recipe_anchor", "patched_recipe", "config_anchor"):
             with self.subTest(bad=bad), tempfile.TemporaryDirectory() as temp:
                 root = Path(temp)
                 self.package_fixture(root)
-                if bad == "menu":
-                    (root / fix.MENU).write_bytes(self.menu + b"\n")
+                if bad == "menu_json":
+                    (root / fix.MENU).write_bytes(b"{}")
                 elif bad == "partial_menu":
                     (root / fix.MENU).write_bytes(self.menu.replace(
                         b'airpi-fancontrol/fancontrol"', b'airpi-fancontrol/fancontrol-stale"'))
                 elif bad == "alias":
                     (root / fix.VIEW).with_name(f"fancontrol-{digest}.js").write_bytes(b"old view")
-                elif bad == "recipe":
-                    (root / fix.RECIPE).write_bytes(self.recipe + b"\n")
-                elif bad == "config":
-                    (root / fix.CONFIG).write_bytes(self.config + b"\n")
+                elif bad == "recipe_anchor":
+                    (root / fix.RECIPE).write_bytes(self.recipe.replace(b"fancontrol.js", b"other.js"))
+                elif bad == "config_anchor":
+                    (root / fix.CONFIG).write_bytes(self.config.replace(b"option temp_mid", b"# removed"))
                 else:
                     fix.patch_package(root)
                     recipe = root / fix.RECIPE

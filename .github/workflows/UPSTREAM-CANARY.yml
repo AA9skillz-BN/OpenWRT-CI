@@ -1,0 +1,64 @@
+name: Upstream Canary
+
+on:
+  schedule:
+    # 每天北京时间 06:23 自动巡检上游源码与第三方插件适配状态
+    - cron: '23 22 * * *'
+  workflow_dispatch:
+    inputs:
+      FAIL_ON_DRIFT:
+        description: '检测到上游漂移时是否将本次任务标为失败'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: upstream-canary-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  canary:
+    name: Probe live upstream sources and plugins
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run upstream adaptation canary
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 .github/scripts/upstream-canary.py \
+            --json canary-report.json \
+            --markdown canary-report.md \
+            --summary "$GITHUB_STEP_SUMMARY"
+      - name: Sync deduplicated upstream drift issue
+        if: ${{ github.ref == 'refs/heads/main' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          all_ok=$(jq -r '.all_ok' canary-report.json)
+          title='[Upstream Canary] 上游源码或插件适配漂移提醒'
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$title\" in:title" --json number,title |
+            jq -r --arg t "$title" '.[] | select(.title == $t) | .number' | head -n 1)
+          if [ "$all_ok" = "false" ]; then
+            if [ -n "$existing" ]; then
+              gh issue edit "$existing" --repo "$GITHUB_REPOSITORY" --body-file canary-report.md
+            else
+              gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file canary-report.md
+            fi
+          elif [ -n "$existing" ]; then
+            gh issue close "$existing" --repo "$GITHUB_REPOSITORY" --comment "最新一轮 Upstream Canary 巡检已全部恢复通过，自动关闭提醒。"
+          fi
+      - name: Enforce strict result when requested
+        if: ${{ inputs.FAIL_ON_DRIFT }}
+        run: |
+          jq -e '.all_ok == true' canary-report.json >/dev/null

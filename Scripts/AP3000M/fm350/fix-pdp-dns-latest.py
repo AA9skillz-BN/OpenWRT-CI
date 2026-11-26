@@ -1,71 +1,94 @@
-"""Keep CGCONTRDP DNS separate from addresses in the reviewed FM350 source."""
+"""Keep CGCONTRDP DNS separate from addresses in latest FM350 via anchor invariants."""
 import hashlib
 from pathlib import Path
 import sys
 
-UPSTREAM_SHA256 = "f14d778051dcc9c1249f4ea49038ffd7d8b3a405035a6a61fa9dfd768480430e"
 SOURCE = "rust/src/modem/pdp.rs"
 
-REPLACEMENTS = (
+CID_GUARD = (
+    '        for row in crate::at::rows(&r, "+CGCONTRDP") {\n'
+    '            if row.first().and_then(|x| x.parse::<u32>().ok()) != Some(cfg.cid) {\n'
+    '                continue;\n'
+    '            }\n'
+)
+
+DNS_PUSH = (
+    "                } else if let Some(a6) = normalize_ipv6(item) {\n"
+    "                    // AT manual 12.2.10: fields 5/6 are DNS, never local addresses.\n"
+    "                    contr_dns.push(a6);\n"
+)
+
+REPLACEMENT_SETS = (
     (
-        '        for row in crate::at::rows(&r, "+CGCONTRDP") {\n',
-        '        for row in crate::at::rows(&r, "+CGCONTRDP") {\n'
-        '            if row.first().and_then(|x| x.parse::<u32>().ok()) != Some(cfg.cid) {\n'
-        '                continue;\n'
-        '            }\n',
+        (
+            '        for row in crate::at::rows(&r, "+CGCONTRDP") {\n'
+            '            // <cid>,<bearer>,',
+            CID_GUARD + '            // <cid>,<bearer>,',
+        ),
+        (
+            "                } else if contr_ipv6.is_empty() {\n"
+            "                    // 同一字段位在 IPV4V6 下按地址族切换：实机 cid=1 的\n"
+            "                    // <primary>/<secondary> 位给的就是点分十进制 IPv6。\n"
+            "                    if let Some(a6) = normalize_ipv6(item) {\n"
+            "                        contr_ipv6 = a6;\n"
+            "                    }\n",
+            DNS_PUSH,
+        ),
     ),
     (
-        "                } else if contr_ipv6.is_empty() {\n"
-        "                    // 同一字段位在 IPV4V6 下按地址族切换：实机 cid=1 的\n"
-        "                    // <primary>/<secondary> 位给的就是点分十进制 IPv6。\n"
-        "                    if let Some(a6) = normalize_ipv6(item) {\n"
-        "                        contr_ipv6 = a6;\n"
-        "                    }\n",
-        "                } else if let Some(a6) = normalize_ipv6(item) {\n"
-        "                    // AT manual 12.2.10: fields 5/6 are DNS, never local addresses.\n"
-        "                    contr_dns.push(a6);\n",
-    ),
-    (
-        "    // 回落判据必须挑得极其小心。FM350 的 `AT+CGACT?` **只回 OK、不列 `+CGACT:`\n"
-        "    // 行**（模组方言），于是 `cgact` 恒为 `None` —— 这里不是罕见的异常兜底，\n"
-        "    // 而是 FM350 上的**常态执行路径**，判错就直接让拨号状态机走错分支：\n",
-        "    // Some firmware/context states return bare OK; others return +CGACT rows.\n"
-        "    // Keep a valid CGACT result authoritative. When it is unknown, only the\n"
-        "    // matching CGCONTRDP local-address field may support this fallback:\n",
+        (
+            '        for row in crate::at::rows(&r, "+CGCONTRDP") {\n',
+            CID_GUARD,
+        ),
+        (
+            "                } else if contr_ipv6.is_empty() {\n"
+            "                    // 同一字段位在 IPV4V6 下按地址族切换：实机 cid=1 的\n"
+            "                    // <primary>/<secondary> 位给的就是点分十进制 IPv6。\n"
+            "                    if let Some(a6) = normalize_ipv6(item) {\n"
+            "                        contr_ipv6 = a6;\n"
+            "                    }\n",
+            DNS_PUSH,
+        ),
     ),
 )
 
-NEW_REPLACEMENTS = (
-    (
-        '        for row in crate::at::rows(&r, "+CGCONTRDP") {\n'
-        '            // <cid>,<bearer>,',
-        '        for row in crate::at::rows(&r, "+CGCONTRDP") {\n'
-        '            if row.first().and_then(|x| x.parse::<u32>().ok()) != Some(cfg.cid) {\n'
-        '                continue;\n'
-        '            }\n'
-        '            // <cid>,<bearer>,',
-    ),
-    *REPLACEMENTS[1:],
+COMMENT_NORMALIZATION = (
+    "    // 回落判据必须挑得极其小心。FM350 的 `AT+CGACT?` **只回 OK、不列 `+CGACT:`\n"
+    "    // 行**（模组方言），于是 `cgact` 恒为 `None` —— 这里不是罕见的异常兜底，\n"
+    "    // 而是 FM350 上的**常态执行路径**，判错就直接让拨号状态机走错分支：\n",
+    "    // Some firmware/context states return bare OK; others return +CGACT rows.\n"
+    "    // Keep a valid CGACT result authoritative. When it is unknown, only the\n"
+    "    // matching CGCONTRDP local-address field may support this fallback:\n",
 )
+
+
+def verify_postconditions(text):
+    if "pub fn pdp(" not in text or "pub fn dial(" not in text:
+        raise ValueError("PDP module entrypoints missing")
+    if CID_GUARD not in text:
+        raise ValueError("PDP target CID filter missing")
+    if "contr_dns.push(a6);" not in text:
+        raise ValueError("PDP IPv6 DNS separation missing")
+    if "if let Some(a6) = normalize_ipv6(item) {\n                        contr_ipv6 = a6;" in text:
+        raise ValueError("PDP still assigns trailing IPv6 DNS fields to contr_ipv6")
 
 
 def patch_pdp(data):
     text = data.decode("utf-8")
-    for sha, replacements in ((UPSTREAM_SHA256, NEW_REPLACEMENTS),):
-        original = text
-        if hashlib.sha256(data).hexdigest() != sha:
-            for before, after in replacements:
-                if original.count(after) != 1:
-                    break
-                original = original.replace(after, before, 1)
-        if hashlib.sha256(original.encode("utf-8")).hexdigest() != sha:
-            continue
-        for before, after in replacements:
-            if original.count(before) != 1:
-                raise ValueError("PDP source anchors changed")
-            original = original.replace(before, after, 1)
-        return original.encode("utf-8")
-    raise ValueError("PDP source differs from the reviewed locked source")
+    if CID_GUARD in text and DNS_PUSH in text:
+        verify_postconditions(text)
+        return data
+    for pairs in REPLACEMENT_SETS:
+        if all(text.count(before) == 1 for before, _ in pairs):
+            updated = text
+            for before, after in pairs:
+                updated = updated.replace(before, after, 1)
+            old_comment, new_comment = COMMENT_NORMALIZATION
+            if updated.count(old_comment) == 1:
+                updated = updated.replace(old_comment, new_comment, 1)
+            verify_postconditions(updated)
+            return updated.encode("utf-8")
+    raise ValueError("PDP source anchors changed; review latest pdp.rs")
 
 
 if __name__ == "__main__":

@@ -56,8 +56,8 @@ name: DEVICE-CORE
         required: false
         type: string
       WRT_PLUGIN_MODE:
-        description: Resolve current plugin branch commits by default, or use locked revisions
-        default: latest
+        description: Resolve current plugin branch commits with per-plugin lock fallback (auto), strict latest, or locked revisions
+        default: auto
         required: false
         type: string
 env:
@@ -134,6 +134,7 @@ jobs:
       device_cache_prefix: ${{steps.device-cache.outputs.prefix}}
       device_dl_key: ${{steps.device-cache.outputs.dl}}
       device_ccache_key: ${{steps.device-cache.outputs.ccache}}${{github.run_id}}-${{github.run_attempt}}
+      device_cargo_key: ${{steps.device-cache.outputs.cargo}}
       device_staging_key: ${{steps.device-cache.outputs.staging}}
       bad_toolchain_key: ${{steps.validate-toolchain.outputs.bad_key}}
       bad_toolchain_detected_at: ${{steps.validate-toolchain.outputs.bad_detected_at}}
@@ -246,6 +247,18 @@ jobs:
         key: ${{steps.device-cache.outputs.ccache}}${{github.run_id}}-${{github.run_attempt}}
         restore-keys: ${{steps.device-cache.outputs.ccache}}
         path: ./wrt/.ccache
+    - name: Restore Cargo Crate Cache
+      id: device-cargo
+      continue-on-error: true
+      if: ${{ !inputs.WRT_TEST }}
+      uses: actions/cache/restore@v4
+      with:
+        key: ${{steps.device-cache.outputs.cargo}}
+        restore-keys: ${{steps.device-cache.outputs.cargo_prefix}}
+        path: |
+          ~/.cargo/registry/index
+          ~/.cargo/registry/cache
+          ~/.cargo/git/db
     - name: Preserve Pristine Host Prerequisites
       if: ${{ !inputs.WRT_TEST }}
       working-directory: ./wrt
@@ -312,6 +325,16 @@ jobs:
       with:
         key: ${{steps.device-cache.outputs.ccache}}${{github.run_id}}-${{github.run_attempt}}
         path: ./wrt/.ccache
+    - name: Save Cargo Crate Cache
+      continue-on-error: true
+      if: ${{ !cancelled() && (steps.compile.outcome == 'success' || steps.compile.outcome == 'failure') && steps.device-cargo.outputs.cache-hit != 'true' }}
+      uses: actions/cache/save@v4
+      with:
+        key: ${{steps.device-cache.outputs.cargo}}
+        path: |
+          ~/.cargo/registry/index
+          ~/.cargo/registry/cache
+          ~/.cargo/git/db
     - name: Seal Installed Toolchain Cache
       continue-on-error: true
       id: seal-toolchain
@@ -397,6 +420,7 @@ jobs:
         DEVICE_CACHE_PREFIX: ${{needs.core.outputs.device_cache_prefix}}
         DEVICE_DL_KEY: ${{needs.core.outputs.device_dl_key}}
         DEVICE_CCACHE_KEY: ${{needs.core.outputs.device_ccache_key}}
+        DEVICE_CARGO_KEY: ${{needs.core.outputs.device_cargo_key}}
         DEVICE_STAGING_KEY: ${{needs.core.outputs.device_staging_key}}
         BAD_TOOLCHAIN_KEY: ${{needs.core.outputs.bad_toolchain_key}}
         BAD_TOOLCHAIN_DETECTED_AT: ${{needs.core.outputs.bad_toolchain_detected_at}}
