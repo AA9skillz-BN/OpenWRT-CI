@@ -139,6 +139,16 @@ class FanUiLatestTests(unittest.TestCase):
             self.assertEqual(good.returncode, 0, good.stdout + good.stderr)
             self.assertIn("fan UI confirmation/command regressions passed", good.stdout)
 
+    def test_obsolete_ui_api_repairs_are_not_reintroduced_in_latest_mode(self):
+        repaired = fix.patch_view(self.original)
+        # Upstream owns confirmation and save behavior. Regressing to the old
+        # API must fail validation rather than silently injecting our old fix.
+        for candidate in (repaired.replace(b"confirmAction(", b"ui.confirm("),
+                          repaired.replace(b"res.code !== 0", b"res.rc !== 0")):
+            with self.subTest(candidate=candidate[:30]), self.assertRaises(ValueError):
+                fix.patch_view(candidate)
+        self.assertNotIn("LEGACY_HELPER", Path(spec.origin).read_text(encoding="utf-8"))
+
     @unittest.skipIf(os.name == "nt", "actual package install regression runs on Linux")
     def test_actual_latest_install_packages_the_view_selected_by_menu(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -1,4 +1,4 @@
-"""Adapt the latest fan view via structural anchors and behavioral UI verification."""
+"""Validate the upstream fixed fan UI and retain only the strict exec-result adaptation."""
 import hashlib
 import json
 from pathlib import Path
@@ -24,31 +24,6 @@ VIEW_NAME = "airpi-fancontrol/fancontrol"
 INSTALL_VIEW = '''\t$(INSTALL_DATA) ./htdocs/luci-static/resources/view/airpi-fancontrol/fancontrol.js \\
 \t\t$(1)/www/luci-static/resources/view/airpi-fancontrol/fancontrol.js
 '''
-
-LEGACY_HELPER = """/* LuCI ui exposes showModal/hideModal, not a Promise-based confirm(). */
-function confirmAction(title, children) {
-\treturn new Promise(function(resolve) {
-\t\tfunction finish(accepted) {
-\t\t\tui.hideModal();
-\t\t\tresolve(accepted);
-\t\t}
-\t\tui.showModal(title, children.concat([
-\t\t\tE('div', { 'class': 'right' }, [
-\t\t\t\tE('button', {
-\t\t\t\t\t'class': 'cbi-button', 'type': 'button',
-\t\t\t\t\t'click': function() { finish(false); }
-\t\t\t\t}, _('取消')),
-\t\t\t\t' ',
-\t\t\t\tE('button', {
-\t\t\t\t\t'class': 'cbi-button cbi-button-apply', 'type': 'button',
-\t\t\t\t\t'click': function() { finish(true); }
-\t\t\t\t}, _('确认'))
-\t\t\t])
-\t\t]));
-\t});
-}
-
-"""
 
 # Upstream 7.0.5 added confirmAction() and uci.apply(), but num(res.code, ...)
 # falls back to res.rc or 0 when code is absent, treating malformed replies
@@ -88,15 +63,6 @@ def verify_view_behavior(data):
 
 def patch_view(data):
     text = data.decode("utf-8")
-    code_only = strip_comments(text)
-    if "ui.confirm(" in code_only:
-        if "function ctl(args) {" not in text:
-            raise ValueError("fan view ctl() anchor missing")
-        if LEGACY_HELPER not in text:
-            text = text.replace("function ctl(args) {", LEGACY_HELPER + "function ctl(args) {", 1)
-        text = re.sub(r"(?<!\.)\bui\.confirm\(", "confirmAction(", text)
-    if "res.rc !== 0" in code_only:
-        text = text.replace("res.rc !== 0", "res.code !== 0")
     if RC_FALLBACK_PATTERN.search(text):
         matches = list(RC_FALLBACK_PATTERN.finditer(text))
         if len(matches) != 1:
