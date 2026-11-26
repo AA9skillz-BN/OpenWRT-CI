@@ -178,6 +178,7 @@ operation_exit() {
 	fi
 }
 
+
 run_operation() {
 	ACTION="$1"; shift
 	trap operation_exit EXIT
@@ -247,7 +248,7 @@ human_mb() {
 }
 
 free_kb() {
-	df -k "$(work_dir)" 2>/dev/null | awk 'NR==2 {print $4}'
+	df -Pk "$(work_dir)" 2>/dev/null | awk 'NR==2 {print $4}'
 }
 
 # ---------- 子命令 ----------

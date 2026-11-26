@@ -203,6 +203,36 @@ exit 0
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((self.root / "network-used").exists())
 
+    def test_short_download_and_failed_inline_upgrade_clear_progress_state(self):
+        result = self.shell('''
+curl() {
+    while [ "$#" -gt 0 ]; do
+        if [ "$1" = '-o' ]; then shift; printf 'bad' > "$1"; return 0; fi
+        shift
+    done
+    return 1
+}
+cmd_download
+''', API_JSON=json.dumps([self.release()]))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.root / "dl.tag").exists())
+        self.assertFalse((self.root / "AP3000M-test.bin.part").exists())
+        self.assertIn("下载文件大小与 Release 不符", (self.root / "dl.result").read_text(encoding="utf-8"))
+
+        result = self.shell('''
+curl() {
+    while [ "$#" -gt 0 ]; do
+        if [ "$1" = '-o' ]; then shift; printf 'bad' > "$1"; return 0; fi
+        shift
+    done
+    return 1
+}
+run_operation upgrade --keep --yes
+''', API_JSON=json.dumps([self.release()]))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.root / "dl.tag").exists())
+        self.assertEqual(json.loads((self.root / "operation.json").read_text(encoding="utf-8"))["state"], "failed")
+
     def test_same_size_corrupt_cached_image_is_replaced(self):
         image = self.root / "AP3000M-test.bin"
         image.write_bytes(b"evil")

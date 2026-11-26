@@ -117,6 +117,43 @@ class OpenClashCoreTests(unittest.TestCase):
             self.assertEqual(existing.read_bytes(), b"existing core")
             self.assertEqual(json.loads(lock.read_bytes()), record)
 
+    def test_auto_fallback_records_compatibility_note_in_live_and_preview_replay(self):
+        archive, record = snapshot(fixture_binary())
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package = root / "tree/package/luci-app-openclash"
+            (package / "root/etc/config").mkdir(parents=True)
+            (package / "Makefile").write_text("\ninclude $(INCLUDE_DIR)/package.mk\n")
+            (package / "root/etc/config/openclash").touch()
+            (root / "Profiles").mkdir()
+            (root / "Profiles/openclash-core.lock.json").write_text(json.dumps(record))
+
+            def fake_fetch(url, _limit):
+                if url.endswith("/releases/latest"):
+                    return json.dumps({"draft": False, "prerelease": True, "tag_name": "v1.20.0", "assets": []}).encode()
+                if url.endswith("/LICENSE"):
+                    return b"GPL-3.0\n"
+                return archive
+
+            preview_reports = root / "preview-reports"
+            with patch.object(core, "fetch", side_effect=fake_fetch):
+                captured = core.install(root, root / "tree", "auto", reports=preview_reports)
+            self.assertEqual(captured["mode"], "locked")
+            self.assertEqual(captured["requested_mode"], "auto")
+            self.assertIn("public and stable", captured["fallback_reason"])
+            live_compat = (preview_reports / "compatibility.txt").read_text(encoding="utf-8")
+            self.assertIn("v1.19.34", live_compat)
+            self.assertIn("public and stable", live_compat)
+
+            replay_reports = root / "replay-reports"
+            with patch.object(core, "replay", return_value={"mihomo": captured}), \
+                    patch.object(core, "fetch", side_effect=fake_fetch):
+                replayed = core.install(root, root / "tree", "auto", reports=replay_reports)
+            self.assertEqual(replayed, captured)
+            replay_compat = (replay_reports / "compatibility.txt").read_text(encoding="utf-8")
+            self.assertIn("按预检复用锁版本 `v1.19.34`", replay_compat)
+            self.assertIn("public and stable", replay_compat)
+
 
 @unittest.skipIf(os.name == "nt", "real ARM64 execution and upstream Make installation run on Linux")
 class ActualOpenClashTests(unittest.TestCase):

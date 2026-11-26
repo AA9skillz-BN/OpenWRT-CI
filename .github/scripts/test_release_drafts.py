@@ -34,6 +34,29 @@ class DraftTests(unittest.TestCase):
     def test_owned_failed_draft_older_than_day_is_eligible(self):
         self.assertTrue(cleanup.stale_draft(self.release, REPO, self.run, NOW))
 
+    def test_failed_recovery_promotion_draft_older_than_day_is_reclaimed(self):
+        head_sha = "c" * 40
+        promo_release = dict(
+            self.release,
+            tag_name="AP3000M-build-123-1",
+            body=(f"<!-- firmware-model: ap3000m -->\n"
+                  f"<!-- firmware-ci: repo={REPO} run=456 attempt=2 sha={head_sha} "
+                  f"tag=AP3000M-build-123-1 started=2026-10-27T10:00:00Z -->"),
+        )
+        promo_run = dict(self.run, id=456, run_attempt=2, head_sha=head_sha,
+                         path=".github/workflows/RELEASE-EXISTING.yml@refs/heads/main")
+        self.assertTrue(cleanup.stale_draft(promo_release, REPO, promo_run, NOW))
+        # A normal device workflow run 456-2 must never claim a draft tagged 123-1.
+        self.assertFalse(cleanup.stale_draft(promo_release, REPO,
+                                             dict(promo_run, path=".github/workflows/AP3000M.yml"), NOW))
+        # Tag must still carry a valid build run/attempt suffix.
+        bad_tag = dict(
+            promo_release,
+            tag_name="AP3000M-manual",
+            body=promo_release["body"].replace("tag=AP3000M-build-123-1", "tag=AP3000M-manual"),
+        )
+        self.assertFalse(cleanup.stale_draft(bad_tag, REPO, promo_run, NOW))
+
     def test_commit_created_at_does_not_make_a_fresh_draft_stale(self):
         for field in ("marker", "release", "run"):
             release, run = copy.deepcopy(self.release), copy.deepcopy(self.run)
@@ -86,24 +109,30 @@ class DraftTests(unittest.TestCase):
     @unittest.skipUnless(BASH and JQ, "bash and jq required")
     def test_publication_failure_cleanup_executes_only_for_its_own_unpublished_draft(self):
         repo = Path(__file__).resolve().parents[2]
-        workflow = yaml.safe_load((repo / ".github/workflows/DEVICE-CORE.yml").read_text(encoding="utf-8"))
-        steps = workflow["jobs"]["publish"]["steps"]
-        script = next(step for step in steps if step["name"] == "Remove this run's failed draft")
-        self.assertIn("failure()", script["if"])
-        self.assertIn("cancelled()", script["if"])
-        for case in ("owned", "manual", "other-attempt", "published", "published-during-check", "ambiguous"):
-            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
-                draft = copy.deepcopy(self.release)
-                if case == "manual":
-                    draft["body"] = "manual"
-                elif case == "other-attempt":
-                    draft["body"] = draft["body"].replace("attempt=1", "attempt=2")
-                elif case == "published":
-                    draft["draft"] = False
-                pages = [[draft, draft] if case == "ambiguous" else [draft]]
-                current = dict(draft, draft=False) if case == "published-during-check" else draft
-                path = Path(directory) / "test.sh"
-                path.write_text('''
+        for wf_name in ("DEVICE-CORE.yml", "RELEASE-EXISTING.yml"):
+            workflow = yaml.safe_load((repo / ".github/workflows" / wf_name).read_text(encoding="utf-8"))
+            steps = workflow["jobs"]["publish"]["steps"]
+            mark = next(step for step in steps if step["name"] == "Mark pipeline draft ownership")
+            self.assertIn('"$GITHUB_SHA"', mark["run"], wf_name)
+            script = next(step for step in steps if step["name"] == "Remove this run's failed draft")
+            self.assertIn("failure()", script["if"])
+            self.assertIn("cancelled()", script["if"])
+            for case in ("owned", "manual", "other-attempt", "published", "published-during-check", "ambiguous"):
+                with self.subTest(workflow=wf_name, case=case), tempfile.TemporaryDirectory() as directory:
+                    draft = copy.deepcopy(self.release)
+                    if wf_name == "RELEASE-EXISTING.yml":
+                        draft["tag_name"] = "AP3000M-build-99-1"
+                        draft["body"] = draft["body"].replace("tag=AP3000M-build-123-1", "tag=AP3000M-build-99-1")
+                    if case == "manual":
+                        draft["body"] = "manual"
+                    elif case == "other-attempt":
+                        draft["body"] = draft["body"].replace("attempt=1", "attempt=2")
+                    elif case == "published":
+                        draft["draft"] = False
+                    pages = [[draft, draft] if case == "ambiguous" else [draft]]
+                    current = dict(draft, draft=False) if case == "published-during-check" else draft
+                    path = Path(directory) / "test.sh"
+                    path.write_text('''
 set -eu
 jq() { "$OTA_TEST_JQ" "$@"; }
 gh() {
@@ -114,15 +143,15 @@ gh() {
     esac
 }
 ''' + script["run"], encoding="utf-8", newline="\n")
-                env = dict(os.environ, GITHUB_REPOSITORY=REPO, GITHUB_RUN_ID="123", GITHUB_RUN_ATTEMPT="1",
-                           GITHUB_SHA=SHA, RELEASE_TAG=self.release["tag_name"], OTA_TEST_JQ=Path(JQ).as_posix(),
-                           PAGES=json.dumps(pages), DETAIL=json.dumps(current))
-                result = subprocess.run([BASH, path.as_posix()], cwd=directory, env=env, capture_output=True, text=True)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                deleted = Path(directory) / "deleted"
-                self.assertEqual(deleted.exists(), case == "owned")
-                if deleted.exists():
-                    self.assertEqual(deleted.read_text(), "api --method DELETE repos/owner/repo/releases/10")
+                    env = dict(os.environ, GITHUB_REPOSITORY=REPO, GITHUB_RUN_ID="123", GITHUB_RUN_ATTEMPT="1",
+                               GITHUB_SHA=SHA, BUILD_SHA="b" * 40, RELEASE_TAG=draft["tag_name"],
+                               OTA_TEST_JQ=Path(JQ).as_posix(), PAGES=json.dumps(pages), DETAIL=json.dumps(current))
+                    result = subprocess.run([BASH, path.as_posix()], cwd=directory, env=env, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    deleted = Path(directory) / "deleted"
+                    self.assertEqual(deleted.exists(), case == "owned")
+                    if deleted.exists():
+                        self.assertEqual(deleted.read_text(), "api --method DELETE repos/owner/repo/releases/10")
 
 
 if __name__ == "__main__":

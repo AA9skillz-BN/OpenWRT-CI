@@ -45,6 +45,17 @@ operation_state() {
 		'{action:$action,state:$state,detail:$detail}' > "$OP_FILE.tmp" && mv -f "$OP_FILE.tmp" "$OP_FILE"
 }
 
+operation_exit() {
+	local rc=$?
+	if [ "$rc" -ne 0 ]; then
+		operation_state failed "$(tail -c 1200 "$OP_LOG" 2>/dev/null)"
+		if [ "$ACTION" = download ] || [ -s "$DL_TAG_FILE" ]; then
+			rm -f "$DL_TAG_FILE"
+			printf 'failed 下载失败，见任务详情\n' > "$DL_RESULT_FILE"
+		fi
+	fi
+}
+
 # @ota task
 run_operation() {
 	ACTION="$1"; shift

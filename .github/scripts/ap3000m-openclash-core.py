@@ -100,6 +100,13 @@ def unpack(archive, snapshot):
     return binary
 
 
+def append_compatibility_note(reports_dir, note):
+    compat = reports_dir / "compatibility.txt"
+    existing = compat.read_text(encoding="utf-8") if compat.exists() else ""
+    if note not in existing:
+        compat.write_text(existing + note.rstrip("\n") + "\n", encoding="utf-8", newline="\n")
+
+
 def install(repo, tree, mode, device="AP3000M", reports=None):
     if device not in ("AP3000M", "TR3000-512"):
         raise ValueError("Unsupported OpenClash core device")
@@ -115,6 +122,7 @@ def install(repo, tree, mode, device="AP3000M", reports=None):
     reports_dir = Path(reports or os.environ.get("WRT_BUILD_REPORTS") or (repo / "build-reports"))
     reports_dir.mkdir(parents=True, exist_ok=True)
     effective_mode = mode
+    fallback_reason = None
     preview = replay(repo)
     expected = preview["mihomo"] if preview is not None else None
     if expected is not None:
@@ -128,6 +136,9 @@ def install(repo, tree, mode, device="AP3000M", reports=None):
         base = "https://github.com/" + REPOSITORY + "/releases/download/" + snapshot["tag"] + "/"
         binary = unpack(fetch(base + snapshot["asset"], MAX_ARCHIVE), snapshot)
         if mode == "auto" and effective_mode == "locked":
+            fallback_reason = expected.get("fallback_reason")
+            detail = f"预检中最新正式版校验未通过（{fallback_reason}），" if fallback_reason else "预检中最新正式版校验未通过，"
+            append_compatibility_note(reports_dir, f"- OpenClash Mihomo 内核：{detail}按预检复用锁版本 `{snapshot['tag']}`。")
             print(f"{device} OpenClash core: replaying the preview's locked fallback {snapshot['tag']}", flush=True)
     elif mode == "auto":
         try:
@@ -137,17 +148,17 @@ def install(repo, tree, mode, device="AP3000M", reports=None):
             effective_mode = "latest"
         except (ValueError, OSError) as exc:
             reason = str(exc).strip() or exc.__class__.__name__
+            fallback_reason = reason
             print(f"::warning::{device} OpenClash core: latest release incompatible ({reason}); "
                   f"falling back to locked {lock_data.get('tag')}", flush=True)
             snapshot = resolve(lock_data, "locked")
             base = "https://github.com/" + REPOSITORY + "/releases/download/" + snapshot["tag"] + "/"
             binary = unpack(fetch(base + snapshot["asset"], MAX_ARCHIVE), snapshot)
             effective_mode = "locked"
-            compat = reports_dir / "compatibility.txt"
-            existing = compat.read_text(encoding="utf-8") if compat.exists() else ""
-            note = f"- OpenClash Mihomo 内核：最新正式版校验未通过（{reason}），已自动回退至锁版本 `{snapshot['tag']}`。\n"
-            if note not in existing:
-                compat.write_text(existing + note, encoding="utf-8", newline="\n")
+            append_compatibility_note(
+                reports_dir,
+                f"- OpenClash Mihomo 内核：最新正式版校验未通过（{reason}），已自动回退至锁版本 `{snapshot['tag']}`。",
+            )
     else:
         snapshot = resolve(lock_data, mode)
         base = "https://github.com/" + REPOSITORY + "/releases/download/" + snapshot["tag"] + "/"
@@ -160,6 +171,8 @@ def install(repo, tree, mode, device="AP3000M", reports=None):
               "source": "https://github.com/" + REPOSITORY + "/tree/" + snapshot["tag"],
               "source_archive": "https://github.com/" + REPOSITORY + "/archive/refs/tags/" + snapshot["tag"] + ".tar.gz",
               "license_url": license_url, "license_sha256": hashlib.sha256(license_text).hexdigest()}
+    if fallback_reason is not None:
+        record["fallback_reason"] = fallback_reason
     if expected is not None and record != expected:
         raise ValueError("OpenClash core binary or license differs from the verified preview")
     recipe.write_text(adapted_recipe, encoding="utf-8", newline="\n")

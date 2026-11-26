@@ -204,6 +204,18 @@ curl() {
         result = self.shell("run_operation upgrade --yes", [self.release()])
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_free_kb_uses_posix_single_line_df_output(self):
+        actual = CLI[CLI.index("free_kb() {"):CLI.index("\n# ---------- 子命令 ----------")]
+        result = self.shell(actual + '''
+df() {
+    [ "$1" = "-Pk" ] || return 1
+    printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n/dev/very/long/external/device/path 100000 20000 80000 20%% /tmp/tr3000-ota\\n'
+}
+free_kb
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "80000")
+
     def test_bad_download_and_legacy_metadata_cannot_become_valid_offline_copy(self):
         self.root.joinpath("corrupt").touch()
         result = self.shell("cmd_download", [self.release()])

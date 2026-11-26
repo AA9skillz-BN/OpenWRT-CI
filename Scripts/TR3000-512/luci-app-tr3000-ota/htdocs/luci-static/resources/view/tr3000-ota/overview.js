@@ -2,6 +2,7 @@
 'require view';
 'require poll';
 'require rpc';
+'require ui';
 
 var callStatus = rpc.declare({ object: 'luci.tr3000_ota', method: 'status', expect: {} });
 var callCheck = rpc.declare({ object: 'luci.tr3000_ota', method: 'check', expect: {} });
@@ -24,7 +25,23 @@ function fmtTime(epoch) {
 	if (!epoch)
 		return '';
 	var d = new Date(Number(epoch) * 1000);
-	return d.toLocaleString();
+	return isNaN(d.getTime()) ? '' : d.toLocaleString();
+}
+
+function fmtLastResult(raw, prefix) {
+	if (!raw)
+		return '';
+	var parts = String(raw).trim().split(/\s+/);
+	if (parts[0] === 'success' && parts.length >= 3) {
+		var t = fmtTime(parts[parts.length - 1]);
+		return '上次升级成功：' + shortTag(parts[1], prefix) + (t ? '（' + t + '）' : '');
+	}
+	if (parts[0] === 'failed' && parts.length >= 2) {
+		var ts = fmtTime(parts[parts.length - 1]);
+		var detail = parts.slice(1, ts ? -1 : parts.length).join(' ');
+		return '上次升级异常：' + detail + (ts ? '（' + ts + '）' : '');
+	}
+	return '上次升级结果：' + raw;
 }
 
 return view.extend({
@@ -34,7 +51,7 @@ return view.extend({
 
 	render: function(status) {
 		var st = status || {};
-		var latest = null, submitted = false, readonly = this.readonly === true;
+		var latest = null, submitted = false, confirming = false, readonly = this.readonly === true;
 		var prefix = st.tag_prefix || 'TR3000 512MB-';
 
 		var curVal   = E('span', { 'class': 'label' }, st.current || '未知');
@@ -43,28 +60,31 @@ return view.extend({
 		var sizeVal  = E('span', {}, '—');
 		var stateVal = E('span', {}, '空闲');
 		var msgVal   = E('div', { 'class': 'cbi-value-description' }, '');
+		var lastVal  = E('div', { 'class': 'cbi-value-description' }, '');
 
-		var barFill = E('div', { 'style': 'height:100%;width:0%;background:#2b8cf0;transition:width .3s' }, '');
+		var barFill = E('div', {
+			'style': 'height:100%;width:0%;background:var(--brand, #2b8cf0);transition:width .3s'
+		}, '');
 		var barWrap = E('div', {
-			'style': 'height:10px;background:#e6e6e6;border-radius:5px;overflow:hidden;margin:.3em 0'
+			'style': 'height:10px;background:var(--surface-sunken, rgba(127,127,127,.2));border-radius:5px;overflow:hidden;margin:.3em 0'
 		}, [ barFill ]);
 
-		var btnCheck = E('button', { 'class': 'cbi-button cbi-button-action' }, '检查更新');
-		var btnDownload = E('button', { 'class': 'cbi-button cbi-button-action', 'disabled': 'disabled' }, '下载并校验');
-		var btnKeep = E('button', { 'class': 'cbi-button cbi-button-apply', 'disabled': 'disabled' }, '升级（保留配置）');
-		var btnWipe = E('button', { 'class': 'cbi-button cbi-button-remove', 'disabled': 'disabled' }, '升级（不保留配置）');
+		var btnCheck = E('button', { 'class': 'cbi-button cbi-button-action', 'type': 'button' }, '检查更新');
+		var btnDownload = E('button', { 'class': 'cbi-button cbi-button-action', 'type': 'button', 'disabled': 'disabled' }, '下载并校验');
+		var btnKeep = E('button', { 'class': 'cbi-button cbi-button-apply', 'type': 'button', 'disabled': 'disabled' }, '升级（保留配置）');
+		var btnWipe = E('button', { 'class': 'cbi-button cbi-button-remove', 'type': 'button', 'disabled': 'disabled' }, '升级（不保留配置）');
 
 		var selRollback = E('select', { 'style': 'min-width:22em' }, [
 			E('option', { 'value': '' }, '（无本地镜像）')
 		]);
-		var btnRollback = E('button', { 'class': 'cbi-button cbi-button-action', 'disabled': 'disabled' }, '回滚到该版本');
+		var btnRollback = E('button', { 'class': 'cbi-button cbi-button-action', 'type': 'button', 'disabled': 'disabled' }, '回滚到该版本');
 
 		var chkKeep = E('input', { 'type': 'checkbox', 'checked': st.keep_config ? 'checked' : null });
 		var chkMirror = E('input', { 'type': 'checkbox', 'checked': st.use_mirror ? 'checked' : null });
 
 		function setMsg(text, isError) {
 			msgVal.textContent = text || '';
-			msgVal.style.color = isError ? '#c00' : '#333';
+			msgVal.style.color = isError ? 'var(--danger, #dc2626)' : '';
 		}
 
 		function localImages() {
@@ -74,14 +94,16 @@ return view.extend({
 
 		function refreshButtons() {
 			var downloading = !!st.downloading || !!(st.operation && [ 'running', 'flashing', 'switching' ].indexOf(st.operation.state) >= 0);
-			var disabled = st.enabled === false || readonly || submitted || !!st.error;
+			var disabled = st.enabled === false || readonly || submitted || confirming || !!st.error;
 			btnCheck.disabled = disabled || downloading;
 			chkKeep.disabled = disabled || downloading;
 			chkMirror.disabled = disabled || downloading;
 			var target = (latest && latest.latest) || st.downloading;
+			var downloaded = !downloading && !!target && (st.images || []).indexOf(target) >= 0;
 			var ready = !downloading && !!target && st.ota_ready === true;
 
-			btnDownload.disabled = disabled || downloading || !latest;
+			btnDownload.textContent = downloaded ? '已下载校验' : '下载并校验';
+			btnDownload.disabled = disabled || downloading || !latest || downloaded;
 			btnKeep.disabled = disabled || !ready;
 			btnWipe.disabled = disabled || !ready;
 
@@ -111,6 +133,7 @@ return view.extend({
 			if (st.operation && ['completed', 'failed'].indexOf(st.operation.state) >= 0) submitted = false;
 			prefix = st.tag_prefix || prefix;
 			curVal.textContent = st.current || '未知';
+			lastVal.textContent = fmtLastResult(st.last_result, prefix);
 
 			if (st.downloading) {
 				var pct = st.download_size > 0 ? Math.floor(st.download_bytes * 100 / st.download_size) : 0;
@@ -182,8 +205,43 @@ return view.extend({
 			callDownload(latest.latest).then(function(r) { taskAccepted(r, 'download'); }).catch(taskFailed);
 		});
 
-		function confirmUpgrade(text) {
-			return confirm(text + '\n\n校验通过后设备将重启，期间请勿断电。继续？');
+		function confirmUpgrade(title, text, onConfirm) {
+			if (confirming || submitted)
+				return;
+			if (typeof ui !== 'undefined' && ui && typeof ui.showModal === 'function') {
+				confirming = true;
+				refreshButtons();
+				function finish(ok) {
+					confirming = false;
+					ui.hideModal();
+					if (ok) {
+						onConfirm();
+					}
+					else {
+						refreshButtons();
+					}
+				}
+				ui.showModal(title, [
+					E('p', {}, text),
+					E('p', { 'class': 'cbi-value-description' }, '校验通过后设备将自动重启，刷写期间请勿断电。'),
+					E('div', { 'class': 'right' }, [
+						E('button', {
+							'class': 'cbi-button',
+							'type': 'button',
+							'click': function() { finish(false); }
+						}, '取消'),
+						' ',
+						E('button', {
+							'class': 'cbi-button cbi-button-apply',
+							'type': 'button',
+							'click': function() { finish(true); }
+						}, '确认继续')
+					])
+				]);
+				return;
+			}
+			if (confirm(text + '\n\n校验通过后设备将重启，期间请勿断电。继续？'))
+				onConfirm();
 		}
 
 		function taskFailed(e) {
@@ -204,21 +262,32 @@ return view.extend({
 
 		function upgradeLatest(keep) {
 			var tag = latest && latest.latest;
-			if ((keep ? btnKeep : btnWipe).disabled || !tag || !confirmUpgrade('将升级到 ' + tag + (keep ? '，保留当前配置。' : '，并清空所有配置。')))
+			if ((keep ? btnKeep : btnWipe).disabled || !tag)
 				return;
-			submitted = true; refreshButtons();
-			callUpgrade(keep, tag).then(taskAccepted).catch(taskFailed);
+			confirmUpgrade(
+				keep ? '确认升级固件' : '确认清空配置升级',
+				'将升级到 ' + tag + (keep ? '，并保留当前配置。' : '，并清空 Wi-Fi、密码与全部插件配置！'),
+				function() {
+					submitted = true; refreshButtons();
+					callUpgrade(keep, tag).then(taskAccepted).catch(taskFailed);
+				}
+			);
 		}
 		btnKeep.addEventListener('click', function() { upgradeLatest(true); });
 		btnWipe.addEventListener('click', function() { upgradeLatest(false); });
 
 		btnRollback.addEventListener('click', function() {
 			var tag = selRollback.value;
-			if (btnRollback.disabled || !tag || !confirmUpgrade('将回滚到 ' + shortTag(tag, prefix) + '，重新校验本地镜像，' +
-				(chkKeep.checked ? '保留当前配置。' : '并清空配置。')))
+			if (btnRollback.disabled || !tag)
 				return;
-			submitted = true; refreshButtons();
-			callUpgradeTag(tag, chkKeep.checked).then(taskAccepted).catch(taskFailed);
+			confirmUpgrade(
+				'确认回滚固件版本',
+				'将回滚到 ' + shortTag(tag, prefix) + '，重新校验本地镜像，' + (chkKeep.checked ? '并保留当前配置。' : '并清空配置！'),
+				function() {
+					submitted = true; refreshButtons();
+					callUpgradeTag(tag, chkKeep.checked).then(taskAccepted).catch(taskFailed);
+				}
+			);
 		});
 
 		chkKeep.addEventListener('change', function() { callSettings(chkKeep.checked, chkMirror.checked); });
@@ -261,7 +330,7 @@ return view.extend({
 					E('div', { 'class': 'cbi-value-field' }, [ selRollback, ' ', btnRollback ])
 				]),
 				msgVal,
-				st.last_result ? E('div', { 'class': 'cbi-value-description' }, '上次升级结果：' + st.last_result) : ''
+				lastVal
 			]),
 			E('div', { 'class': 'cbi-section' }, [
 				E('h3', {}, '选项'),

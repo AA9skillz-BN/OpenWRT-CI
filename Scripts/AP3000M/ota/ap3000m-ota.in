@@ -102,13 +102,6 @@ verified_local() (
 )
 
 # @ota task_state
-operation_exit() {
-	local rc=$?
-	if [ "$rc" -ne 0 ]; then
-		operation_state failed "$(tail -c 1200 "$OP_LOG" 2>/dev/null)"
-		[ "$ACTION" != download ] || { rm -f "$DL_TAG_FILE"; printf 'failed 下载失败，见任务详情\n' > "$DL_RESULT_FILE"; }
-	fi
-}
 
 # @ota task
 # 输出：<tag> <文件名> <大小> <sha256>（空行表示无匹配）
@@ -271,7 +264,11 @@ cmd_download() {
 		fi
 	fi
 
-	[ "$(wc -c < "$PART" | tr -d ' ')" = "$SIZE" ] || die "下载文件大小与 Release 不符"
+	if [ "$(wc -c < "$PART" | tr -d ' ')" != "$SIZE" ]; then
+		rm -f "$PART" "$DL_TAG_FILE"
+		printf 'failed 下载文件大小与 Release 不符\n' > "$DL_RESULT_FILE"
+		die "下载文件大小与 Release 不符"
+	fi
 	if ! printf '%s  %s\n' "$SHA" "$PART" | sha256sum -c - >/dev/null 2>&1; then
 		rm -f "$PART" "$DL_TAG_FILE"
 		printf 'failed sha256 校验失败\n' > "$DL_RESULT_FILE"

@@ -9,6 +9,8 @@ import subprocess
 
 MODELS = {"ap3000m", "tr3000-512"}
 WORKFLOWS = {"ap3000m": "AP3000M.yml", "tr3000-512": "TR3000.yml"}
+RECOVERY_WORKFLOW = "RELEASE-EXISTING.yml"
+TAG_RUN_SUFFIX = re.compile(r"-[1-9][0-9]*-[1-9][0-9]*$")
 OWNER = re.compile(r"<!-- firmware-ci: repo=([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+) "
                    r"run=([1-9][0-9]*) attempt=([1-9][0-9]*) sha=([0-9a-f]{40}) "
                    r"tag=([A-Za-z0-9._-]+) started=([^\s]+) -->")
@@ -30,7 +32,7 @@ def draft_owner(release, repo):
     if len(matches) != 1:
         return None
     owner, run, attempt, sha, tag, started = matches[0]
-    if owner != repo or tag != release["tag_name"] or not tag.endswith(f"-{run}-{attempt}"):
+    if owner != repo or tag != release["tag_name"] or not TAG_RUN_SUFFIX.search(tag):
         return None
     try:
         return {"run": run, "attempt": attempt, "sha": sha, "started": timestamp(started)}
@@ -42,11 +44,18 @@ def stale_draft(release, repo, run, now=None):
     owner = draft_owner(release, repo)
     if not owner:
         return False
+    workflow = (run.get("path") or "").split("@", 1)[0]
+    device_workflow = ".github/workflows/" + WORKFLOWS[model_of(release)]
+    recovery_workflow = ".github/workflows/" + RECOVERY_WORKFLOW
+    if workflow == device_workflow:
+        if not release["tag_name"].endswith(f"-{owner['run']}-{owner['attempt']}"):
+            return False
+    elif workflow != recovery_workflow:
+        return False
     if (str(run.get("id")) != owner["run"] or str(run.get("run_attempt")) != owner["attempt"]
             or run.get("head_sha") != owner["sha"] or run.get("status") != "completed"
             or run.get("conclusion") not in {"failure", "cancelled", "timed_out", "startup_failure", "stale"}
-            or (run.get("head_repository") or {}).get("full_name", "").lower() != repo.lower()
-            or (run.get("path") or "").split("@", 1)[0] != ".github/workflows/" + WORKFLOWS[model_of(release)]):
+            or (run.get("head_repository") or {}).get("full_name", "").lower() != repo.lower()):
         return False
     try:
         # Release.created_at can be the source commit's date, not draft creation.

@@ -58,7 +58,7 @@ jobs:
         RELEASE_TAG: ${{steps.source.outputs.tag}}
       run: |
         printf '\n<!-- firmware-ci: repo=%s run=%s attempt=%s sha=%s tag=%s started=%s -->\n' \
-          "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$BUILD_SHA" \
+          "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_SHA" \
           "$RELEASE_TAG" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> ./release/build-reports/release-notes.md
     - name: Create validated draft
       id: release
@@ -87,7 +87,7 @@ jobs:
         # Draft creation can succeed before attachment upload finishes.
         # Match this exact run/attempt; never delete a published or manual draft.
         gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" > releases.json
-        marker="<!-- firmware-ci: repo=$GITHUB_REPOSITORY run=$GITHUB_RUN_ID attempt=$GITHUB_RUN_ATTEMPT sha=$BUILD_SHA tag=$RELEASE_TAG started="
+        marker="<!-- firmware-ci: repo=$GITHUB_REPOSITORY run=$GITHUB_RUN_ID attempt=$GITHUB_RUN_ATTEMPT sha=$GITHUB_SHA tag=$RELEASE_TAG started="
         id=$(jq -r --arg tag "$RELEASE_TAG" --arg marker "$marker" \
           '[.[][] | select(.draft == true and .tag_name == $tag and ((.body // "") | contains($marker)))]
            | if length == 1 then .[0].id else empty end' releases.json)

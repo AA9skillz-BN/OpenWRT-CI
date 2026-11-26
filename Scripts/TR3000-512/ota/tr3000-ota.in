@@ -126,16 +126,6 @@ verified_local() (
 )
 
 # @ota task_state
-operation_exit() {
-	local rc=$?
-	if [ "$rc" -ne 0 ]; then
-		operation_state failed "$(tail -c 1200 "$OP_LOG" 2>/dev/null)"
-		if [ "$ACTION" = download ] || [ -s "$DL_TAG_FILE" ]; then
-			rm -f "$DL_TAG_FILE"
-			printf 'failed 下载失败，见任务详情\n' > "$DL_RESULT_FILE"
-		fi
-	fi
-}
 
 # @ota task
 # 输出：<tag> <文件名> <大小> <sha256>（空行表示无匹配）
@@ -166,7 +156,7 @@ list_tags() {
 # @ota download_helpers
 
 free_kb() {
-	df -k "$(work_dir)" 2>/dev/null | awk 'NR==2 {print $4}'
+	df -Pk "$(work_dir)" 2>/dev/null | awk 'NR==2 {print $4}'
 }
 
 # ---------- 子命令 ----------
