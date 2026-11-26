@@ -17,6 +17,22 @@ COUNTRY_AP3000M = (
 )
 
 
+TR3000_IFACE = """			set_section(iface, 'wifi-iface', {
+				device: name, network: 'lan', mode: 'ap',
+				ssid: defaults?.ssid || (ap_defaults ? default_ssid(band_name, rband.default_channel ?? band.default_channel) : 'OWRT'),
+				encryption: defaults?.encryption || (sae ? 'sae+ccmp' : 'psk2+ccmp'),
+				ieee80211w: sae ? '2' : null,
+				key: defaults?.key || (ap_defaults && preset ? preset.key : '12345678'), disabled: needs_country ? '1' : '0'
+			});"""
+TR3000_IFACE_DEFAULTS = """			set_section(iface, 'wifi-iface', {{
+				device: name, network: 'lan', mode: 'ap',
+				ssid: {ssid},
+				encryption: band_name == '6G' ? 'sae+ccmp' : 'psk2+ccmp',
+				ieee80211w: band_name == '6G' ? '2' : null,
+				key: {key}, disabled: needs_country ? '1' : '0'
+			}});"""
+
+
 def uci_literal(value):
     # The ucode template emits UCI batch commands, so quote for UCI first,
     # then encode the complete value as an ordinary ucode string expression.
@@ -29,6 +45,16 @@ def patch_generator(source, ssid, password, ap3000m_radio_defaults=False):
         raise ValueError("Wi-Fi SSID must be 1..32 UTF-8 bytes without control characters")
     if not 8 <= len(password) <= 63 or any(not 32 <= ord(char) <= 126 for char in password):
         raise ValueError("Wi-Fi passphrase must be 8..63 printable ASCII characters")
+    if not ap3000m_radio_defaults and "set_section(iface, 'wifi-iface', {" in source:
+        replacement = TR3000_IFACE_DEFAULTS.format(ssid=json.dumps(ssid, ensure_ascii=False),
+                                                  key=json.dumps(password, ensure_ascii=False))
+        if source.count("set_section(iface, 'wifi-iface', {") != 1:
+            raise ValueError("TR3000 Wi-Fi interface block duplicated; review upstream")
+        if replacement in source:
+            return source
+        if source.count(TR3000_IFACE) != 1:
+            raise ValueError("TR3000 Wi-Fi interface block changed; review upstream")
+        return source.replace(TR3000_IFACE, replacement, 1)
     text = source
     if ap3000m_radio_defaults:
         # wpad-basic-mbedtls supports HE160, mu_beamformer and SAE mixed mode,

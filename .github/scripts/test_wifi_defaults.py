@@ -36,6 +36,14 @@ def upstreams():
     return sources
 
 
+@lru_cache(maxsize=1)
+def tr_router_generator():
+    commit = "f814b1b2c6c279579e3218c2e695ae64c7fd740e"
+    source = f"https://raw.githubusercontent.com/VIKINGYFY/immortalwrt/{commit}/{wifi.GENERATOR.as_posix()}"
+    with urllib.request.urlopen(source, timeout=60) as response:
+        return response.read().decode("utf-8")
+
+
 def board():
     wlan = {}
     for index, band in enumerate(("2G", "5G")):
@@ -58,6 +66,17 @@ def assignments(output):
 
 
 class WifiPatchTests(unittest.TestCase):
+    def test_tr_uci_generator_only_patches_reviewed_interface_block(self):
+        source = tr_router_generator()
+        changed = wifi.patch_generator(source, "TR3000", "12345678")
+        self.assertEqual(changed, wifi.patch_generator(changed, "TR3000", "12345678"))
+        self.assertEqual(changed.replace(wifi.TR3000_IFACE_DEFAULTS.format(
+            ssid='"TR3000"', key='"12345678"'), wifi.TR3000_IFACE), source)
+        for broken in (source.replace("key: defaults?.key", "password: defaults?.key"),
+                       source + wifi.TR3000_IFACE):
+            with self.assertRaisesRegex(ValueError, "review upstream"):
+                wifi.patch_generator(broken, "TR3000", "12345678")
+
     def test_both_locked_sources_patch_repeatably_without_changing_radio_detection(self):
         for name, source in upstreams().items():
             with self.subTest(source=name):
@@ -178,6 +197,52 @@ const uci = { cursor: function() { return { get_all: function() { return SAVED; 
             result = subprocess.run([UCODE, str(file)], text=True, capture_output=True, encoding="utf-8")
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout
+
+
+    def test_tr_uci_generator_sets_secure_new_radios_and_preserves_saved(self):
+        source = tr_router_generator()
+        ssid, password = "路由器 ' \\ test", "a'\"\\foo&pass"
+        source = wifi.patch_generator(source, ssid, password)
+        source = re.sub(r"(?m)^#!.*\n|^import .*\n", "", source)
+        hardware = board()
+        hardware["wlan"]["defaults"] = {"country": "CN", "ssids": {
+            "all": {"ssid": "Open board default", "encryption": "none", "key": ""}}}
+        fixture = """
+function readfile(path) { return '02:11:22:33:44:55'; }
+function open(path, mode) { return { lock: () => true, close: () => true }; }
+function stat(path) { return path == '/etc/config/wireless'; }
+function glob(path) { return []; }
+function system(argv) { return 0; }
+function connect() {}
+function json_file_read(path) { return BOARD; }
+function maximum_channel_plan(modes, blocks, options) {}
+const uci = { cursor: () => ({
+ get_all: (path) => path == '/etc/config/wireless' ? SAVED : {},
+ set: (pkg, section, key, value) => {
+   printf('%s\\n', sprintf('%J', [section, key, value]));
+   return true;
+ },
+ commit: (pkg) => true
+}) };
+"""
+        for saved in (False, True):
+            saved_radios = {f"radio{index}": {".type": "wifi-device", "path": f"platform/test/radio{index}"}
+                            for index in range(2)} if saved else {}
+            harness = fixture.replace("BOARD", json.dumps(hardware)).replace("SAVED", json.dumps(saved_radios))
+            with tempfile.TemporaryDirectory() as directory:
+                file = Path(directory) / "generate.uc"
+                file.write_text(harness + source, encoding="utf-8", newline="\n")
+                result = subprocess.run([UCODE, str(file)], capture_output=True, encoding="utf-8")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            rows = [json.loads(line) for line in result.stdout.splitlines()]
+            if saved:
+                self.assertEqual(rows, [])
+            else:
+                for index in range(2):
+                    iface = f"default_radio{index}"
+                    self.assertIn([iface, "ssid", ssid], rows)
+                    self.assertIn([iface, "encryption", "psk2+ccmp"], rows)
+                    self.assertIn([iface, "key", password], rows)
 
     def test_original_official_source_and_old_sed_reproduce_the_open_wifi_bug(self):
         source = upstreams()["AP3000M"]

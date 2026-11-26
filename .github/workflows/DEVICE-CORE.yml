@@ -311,7 +311,7 @@ jobs:
       run: |
         cd ./wrt/
 
-        make download -j$(nproc)
+        make CARGO_HOME="$HOME/.cargo" download -j$(nproc)
     - name: Compile Firmware
       id: compile
       if: ${{ !inputs.WRT_TEST }}
@@ -319,8 +319,8 @@ jobs:
         cd ./wrt/
 
         mkdir -p $GITHUB_WORKSPACE/build-reports
-        make -j$(nproc) BUILD_TIME_LOG="$GITHUB_WORKSPACE/build-reports/parallel.tsv" || \
-          make -j1 V=s BUILD_TIME_LOG="$GITHUB_WORKSPACE/build-reports/serial.tsv"
+        make CARGO_HOME="$HOME/.cargo" -j$(nproc) BUILD_TIME_LOG="$GITHUB_WORKSPACE/build-reports/parallel.tsv" || \
+          make CARGO_HOME="$HOME/.cargo" -j1 V=s BUILD_TIME_LOG="$GITHUB_WORKSPACE/build-reports/serial.tsv"
     - name: Report Toolchain Cache Reuse
       if: ${{ !inputs.WRT_TEST && always() }}
       continue-on-error: true
