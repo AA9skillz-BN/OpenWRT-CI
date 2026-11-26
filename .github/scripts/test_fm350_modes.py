@@ -22,11 +22,12 @@ class Fm350ModeTests(unittest.TestCase):
                 self.assertEqual(result.returncode == 0, success, result.stderr)
                 if success:
                     self.assertEqual(result.stdout.splitlines(), [
+                        f"/repo/Scripts/AP3000M/fancontrol/fix-confirm{suffix}.py",
                         f"/repo/Scripts/AP3000M/fm350/fix-pdp-dns{suffix}.py",
                         f"/repo/Scripts/AP3000M/fm350/fix-packaging{suffix}.py",
                     ])
                 else:
-                    self.assertIn("Unsupported FM350 plugin mode", result.stderr)
+                    self.assertIn("Unsupported AP3000M plugin mode", result.stderr)
 
 
 if __name__ == "__main__":
