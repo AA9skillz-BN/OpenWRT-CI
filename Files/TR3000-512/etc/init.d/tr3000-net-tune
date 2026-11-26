@@ -1,0 +1,35 @@
+#!/bin/sh /etc/rc.common
+# SPDX-License-Identifier: MIT
+# S99tr3000-net-tune —— 开机末尾及 network/firewall/wireless 重载后锁定 TR3000 双模调优与 AQL
+
+START=99
+USE_PROCD=1
+
+quiet_packet_steering() {
+	if [ -z "$(uci -q get network.globals.packet_steering 2>/dev/null)" ] ||
+		[ "$(uci -q get network.globals.packet_steering 2>/dev/null)" = "0" ]; then
+		/etc/init.d/packet_steering stop >/dev/null 2>&1 || true
+	fi
+}
+
+start_service() {
+	[ -x /usr/sbin/tr3000-net-tune ] || return 0
+	quiet_packet_steering
+	/usr/sbin/tr3000-net-tune apply >/dev/null 2>&1 || true
+}
+
+reload_service() {
+	[ -x /usr/sbin/tr3000-net-tune ] || return 0
+	quiet_packet_steering
+	/usr/sbin/tr3000-net-tune apply >/dev/null 2>&1 || true
+	(
+		sleep 3
+		quiet_packet_steering
+		/usr/sbin/tr3000-net-tune apply >/dev/null 2>&1 || true
+	) </dev/null >/dev/null 2>&1 &
+}
+
+service_triggers() {
+	procd_add_reload_trigger "network" "firewall" "wireless"
+	procd_add_raw_trigger "interface.*" 2500 /etc/init.d/tr3000-net-tune reload
+}

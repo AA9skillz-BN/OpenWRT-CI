@@ -20,4 +20,5 @@ for q in /sys/class/net/"$dev"/queues/rx-*/rps_flow_cnt; do
 done
 
 logger -t tr3000-rps "iface-up: RPS applied to $dev ($(cat /sys/class/net/"$dev"/queues/rx-0/rps_cpus 2>/dev/null))"
+[ ! -x /usr/sbin/tr3000-net-tune ] || /usr/sbin/tr3000-net-tune apply >/dev/null 2>&1 || true
 exit 0

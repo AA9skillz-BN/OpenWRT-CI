@@ -26,6 +26,7 @@ def load_module(name, path):
 build = load_module("canary_device_build", REPO / ".github/scripts/device-build.py")
 wifi_mod = load_module("canary_wifi_defaults", REPO / ".github/scripts/wifi-defaults.py")
 ap_sys_mod = load_module("canary_ap_sys", REPO / "Scripts/AP3000M/system-defaults.py")
+tr_sys_mod = load_module("canary_tr_sys", REPO / "Scripts/TR3000-512/system-defaults.py")
 tr_layout = load_module("canary_tr_layout", REPO / "Scripts/TR3000-512/patch-layout.py")
 openclash_mod = load_module("canary_openclash", REPO / ".github/scripts/ap3000m-openclash-core.py")
 
@@ -90,13 +91,15 @@ def check_source_anchors(label, slug, branch, lock_key, sources_lock, head_sha=N
         "TestSSID",
         "12345678",
         ap3000m_radio_defaults=(lock_key == "AP3000M"),
+        tr3000_radio_defaults=(lock_key == "TR3000-512"),
     )
+    dhcp = fetch_bytes(raw_base + "package/network/services/dnsmasq/files/dhcp.conf").decode("utf-8")
     if slug == "immortalwrt/immortalwrt":
         cg = fetch_bytes(raw_base + "package/base-files/files/bin/config_generate").decode("utf-8")
-        dhcp = fetch_bytes(raw_base + "package/network/services/dnsmasq/files/dhcp.conf").decode("utf-8")
         ap_sys_mod.patch_config_generate(cg)
         ap_sys_mod.patch_dhcp_conf(dhcp)
     else:
+        tr_sys_mod.patch_dhcp_conf(dhcp)
         with tempfile.TemporaryDirectory() as temporary:
             tree = Path(temporary)
             for name in ("target/linux/mediatek/dts/mt7981b-cudy-tr3000-v1.dts",

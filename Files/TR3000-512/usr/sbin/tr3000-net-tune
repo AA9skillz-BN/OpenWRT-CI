@@ -1,0 +1,142 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# tr3000-net-tune —— Cudy TR3000 (MT7981B) F50 转网口 (PPE+WED 硬加速) / USB 双模低延迟调优
+#
+# 设计准则：
+#   1. 当开启硬件流量卸载 (flow_offloading_hw=1, mtk_ppe + WED) 时：
+#      eth0 (F50 转网口) <-> phy1-ap0 (Wi-Fi 6) 走纯硬件 PPE+WED 零 CPU 转发；
+#      保持 eth0/eth1/phy* rps_cpus=0，避免软件 RPS IPI 干扰 skb_hnat 硬件绑定。
+#   2. 当关闭硬件卸载时，自动为 eth0/eth1/phy* 启用双核 RPS/XPS + RFS=2048。
+#   3. 当同时或切换插入 USB 网卡 (如 F50 USB 直连 usb0/eth2) 时：
+#      将 xhci-hcd 硬中断隔离至 CPU1 (mask 2)，并为 USB 网卡开启双核 RPS=3 + RFS=4096 + 20us GRO。
+#   4. 无论何种模式，均为 MT7981 Wi-Fi 6 (phy*) 收紧 AQL 空口排队上限，消除无线满载延迟抖动。
+
+set -u
+
+NET_SYS=/sys/class/net
+IEEE80211_DEBUG=/sys/kernel/debug/ieee80211
+
+log() { logger -t tr3000-net "$*" 2>/dev/null; printf '%s\n' "tr3000-net-tune: $*" >&2; }
+
+cpu_count() {
+	n=$(ls -d /sys/devices/system/cpu/cpu[0-9]* 2>/dev/null | wc -l)
+	[ "${n:-0}" -ge 1 ] || n=$(nproc 2>/dev/null || echo 1)
+	[ "$n" -ge 8 ] && n=8
+	printf '%s' "$n"
+}
+
+rps_mask() {
+	n=$(cpu_count)
+	printf '%x' $(( (1 << n) - 1 ))
+}
+
+hw_offload_active() {
+	[ "$(uci -q get firewall.@defaults[0].flow_offloading_hw 2>/dev/null)" = "1" ]
+}
+
+is_usb_netdev() {
+	ifc="$1"
+	[ -n "$ifc" ] && [ "$ifc" != "lo" ] && [ -e "$NET_SYS/$ifc/device" ] || return 1
+	case "$ifc" in
+		eth0|eth1|wlan*|phy*|br-*|bat*|docker*|veth*|tun*|tap*|wg*) return 1 ;;
+	esac
+	real=$(readlink -f "$NET_SYS/$ifc/device" 2>/dev/null || true)
+	case "$real" in
+		*/usb[0-9]*/*) return 0 ;;
+	esac
+	case "$(basename "$(readlink -f "$NET_SYS/$ifc/device/driver" 2>/dev/null)")" in
+		rndis_host|cdc_ether|cdc_ncm|cdc_eem|cdc_subset|usbnet|huawei_cdc_ncm|r8152|ax88179_178a)
+			return 0 ;;
+	esac
+	return 1
+}
+
+tune_wifi_aql() {
+	aql_done=0
+	for phy in "$IEEE80211_DEBUG"/phy*; do
+		[ -d "$phy" ] || continue
+		if [ -w "$phy/aql_threshold" ]; then
+			echo 12000 >"$phy/aql_threshold" 2>/dev/null
+		fi
+		if [ -w "$phy/aql_txq_limit" ]; then
+			echo "0 1500 3000" >"$phy/aql_txq_limit" 2>/dev/null
+			echo "1 2000 4000" >"$phy/aql_txq_limit" 2>/dev/null
+			echo "2 2500 5000" >"$phy/aql_txq_limit" 2>/dev/null
+			echo "3 2000 4000" >"$phy/aql_txq_limit" 2>/dev/null
+			aql_done=$((aql_done + 1))
+		fi
+	done
+	printf '%s' "$aql_done"
+}
+
+apply_tuning() {
+	mask=$(rps_mask)
+	aql_cnt=$(tune_wifi_aql)
+	mode="sw-rps"
+
+	# xhci-hcd (USB 3.0) 始终隔离到 CPU1，与 CPU0 上的 mt7915e 错核
+	if [ "$(cpu_count)" -ge 2 ]; then
+		for irq in $(awk '/xhci-hcd/ {sub(/:/, "", $1); print $1}' /proc/interrupts 2>/dev/null); do
+			[ -w "/proc/irq/$irq/smp_affinity" ] && echo 2 >"/proc/irq/$irq/smp_affinity" 2>/dev/null || true
+		done
+	fi
+
+	if hw_offload_active; then
+		mode="hw-ppe-wed"
+		for d in eth0 eth1 phy0-ap0 phy1-ap0; do
+			[ -d "$NET_SYS/$d" ] || continue
+			for f in "$NET_SYS/$d"/queues/rx-*/rps_cpus; do [ -w "$f" ] && echo 0 >"$f" 2>/dev/null || true; done
+			for f in "$NET_SYS/$d"/queues/rx-*/rps_flow_cnt; do [ -w "$f" ] && echo 0 >"$f" 2>/dev/null || true; done
+			for f in "$NET_SYS/$d"/queues/tx-*/xps_cpus; do [ -w "$f" ] && echo 0 >"$f" 2>/dev/null || true; done
+		done
+	else
+		for d in eth0 eth1 phy0-ap0 phy1-ap0; do
+			[ -d "$NET_SYS/$d" ] || continue
+			for f in "$NET_SYS/$d"/queues/rx-*/rps_cpus; do [ -w "$f" ] && echo "$mask" >"$f" 2>/dev/null || true; done
+			for f in "$NET_SYS/$d"/queues/rx-*/rps_flow_cnt; do [ -w "$f" ] && echo 2048 >"$f" 2>/dev/null || true; done
+			for f in "$NET_SYS/$d"/queues/tx-*/xps_cpus; do [ -w "$f" ] && echo "$mask" >"$f" 2>/dev/null || true; done
+		done
+	fi
+
+	if [ -d "$NET_SYS/eth0" ]; then
+		[ -w "$NET_SYS/eth0/gro_flush_timeout" ] && echo 0 >"$NET_SYS/eth0/gro_flush_timeout" 2>/dev/null || true
+		[ -w "$NET_SYS/eth0/napi_defer_hard_irqs" ] && echo 0 >"$NET_SYS/eth0/napi_defer_hard_irqs" 2>/dev/null || true
+		ip link set dev eth0 txqueuelen 1500 2>/dev/null || true
+	fi
+
+	# 动态识别所有 USB 网卡（usb0/eth2 等），为其开启双核 RPS/RFS + 20us GRO
+	usb_cnt=0
+	for path in "$NET_SYS"/*; do
+		[ -d "$path" ] || continue
+		udev="${path##*/}"
+		is_usb_netdev "$udev" || continue
+		for f in "$NET_SYS/$udev"/queues/rx-*/rps_cpus; do [ -w "$f" ] && echo "$mask" >"$f" 2>/dev/null || true; done
+		for f in "$NET_SYS/$udev"/queues/rx-*/rps_flow_cnt; do [ -w "$f" ] && echo 4096 >"$f" 2>/dev/null || true; done
+		for f in "$NET_SYS/$udev"/queues/tx-*/xps_cpus; do [ -w "$f" ] && echo "$mask" >"$f" 2>/dev/null || true; done
+		[ -w "$NET_SYS/$udev/gro_flush_timeout" ] && echo 20000 >"$NET_SYS/$udev/gro_flush_timeout" 2>/dev/null || true
+		[ -w "$NET_SYS/$udev/napi_defer_hard_irqs" ] && echo 2 >"$NET_SYS/$udev/napi_defer_hard_irqs" 2>/dev/null || true
+		ip link set dev "$udev" txqueuelen 2000 2>/dev/null || true
+		usb_cnt=$((usb_cnt + 1))
+	done
+
+	log "已应用：mode=$mode aql_phy=$aql_cnt usb_wan=$usb_cnt eth0_txq=$(cat "$NET_SYS/eth0/tx_queue_len" 2>/dev/null)"
+}
+
+show_status() {
+	printf 'mode=%s\n' "$(hw_offload_active && echo hw-ppe-wed || echo sw-rps)"
+	printf 'eth0_rps=%s eth0_txq=%s\n' "$(cat "$NET_SYS/eth0/queues/rx-0/rps_cpus" 2>/dev/null)" "$(cat "$NET_SYS/eth0/tx_queue_len" 2>/dev/null)"
+	printf 'aql_threshold_phy1=%s\n' "$(cat "$IEEE80211_DEBUG"/phy1/aql_threshold 2>/dev/null)"
+	printf 'cc=%s qdisc=%s rmem_max=%s liberal=%s slow_start_idle=%s notsent_lowat=%s\n' \
+		"$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)" \
+		"$(sysctl -n net.core.default_qdisc 2>/dev/null)" \
+		"$(sysctl -n net.core.rmem_max 2>/dev/null)" \
+		"$(sysctl -n net.netfilter.nf_conntrack_tcp_be_liberal 2>/dev/null)" \
+		"$(sysctl -n net.ipv4.tcp_slow_start_after_idle 2>/dev/null)" \
+		"$(sysctl -n net.ipv4.tcp_notsent_lowat 2>/dev/null)"
+}
+
+case "${1:-apply}" in
+	apply)  apply_tuning ;;
+	status) show_status ;;
+	*) printf '用法: %s [apply|status]\n' "$0" >&2; exit 2 ;;
+esac

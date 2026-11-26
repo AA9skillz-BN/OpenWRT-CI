@@ -144,6 +144,33 @@
       "executable": true
     },
     {
+      "path": "/etc/hotplug.d/iface/30-tr3000-rps",
+      "source": "Files/TR3000-512/etc/hotplug.d/iface/30-tr3000-rps",
+      "executable": true
+    },
+    {
+      "path": "/usr/sbin/tr3000-net-tune",
+      "source": "Files/TR3000-512/usr/sbin/tr3000-net-tune",
+      "executable": true
+    },
+    {
+      "path": "/etc/init.d/tr3000-net-tune",
+      "source": "Files/TR3000-512/etc/init.d/tr3000-net-tune",
+      "executable": true
+    },
+    {
+      "path": "/etc/rc.d/S99tr3000-net-tune",
+      "executable": true
+    },
+    {
+      "path": "/etc/sysctl.d/99-tr3000-tune.conf",
+      "source": "Files/TR3000-512/etc/sysctl.d/99-tr3000-tune.conf"
+    },
+    {
+      "path": "/etc/config/dhcp",
+      "build_source": "package/network/services/dnsmasq/files/dhcp.conf"
+    },
+    {
       "path": "/lib/wifi/mac80211.uc",
       "build_source": "package/network/config/wifi-scripts/files/lib/wifi/mac80211.uc"
     },

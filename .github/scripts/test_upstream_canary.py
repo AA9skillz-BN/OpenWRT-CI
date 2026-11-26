@@ -17,8 +17,10 @@ class UpstreamCanaryFormatTests(unittest.TestCase):
             (layout.replace(b"4000000", b"8000000"), recipe, "Unexpected upstream UBI layout"),
             (layout, recipe.replace(b"65536k", b"131072k"), "Unexpected TR3000-v1 layout setting"),
         ):
-            files = {"mac80211.uc": b"", "mt7981b-cudy-tr3000-v1.dts": dts, "filogic.mk": image}
+            files = {"mac80211.uc": b"", "dhcp.conf": b"", "mt7981b-cudy-tr3000-v1.dts": dts,
+                     "filogic.mk": image}
             with patch.object(canary.wifi_mod, "patch_generator"), patch.object(
+                    canary.tr_sys_mod, "patch_dhcp_conf"), patch.object(
                     canary, "fetch_bytes", side_effect=lambda url: files[url.rsplit("/", 1)[1]]):
                 with self.assertRaisesRegex(ValueError, error):
                     canary.check_source_anchors("TR3000", "VIKINGYFY/immortalwrt", "owrt",

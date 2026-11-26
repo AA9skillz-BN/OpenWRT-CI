@@ -72,6 +72,16 @@ class WifiPatchTests(unittest.TestCase):
         self.assertEqual(changed, wifi.patch_generator(changed, "TR3000", "12345678"))
         self.assertEqual(changed.replace(wifi.TR3000_IFACE_DEFAULTS.format(
             ssid='"TR3000"', key='"12345678"'), wifi.TR3000_IFACE), source)
+        radio_patched = wifi.patch_generator(source, "TR3000", "12345678", tr3000_radio_defaults=True)
+        self.assertEqual(radio_patched, wifi.patch_generator(radio_patched, "TR3000", "12345678", tr3000_radio_defaults=True))
+        self.assertIn("configured_country || 'CN'", radio_patched)
+        self.assertIn("mu_beamformer: lower_band == '5g' && band.he ? '1' : null", radio_patched)
+        self.assertIn('band_name == "5G" ? 160 : 80', radio_patched)
+        locked_tr = wifi.patch_generator(upstreams()["TR3000-512"], "TR3000", "12345678", tr3000_radio_defaults=True)
+        self.assertEqual(locked_tr, wifi.patch_generator(locked_tr, "TR3000", "12345678", tr3000_radio_defaults=True))
+        self.assertIn("mu_beamformer='1'", locked_tr)
+        self.assertIn('band_name == "5G" ? 160 : 80', locked_tr)
+        self.assertNotIn("sae-mixed", locked_tr)
         for broken in (source.replace("key: defaults?.key", "password: defaults?.key"),
                        source + wifi.TR3000_IFACE):
             with self.assertRaisesRegex(ValueError, "review upstream"):
@@ -162,6 +172,7 @@ class WifiPatchTests(unittest.TestCase):
                     options["WRT_SSID"],
                     str(options["WRT_WORD"]),
                     ap3000m_radio_defaults=(profile == "AP3000M"),
+                    tr3000_radio_defaults=(profile == "TR3000-512"),
                 )
                 self.assertEqual(generator.read_text(encoding="utf-8"), expected)
                 # Settings.sh must not hide a missing/changed upstream generator.

@@ -10,11 +10,29 @@ GENERATOR = Path("package/network/config/wifi-scripts/files/lib/wifi/mac80211.uc
 FIELDS = ("ssid", "encryption", "key")
 WIDTH_OLD = "\t\telse if (width > 80)\n\t\t\twidth = 80;"
 WIDTH_AP3000M = "\t\telse if (width > (band_name == \"5G\" ? 160 : 80))\n\t\t\twidth = (band_name == \"5G\" ? 160 : 80);"
+WIDTH_TR_OBJ_OLD = "\t\t\telse if (width > 80)\n\t\t\t\twidth = 80;"
+WIDTH_TR_OBJ_NEW = "\t\t\telse if (width > (band_name == \"5G\" ? 160 : 80))\n\t\t\t\twidth = (band_name == \"5G\" ? 160 : 80);"
 COUNTRY_OLD = "set ${s}.country='${country || ''}'"
 COUNTRY_AP3000M = (
     "set ${s}.country='${country || 'CN'}'"
     "${band_name == \"5g\" && band.he ? \"\\nset \" + s + \".mu_beamformer='1'\" : \"\"}"
 )
+COUNTRY_TR_LOCKED_OLD = "set ${s}.country='${country || 'CN'}'"
+COUNTRY_TR_OBJ_OLD = "let country = uc(configured_country || 'US');"
+COUNTRY_TR_OBJ_NEW = "let country = uc(configured_country || 'CN');"
+TR3000_DEVICE = """\t\t\tset_section(name, 'wifi-device', {
+\t\t\t\ttype: 'mac80211', ...id, band: lower_band, channel: '' + channel,
+\t\t\t\thtmode, auto_htmode, channels, country,
+\t\t\t\tradio: radio.index == null ? null : '' + radio.index,
+\t\t\t\tnum_global_macaddr: '' + (ssids?.[lower_band]?.mac_count || '')
+\t\t\t});"""
+TR3000_DEVICE_DEFAULTS = """\t\t\tset_section(name, 'wifi-device', {
+\t\t\t\ttype: 'mac80211', ...id, band: lower_band, channel: '' + channel,
+\t\t\t\thtmode, auto_htmode, channels, country,
+\t\t\t\tmu_beamformer: lower_band == '5g' && band.he ? '1' : null,
+\t\t\t\tradio: radio.index == null ? null : '' + radio.index,
+\t\t\t\tnum_global_macaddr: '' + (ssids?.[lower_band]?.mac_count || '')
+\t\t\t});"""
 
 
 TR3000_IFACE = """			set_section(iface, 'wifi-iface', {
@@ -40,23 +58,37 @@ def uci_literal(value):
     return "${" + json.dumps(quoted, ensure_ascii=True) + "}"
 
 
-def patch_generator(source, ssid, password, ap3000m_radio_defaults=False):
+def patch_generator(source, ssid, password, ap3000m_radio_defaults=False, tr3000_radio_defaults=False):
     if not 1 <= len(ssid.encode("utf-8")) <= 32 or any(ord(char) < 32 or ord(char) == 127 for char in ssid):
         raise ValueError("Wi-Fi SSID must be 1..32 UTF-8 bytes without control characters")
     if not 8 <= len(password) <= 63 or any(not 32 <= ord(char) <= 126 for char in password):
         raise ValueError("Wi-Fi passphrase must be 8..63 printable ASCII characters")
     if not ap3000m_radio_defaults and "set_section(iface, 'wifi-iface', {" in source:
+        text = source
+        if tr3000_radio_defaults:
+            if WIDTH_TR_OBJ_NEW not in text:
+                if text.count(WIDTH_TR_OBJ_OLD) != 1:
+                    raise ValueError("TR3000 Wi-Fi bandwidth anchor changed; review upstream")
+                text = text.replace(WIDTH_TR_OBJ_OLD, WIDTH_TR_OBJ_NEW, 1)
+            if COUNTRY_TR_OBJ_NEW not in text:
+                if text.count(COUNTRY_TR_OBJ_OLD) != 1:
+                    raise ValueError("TR3000 Wi-Fi country anchor changed; review upstream")
+                text = text.replace(COUNTRY_TR_OBJ_OLD, COUNTRY_TR_OBJ_NEW, 1)
+            if TR3000_DEVICE_DEFAULTS not in text:
+                if text.count(TR3000_DEVICE) != 1:
+                    raise ValueError("TR3000 Wi-Fi device block changed; review upstream")
+                text = text.replace(TR3000_DEVICE, TR3000_DEVICE_DEFAULTS, 1)
         replacement = TR3000_IFACE_DEFAULTS.format(ssid=json.dumps(ssid, ensure_ascii=False),
                                                   key=json.dumps(password, ensure_ascii=False))
-        if source.count("set_section(iface, 'wifi-iface', {") != 1:
+        if text.count("set_section(iface, 'wifi-iface', {") != 1:
             raise ValueError("TR3000 Wi-Fi interface block duplicated; review upstream")
-        if replacement in source:
-            return source
-        if source.count(TR3000_IFACE) != 1:
+        if replacement in text:
+            return text
+        if text.count(TR3000_IFACE) != 1:
             raise ValueError("TR3000 Wi-Fi interface block changed; review upstream")
-        return source.replace(TR3000_IFACE, replacement, 1)
+        return text.replace(TR3000_IFACE, replacement, 1)
     text = source
-    if ap3000m_radio_defaults:
+    if ap3000m_radio_defaults or tr3000_radio_defaults:
         # wpad-basic-mbedtls supports HE160, mu_beamformer and SAE mixed mode,
         # whereas bss_transition requires full WNM_AP and must not be emitted.
         if WIDTH_AP3000M not in text:
@@ -64,9 +96,10 @@ def patch_generator(source, ssid, password, ap3000m_radio_defaults=False):
                 raise ValueError("Wi-Fi generator bandwidth anchor changed; review upstream")
             text = text.replace(WIDTH_OLD, WIDTH_AP3000M, 1)
         if COUNTRY_AP3000M not in text:
-            if text.count(COUNTRY_OLD) != 1:
+            country_anchor = COUNTRY_OLD if ap3000m_radio_defaults else COUNTRY_TR_LOCKED_OLD
+            if text.count(country_anchor) != 1:
                 raise ValueError("Wi-Fi generator country anchor changed; review upstream")
-            text = text.replace(COUNTRY_OLD, COUNTRY_AP3000M, 1)
+            text = text.replace(country_anchor, COUNTRY_AP3000M, 1)
     rows = {field: re.findall(r"^set \$\{si\}\." + field + r"=.*$", text, re.MULTILINE)
             for field in FIELDS}
     if any(len(lines) != 1 for lines in rows.values()):
@@ -88,10 +121,10 @@ def patch_generator(source, ssid, password, ap3000m_radio_defaults=False):
     return text.replace(block, replacement, 1)
 
 
-def configure(tree, ssid, password, ap3000m_radio_defaults=False):
+def configure(tree, ssid, password, ap3000m_radio_defaults=False, tr3000_radio_defaults=False):
     path = tree / GENERATOR
     source = path.read_text(encoding="utf-8")
-    patched = patch_generator(source, ssid, password, ap3000m_radio_defaults)
+    patched = patch_generator(source, ssid, password, ap3000m_radio_defaults, tr3000_radio_defaults)
     # All validation precedes writing; no key or passphrase is printed.
     path.write_text(patched, encoding="utf-8", newline="\n")
 
@@ -101,9 +134,11 @@ def main():
     parser.add_argument("--tree", type=Path, default=Path.cwd())
     parser.add_argument("--ap3000m-radio-defaults", action="store_true",
                         help="Default new AP3000M radios to CN, 5G HE160, mu_beamformer and WPA2/WPA3 mixed mode")
+    parser.add_argument("--tr3000-radio-defaults", action="store_true",
+                        help="Default new TR3000 radios to CN, 5G HE160, mu_beamformer and WPA2-PSK/CCMP")
     args = parser.parse_args()
     configure(args.tree, os.environ["WRT_SSID"], os.environ["WRT_WORD"],
-              args.ap3000m_radio_defaults)
+              args.ap3000m_radio_defaults, args.tr3000_radio_defaults)
     print("New Wi-Fi radios: configured SSID and passphrase; existing radios preserved")
 
 
