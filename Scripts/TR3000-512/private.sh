@@ -51,25 +51,24 @@ fi
 # BBR is selected as kmod-tcp-bbr in the device config.
 # Locked plugins are installed once by device-build.py before this hook.
 python3 "$WRT_REPO_ROOT/.github/scripts/tr3000-defaults.py"
-python3 "$TR_DIR/system-defaults.py" --tree .
 
 # ------------------------------------------------- 3. 首启配置 + F50 即插即用
 log "投放 Files/TR3000-512 到源码 files/"
 mkdir -p files
 cp -a "$WRT_REPO_ROOT/Files/TR3000-512/." files/
 chmod 0644 files/etc/nftables.d/90-tr3000-ra-medium.nft
-chmod 0644 files/etc/sysctl.d/99-tr3000-tune.conf
 
 # 万一某个脚本被 Windows 侧 checkout 成 CRLF，路由器上的 /bin/sh 会直接
 # 报 "bad interpreter: /bin/sh^M"，这里统一清一遍（.gitattributes 是第一道防线）。
 while IFS= read -r f; do
 	sed -i 's/\r$//' "$f"
-done < <(find files/etc files/usr -type f 2>/dev/null)
+done < <(find files/etc -type f 2>/dev/null)
 
-# uci-defaults / hotplug.d / init.d / usr/sbin 里的脚本不一定有 .sh 后缀，显式赋权。
+# uci-defaults / hotplug.d / init.d 里的脚本没有 .sh 后缀，
+# 这些文件不一定有 .sh 后缀，所以这里显式赋权。
 while IFS= read -r f; do
 	chmod 0755 "$f"
-done < <(find files/etc/uci-defaults files/etc/hotplug.d files/etc/init.d files/usr/sbin -type f 2>/dev/null)
+done < <(find files/etc/uci-defaults files/etc/hotplug.d files/etc/init.d -type f 2>/dev/null)
 
 # 开机钩子：构建期建 rc.d 软链（不碰 rc.local）
 mkdir -p files/etc/rc.d
@@ -77,7 +76,6 @@ ln -sf ../init.d/tr3000-usbwan files/etc/rc.d/S99tr3000-usbwan
 chmod 0755 files/etc/tr3000-usbwan.sh
 ln -sf ../init.d/tr3000-wan-boot-guard files/etc/rc.d/S99tr3000-wan-boot-guard
 chmod 0755 files/etc/tr3000-wan-boot-guard.sh
-ln -sf ../init.d/tr3000-net-tune files/etc/rc.d/S99tr3000-net-tune
 
 # Arthur applies the chosen TCP algorithm after loading BBR when needed.
 # Retire exact generated outputs if this tree previously used the old hook.

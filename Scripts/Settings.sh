@@ -20,7 +20,7 @@ case "${WRT_PROFILE:-}" in
 		python3 "$GITHUB_WORKSPACE/.github/scripts/wifi-defaults.py" --tree . --ap3000m-radio-defaults || exit 1
 		;;
 	TR3000-512)
-		python3 "$GITHUB_WORKSPACE/.github/scripts/wifi-defaults.py" --tree . --tr3000-radio-defaults || exit 1
+		python3 "$GITHUB_WORKSPACE/.github/scripts/wifi-defaults.py" --tree . || exit 1
 		;;
 	*)
 		# Preserve the independent generic workflows' historical source handling.
