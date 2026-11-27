@@ -9,12 +9,8 @@ import re
 GENERATOR = Path("package/network/config/wifi-scripts/files/lib/wifi/mac80211.uc")
 FIELDS = ("ssid", "encryption", "key")
 WIDTH_OLD = "\t\telse if (width > 80)\n\t\t\twidth = 80;"
-WIDTH_AP3000M = "\t\telse if (width > (band_name == \"5G\" ? 160 : 80))\n\t\t\twidth = (band_name == \"5G\" ? 160 : 80);"
 COUNTRY_OLD = "set ${s}.country='${country || ''}'"
-COUNTRY_AP3000M = (
-    "set ${s}.country='${country || 'CN'}'"
-    "${band_name == \"5g\" && band.he ? \"\\nset \" + s + \".mu_beamformer='1'\" : \"\"}"
-)
+COUNTRY_AP3000M = "set ${s}.country='${country || 'CN'}'"
 
 
 TR3000_IFACE = """			set_section(iface, 'wifi-iface', {
@@ -57,12 +53,10 @@ def patch_generator(source, ssid, password, ap3000m_radio_defaults=False):
         return source.replace(TR3000_IFACE, replacement, 1)
     text = source
     if ap3000m_radio_defaults:
-        # wpad-basic-mbedtls supports HE160, mu_beamformer and SAE mixed mode,
-        # whereas bss_transition requires full WNM_AP and must not be emitted.
-        if WIDTH_AP3000M not in text:
-            if text.count(WIDTH_OLD) != 1:
-                raise ValueError("Wi-Fi generator bandwidth anchor changed; review upstream")
-            text = text.replace(WIDTH_OLD, WIDTH_AP3000M, 1)
+        # Keep upstream 80 MHz cap (HE80) and omit mu_beamformer to preserve
+        # MT7981 WED + bridger stability; bss_transition must not be emitted.
+        if text.count(WIDTH_OLD) != 1:
+            raise ValueError("Wi-Fi generator bandwidth anchor changed; review upstream")
         if COUNTRY_AP3000M not in text:
             if text.count(COUNTRY_OLD) != 1:
                 raise ValueError("Wi-Fi generator country anchor changed; review upstream")
@@ -100,7 +94,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tree", type=Path, default=Path.cwd())
     parser.add_argument("--ap3000m-radio-defaults", action="store_true",
-                        help="Default new AP3000M radios to CN, 5G HE160, mu_beamformer and WPA2/WPA3 mixed mode")
+                        help="Default new AP3000M radios to CN, 5G HE80 and WPA2/WPA3 mixed mode")
     args = parser.parse_args()
     configure(args.tree, os.environ["WRT_SSID"], os.environ["WRT_WORD"],
               args.ap3000m_radio_defaults)

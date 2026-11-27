@@ -115,8 +115,9 @@ class WifiPatchTests(unittest.TestCase):
         updated = wifi.patch_generator(source, "AP3000M", "12345678", ap3000m_radio_defaults=True)
         self.assertEqual(updated, wifi.patch_generator(updated, "AP3000M", "12345678", ap3000m_radio_defaults=True))
         self.assertNotIn("bss_transition", updated)
+        self.assertNotIn("mu_beamformer", updated)
         self.assertIn("sae-mixed", updated)
-        self.assertIn("mu_beamformer='1'", updated)
+        self.assertIn("width = 80;", updated)
         self.assertIn("country || 'CN'", updated)
         for broken in (source.replace("width > 80", "width > 40"),
                        source.replace("set ${s}.country='${country || ''}'", "set ${s}.country='00'")):
@@ -303,7 +304,7 @@ const uci = { cursor: () => ({
         generated = assignments(self.execute(wifi.patch_generator(upstreams()["AP3000M"], "New", "12345678"), hardware=hardware))
         self.assertEqual(generated["wireless.default_radio0.encryption"], "sae")
 
-    def test_ap3000m_new_radios_enable_cn_he160_beamformer_and_sae_mixed_without_touching_saved(self):
+    def test_ap3000m_new_radios_enable_cn_he80_and_sae_mixed_without_touching_saved(self):
         hardware = {
             "wlan": {
                 "phy0": {"path": "platform/soc/18000000.wifi", "info": {"bands": {"2G": {"max_width": 40, "he": True}}}},
@@ -317,8 +318,8 @@ const uci = { cursor: () => ({
         self.assertEqual(generated["wireless.default_radio0.encryption"], "psk2+ccmp")
         self.assertNotIn("wireless.radio0.mu_beamformer", generated)
         self.assertEqual(generated["wireless.radio1.country"], "CN")
-        self.assertEqual(generated["wireless.radio1.htmode"], "HE160")
-        self.assertEqual(generated["wireless.radio1.mu_beamformer"], "1")
+        self.assertEqual(generated["wireless.radio1.htmode"], "HE80")
+        self.assertNotIn("wireless.radio1.mu_beamformer", generated)
         self.assertEqual(generated["wireless.default_radio1.encryption"], "sae-mixed")
         self.assertFalse(any("bss_transition" in key for key in generated))
         saved = {

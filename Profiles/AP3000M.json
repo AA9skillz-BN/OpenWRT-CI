@@ -203,15 +203,6 @@
       "executable": true
     },
     {
-      "path": "/etc/init.d/ap3000m-net-tune",
-      "source": "Scripts/AP3000M/net-tune/ap3000m-net-tune.init",
-      "executable": true
-    },
-    {
-      "path": "/etc/rc.d/S99ap3000m-net-tune",
-      "executable": true
-    },
-    {
       "path": "/etc/hotplug.d/net/90-ap3000m-net-tune",
       "source": "Scripts/AP3000M/net-tune/90-ap3000m-net-tune",
       "executable": true

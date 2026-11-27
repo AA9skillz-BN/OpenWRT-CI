@@ -15,9 +15,7 @@ MENU_ENTRY = "admin/status/airpi-fancontrol"
 RECIPE = "luci-app-airpi-fancontrol/Makefile"
 CONFIG = "luci-app-airpi-fancontrol/files/etc/config/airpi-fan"
 CONFIG_TARGETS = (
-    ("temp_high", "75"),
     ("temp_mid", "68"),
-    ("temp_low", "48"),
     ("hysteresis", "4"),
     ("min_hold", "60"),
     ("log_level", "1"),

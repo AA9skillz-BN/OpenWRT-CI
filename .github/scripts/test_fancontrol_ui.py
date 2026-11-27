@@ -87,8 +87,8 @@ class FanUiTests(unittest.TestCase):
                 "package/luci-app-airpi3000m-fancontrol/" + alias.relative_to(root).as_posix(),
             )
             cfg_text = (root / fix.CONFIG).read_text(encoding="utf-8")
-            for needle in ("option temp_high '75'", "option temp_mid '68'", "option temp_low '48'",
-                           "option hysteresis '4'", "option min_hold '60'", "option log_level '1'"):
+            for needle in ("option temp_mid '68'", "option hysteresis '4'",
+                           "option min_hold '60'", "option log_level '1'"):
                 self.assertIn(needle, cfg_text)
 
     def test_menu_or_alias_drift_fails_before_any_files_are_written(self):
