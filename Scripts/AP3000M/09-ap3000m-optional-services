@@ -1,0 +1,7 @@
+#!/bin/sh
+# Restored sysupgrade archives carry their own service selections.
+[ -e /etc/uci-defaults/10_disable_services ] && exit 0
+for service in samba4 wsdd2 usbmuxd; do
+	[ ! -x "/etc/init.d/$service" ] || "/etc/init.d/$service" disable
+done
+exit 0

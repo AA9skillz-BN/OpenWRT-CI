@@ -193,6 +193,15 @@
       "executable": true
     },
     {
+      "path": "/lib/upgrade/ap3000m-openclash-backup.sh",
+      "source": "Scripts/AP3000M/ota/ap3000m-openclash-backup.sh"
+    },
+    {
+      "path": "/etc/uci-defaults/09-ap3000m-optional-services",
+      "source": "Scripts/AP3000M/09-ap3000m-optional-services",
+      "executable": true
+    },
+    {
       "path": "/usr/sbin/ap3000m-rdnis-guard",
       "source": "Scripts/AP3000M/rdnis-guard/ap3000m-rdnis-guard",
       "executable": true

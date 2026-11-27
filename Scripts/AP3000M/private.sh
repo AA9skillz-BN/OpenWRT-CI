@@ -82,6 +82,8 @@ fi
 #    固件与发布 job 使用同一个标签。
 _ap3000m_ota_dir="$GITHUB_WORKSPACE/Scripts/AP3000M/ota"
 _ap3000m_bf="package/base-files/files"
+install -D -m 0644 "$_ap3000m_ota_dir/ap3000m-openclash-backup.sh" "$_ap3000m_bf/lib/upgrade/ap3000m-openclash-backup.sh"
+install -D -m 0755 "$GITHUB_WORKSPACE/Scripts/AP3000M/09-ap3000m-optional-services" "$_ap3000m_bf/etc/uci-defaults/09-ap3000m-optional-services"
 if [ -d "$_ap3000m_ota_dir" ]; then
 	mkdir -p "$_ap3000m_bf/usr/sbin" "$_ap3000m_bf/etc/config" \
 		"$_ap3000m_bf/etc/init.d" "$_ap3000m_bf/etc/uci-defaults"
