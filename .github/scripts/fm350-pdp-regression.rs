@@ -39,7 +39,7 @@ impl Modem {
         cfg.at_timeout = 2;
         cfg.at_port = unsafe { CStr::from_ptr(name.as_ptr()) }.to_str().unwrap().to_owned();
         let stop = Arc::new(AtomicBool::new(false));
-        let commands = Arc<Mutex<Vec<String>>>::default();
+        let commands = Arc::new(Mutex::new(Vec::new()));
         let done = stop.clone();
         let log = commands.clone();
         let initial_act = cgact.to_owned();
