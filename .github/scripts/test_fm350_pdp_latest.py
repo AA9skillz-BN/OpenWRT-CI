@@ -26,7 +26,7 @@ class Fm350PdpTests(unittest.TestCase):
         if lock["url"] != "https://github.com/LianXia233/luci-app-fm350.git":
             raise AssertionError("review the FM350 patch for a changed package source")
         url = ("https://codeload.github.com/LianXia233/luci-app-fm350/tar.gz/" +
-               "a78e780cc6b989117fd53d6ef02650b8bcada20c")
+               "bd04eac3aad52603be3d2e59e751b73aaa9072e4")
         with urllib.request.urlopen(url, timeout=60) as response:
             cls.archive = response.read()
         with tarfile.open(fileobj=io.BytesIO(cls.archive)) as archive:
@@ -43,13 +43,14 @@ class Fm350PdpTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 fix.patch_pdp(data)
 
-    def test_locked_patch_rejects_latest_source(self):
+    def test_locked_patch_rejects_unreviewed_comment_changes_accepted_by_latest(self):
         spec = importlib.util.spec_from_file_location(
             "fm350_locked_pdp_fix", REPO / "Scripts/AP3000M/fm350/fix-pdp-dns.py")
         locked = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(locked)
+        benign = self.original + b"\n// benign trailing comment\n"
         with self.assertRaisesRegex(ValueError, "reviewed locked source"):
-            locked.patch_pdp(self.original)
+            locked.patch_pdp(benign)
 
     @unittest.skipIf(os.name == "nt", "the real serial-port regression requires Linux PTYs")
     def test_real_pdp_and_dial_fail_before_patch_and_pass_after_patch(self):

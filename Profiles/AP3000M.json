@@ -248,25 +248,12 @@
       "source": "Scripts/AP3000M/ota/ap3000m-ota-boot"
     },
     {
-      "path": "/etc/init.d/ap3000m-rdnis-guard",
-      "executable": true,
-      "source": "Scripts/AP3000M/rdnis-guard/ap3000m-rdnis-guard-boot"
-    },
-    {
       "path": "/etc/rc.d/S99ap3000m-ota-boot",
-      "executable": true
-    },
-    {
-      "path": "/etc/rc.d/S98ap3000m-rdnis-guard",
       "executable": true
     },
     {
       "path": "/etc/uci-defaults/99-ap3000m-ota-cron",
       "source": "Scripts/AP3000M/ota/99-ap3000m-ota-cron"
-    },
-    {
-      "path": "/etc/uci-defaults/99-ap3000m-rdnis-cron",
-      "source": "Scripts/AP3000M/rdnis-guard/99-ap3000m-rdnis-cron"
     },
     {
       "path": "/usr/share/rpcd/ucode/ap3000m-ota.uc",
@@ -341,6 +328,9 @@
     "/usr/lib/lua/luci/model/cbi/turboacc.lua",
     "/usr/lib/lua/luci/view/turboacc/turboacc_status.htm",
     "/etc/uci-defaults/99-ap3000m-flowoffload",
-    "/etc/hotplug.d/net/20-ap3000m-net-tune"
+    "/etc/hotplug.d/net/20-ap3000m-net-tune",
+    "/etc/init.d/ap3000m-rdnis-guard",
+    "/etc/rc.d/S98ap3000m-rdnis-guard",
+    "/etc/uci-defaults/99-ap3000m-rdnis-cron"
   ]
 }

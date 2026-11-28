@@ -140,25 +140,16 @@ cp -f "$_ap3000m_prepare/ap3000m-fm350-prepare.init" "$_ap3000m_bf/etc/init.d/ap
 chmod 0755 "$_ap3000m_bf/etc/init.d/ap3000m-fm350-prepare"
 ln -sf ../init.d/ap3000m-fm350-prepare "$_ap3000m_bf/etc/rc.d/S94ap3000m-fm350-prepare"
 
-# 8) 开机 RNDIS 卡死自愈
-#    历史真机复现：eth2 有地址但 rx_packets=0、tx_errors 增长。
-#    模组重启并非每次有效；恢复结果仍须实际探测，失败不能当作联网成功。
+# 8) RNDIS 排障与兜底工具（运行期与开机自动自愈已交由 fm350d 的 data_guard / net_guard / route_guard 统一负责）
 _ap3000m_guard_dir="$GITHUB_WORKSPACE/Scripts/AP3000M/rdnis-guard"
-if [ -d "$_ap3000m_guard_dir" ]; then
+if [ -f "$_ap3000m_guard_dir/ap3000m-rdnis-guard" ]; then
 	cp -f "$_ap3000m_guard_dir/ap3000m-rdnis-guard" "$_ap3000m_bf/usr/sbin/ap3000m-rdnis-guard"
 	chmod 0755 "$_ap3000m_bf/usr/sbin/ap3000m-rdnis-guard"
+	rm -f "$_ap3000m_bf/etc/init.d/ap3000m-rdnis-guard" \
+		"$_ap3000m_bf/etc/rc.d/S98ap3000m-rdnis-guard" \
+		"$_ap3000m_bf/etc/uci-defaults/99-ap3000m-rdnis-cron"
 
-	cp -f "$_ap3000m_guard_dir/ap3000m-rdnis-guard-boot" "$_ap3000m_bf/etc/init.d/ap3000m-rdnis-guard"
-	chmod 0755 "$_ap3000m_bf/etc/init.d/ap3000m-rdnis-guard"
-
-	mkdir -p "$_ap3000m_bf/etc/rc.d"
-	ln -sf ../init.d/ap3000m-rdnis-guard "$_ap3000m_bf/etc/rc.d/S98ap3000m-rdnis-guard"
-
-	# 运行期巡检：RNDIS 卡死也会发生在运行中（不只开机），每 5 分钟检查一次
-	cp -f "$_ap3000m_guard_dir/99-ap3000m-rdnis-cron" "$_ap3000m_bf/etc/uci-defaults/99-ap3000m-rdnis-cron"
-	chmod 0755 "$_ap3000m_bf/etc/uci-defaults/99-ap3000m-rdnis-cron"
-
-	_ap3000m_log "已投放 RNDIS 自愈（开机自检 + 每 5 分钟运行期巡检，单级恢复 + 失败提示）"
+	_ap3000m_log "已投放 RNDIS 手动排障与兜底工具：ap3000m-rdnis-guard（日常自愈由 fm350d 负责）"
 else
 	echo "Missing required RNDIS guard" >&2
 	exit 1

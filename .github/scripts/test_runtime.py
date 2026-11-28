@@ -169,18 +169,19 @@ exit 0
 ''')
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_cron_installation_is_idempotent_and_preserves_other_jobs(self):
-        for name in ("ota/99-ap3000m-ota-cron", "rdnis-guard/99-ap3000m-rdnis-cron"):
-            cron = self.root / "crontabs/root"
-            cron.parent.mkdir(exist_ok=True)
-            cron.write_text("0 0 * * * other-job\n")
-            source = read("Scripts/AP3000M/" + name).replace("/etc/crontabs", '"$TASK_TMP/crontabs"')
-            source = source.replace("/etc/init.d/cron", "cron_mock").replace("exit 0", ":")
-            result = self.shell('cron_mock() { :; }; logger() { :; }\n' + source + source)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            lines = cron.read_text().splitlines()
-            self.assertEqual(len(lines), 2)
-            self.assertIn("other-job", lines[0])
+    def test_cron_installation_is_idempotent_preserves_other_jobs_and_retires_rdnis_cron(self):
+        cron = self.root / "crontabs/root"
+        cron.parent.mkdir(exist_ok=True)
+        cron.write_text("0 0 * * * other-job\n*/5 * * * * /usr/sbin/ap3000m-rdnis-guard --watch >/dev/null 2>&1\n")
+        source = read("Scripts/AP3000M/ota/99-ap3000m-ota-cron").replace("/etc/crontabs", '"$TASK_TMP/crontabs"')
+        source = source.replace("/etc/init.d/cron", "cron_mock").replace("exit 0", ":")
+        result = self.shell('cron_mock() { :; }; logger() { :; }\n' + source + source)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = cron.read_text().splitlines()
+        self.assertEqual(lines, [
+            "0 0 * * * other-job",
+            "15 4 * * * /usr/sbin/ap3000m-ota check --cache >/dev/null 2>&1",
+        ])
 
 
 class ReleaseRetentionTests(unittest.TestCase):

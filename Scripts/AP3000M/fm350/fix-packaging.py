@@ -3,7 +3,7 @@ import hashlib
 from pathlib import Path
 import sys
 
-UPSTREAM_SHA256 = "2556fbfb9aa3dece733d76e2408d6532bb53e6d701e3f07a7ebc63438231dc2c"
+UPSTREAM_SHA256 = "9f7e44c09bbd1455469bfc568347931de958b33f4bfac67c768397bd4dce6405"
 BEFORE = '''\t@if [ -n "$(TARGET_STRIP)" ] && [ -x "$(TARGET_STRIP)" ]; then \\
 \t\t$(TARGET_STRIP) $(RUST_OUT) || true; \\
 \telse \\

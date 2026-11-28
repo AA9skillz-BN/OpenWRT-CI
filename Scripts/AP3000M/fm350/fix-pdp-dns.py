@@ -3,7 +3,7 @@ import hashlib
 from pathlib import Path
 import sys
 
-UPSTREAM_SHA256 = "cf85267027fc7d3038de1cab760031b286908caa476d356c80d28bea57b48c81"
+UPSTREAM_SHA256 = "f14d778051dcc9c1249f4ea49038ffd7d8b3a405035a6a61fa9dfd768480430e"
 SOURCE = "rust/src/modem/pdp.rs"
 
 REPLACEMENTS = (

@@ -90,7 +90,7 @@
   },
   "fm350": {
     "url": "https://github.com/LianXia233/luci-app-fm350.git",
-    "commit": "3a101af3620e0f6cacf9fcf2baba785eec872999",
+    "commit": "bd04eac3aad52603be3d2e59e751b73aaa9072e4",
     "directory": "luci-app-fm350",
     "replaces": [
       "luci-app-fm350"

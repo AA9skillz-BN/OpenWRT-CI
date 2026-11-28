@@ -53,16 +53,16 @@ class Fm350PackagingTests(unittest.TestCase):
         if lock["url"] != "https://github.com/LianXia233/luci-app-fm350.git":
             raise AssertionError("review FM350 packaging for a changed source")
         cls.archive = download("https://codeload.github.com/LianXia233/luci-app-fm350/tar.gz/" +
-                               "a78e780cc6b989117fd53d6ef02650b8bcada20c")
+                               "bd04eac3aad52603be3d2e59e751b73aaa9072e4")
         with tarfile.open(fileobj=io.BytesIO(cls.archive)) as archive:
             recipe = next(m for m in archive.getmembers() if m.name.count("/") == 1 and m.name.endswith("/Makefile"))
             cls.recipe = archive.extractfile(recipe).read()
-        cls.recipe_r6 = download("https://raw.githubusercontent.com/LianXia233/luci-app-fm350/"
-                                 "5c655563eab95dfb47677ca1bc15339eaecaadb8/Makefile")
+        cls.recipe_r7 = download("https://raw.githubusercontent.com/LianXia233/luci-app-fm350/"
+                                 "a78e780cc6b989117fd53d6ef02650b8bcada20c/Makefile")
 
     def test_recipe_patch_is_repeatable_tolerates_version_bumps_and_rejects_strip_drift(self):
-        bumped = self.recipe.replace(b"PKG_RELEASE:=7", b"PKG_RELEASE:=99\n# benign comment")
-        for raw in (self.recipe_r6, self.recipe, bumped):
+        bumped = self.recipe.replace(b"PKG_RELEASE:=9", b"PKG_RELEASE:=99\n# benign comment")
+        for raw in (self.recipe_r7, self.recipe, bumped):
             patched = fix.patch_makefile(raw)
             self.assertEqual(fix.patch_makefile(patched), patched)
             self.assertIn(b"$(RSTRIP) $(RUST_OUT)", patched)
@@ -72,9 +72,10 @@ class Fm350PackagingTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     fix.patch_makefile(data)
 
-    def test_locked_recipe_patch_rejects_latest_source(self):
+    def test_locked_recipe_patch_rejects_unreviewed_versions(self):
         locked = module("fix-packaging")
-        for raw in (self.recipe_r6, self.recipe):
+        bumped = self.recipe.replace(b"PKG_RELEASE:=9", b"PKG_RELEASE:=99")
+        for raw in (self.recipe_r7, bumped):
             with self.assertRaisesRegex(ValueError, "reviewed locked source"):
                 locked.patch_makefile(raw)
 

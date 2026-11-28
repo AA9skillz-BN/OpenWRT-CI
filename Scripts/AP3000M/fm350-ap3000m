@@ -71,13 +71,35 @@ fi
 # 端口先落盘：下面的 fm350d CLI 直连要靠它找串口
 uci -q commit fm350 2>/dev/null || true
 
-# ---- 3. 用 IMSI 判断运营商，选对 APN（仅覆盖出厂默认值）----
-IMSI=$(fm350d info 2>/dev/null |
+# ---- 3. 用 IMSI 判断运营商，选对 APN，并按模组固件形态优化未绑定自愈策略（仅覆盖出厂默认值）----
+INFO_JSON=$(fm350d info 2>/dev/null)
+IMSI=$(printf '%s\n' "$INFO_JSON" |
 	sed -n 's/.*"imsi"[[:space:]]*:[[:space:]]*"\([0-9]\{6,\}\)".*/\1/p' | head -n 1)
+FW_VER=$(printf '%s\n' "$INFO_JSON" |
+	sed -n 's/.*"firmware"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
 
 if [ -z "$IMSI" ]; then
 	LOG "模组 AT 无响应（读不到 IMSI），保留其余默认值，下次启动重试"
 	exit 1
+fi
+
+CUR_POLICY=$(uci -q get fm350.main.unbound_policy)
+if [ -z "$CUR_POLICY" ] || [ "$CUR_POLICY" = "auto" ]; then
+	case "$FW_VER" in
+		*29.23.17*)
+			uci set fm350.main.unbound_policy="legacy"
+			CHANGED=1
+			LOG "检测到原厂模组固件 $FW_VER（无内置 atproxy），unbound_policy 设为 legacy 以免自愈空等 600 秒"
+			;;
+		*)
+			CUR_FB=$(uci -q get fm350.main.unbound_fallback_secs)
+			if [ -z "$CUR_FB" ] || [ "$CUR_FB" = "600" ]; then
+				uci set fm350.main.unbound_fallback_secs="180"
+				CHANGED=1
+				LOG "unbound_fallback_secs 收紧为 180 秒（覆盖 atproxy 120s 保活周期并缩短无配套固件回落等待）"
+			fi
+			;;
+	esac
 fi
 
 APN=""

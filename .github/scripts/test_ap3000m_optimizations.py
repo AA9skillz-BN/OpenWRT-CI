@@ -104,8 +104,16 @@ class Ap3000mDefaultsTests(unittest.TestCase):
         profile = json.loads((REPO / "Profiles/AP3000M.json").read_text(encoding="utf-8"))
         for pkg in ("sgdisk", "iputils-ping"):
             self.assertIn(pkg, profile["required_packages"])
-        self.assertIn("/etc/hotplug.d/net/20-ap3000m-net-tune", profile["forbidden_files"])
+        for retired in (
+            "/etc/hotplug.d/net/20-ap3000m-net-tune",
+            "/etc/init.d/ap3000m-rdnis-guard",
+            "/etc/rc.d/S98ap3000m-rdnis-guard",
+            "/etc/uci-defaults/99-ap3000m-rdnis-cron",
+        ):
+            self.assertIn(retired, profile["forbidden_files"])
         self.assertFalse((REPO / "Scripts/AP3000M/net-tune/20-ap3000m-net-tune").exists())
+        self.assertFalse((REPO / "Scripts/AP3000M/rdnis-guard/99-ap3000m-rdnis-cron").exists())
+        self.assertFalse((REPO / "Scripts/AP3000M/rdnis-guard/ap3000m-rdnis-guard-boot").exists())
         required = {item["path"]: item for item in profile["required_files"]}
         expected_sources = {
             "/etc/uci-defaults/98-ap3000m-gpt-fix": ("Scripts/AP3000M/98-ap3000m-gpt-fix", True),
@@ -360,6 +368,81 @@ uci() {{ if [ "$1" = "-q" ]; then printf '/dev/ttyUSB3'; fi; }}
 level1
 head -n 3 "$TASK_TMP/events" | tr '\\n' ',' | grep -q '^init:stop,init:running,at:at AT+CFUN=1,1,' || exit 92
 grep -q '未收到 AT 复位确认' "$TASK_TMP/logs" || exit 93
+"""
+        result = self.run_sh(harness)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+
+    def test_iface_tune_coalesces_burst_events_and_reapplies_two_stages(self):
+        source = (REPO / "Scripts/AP3000M/net-tune/90-ap3000m-iface-tune").read_text(encoding="utf-8")
+        adapted = (
+            source.replace("[ -x /usr/sbin/ap3000m-net-tune ]", "true")
+            .replace("/usr/sbin/ap3000m-net-tune", "net_tune_mock")
+            .replace("/sys/class/net/", '"$TASK_TMP/net/"')
+            .replace("/var/run", '"$TASK_TMP/run"')
+            .replace("</dev/null >/dev/null 2>&1 &", "")
+            .replace("exit 0", "return 0")
+        )
+        harness = f"""
+run_hotplug() {{
+{adapted}
+}}
+mkdir -p "$TASK_TMP/net/eth2" "$TASK_TMP/run"
+uci() {{ printf 'eth2'; }}
+sleep() {{ printf 'sleep:%s\\n' "$1" >> "$TASK_TMP/events"; }}
+net_tune_mock() {{ printf 'apply:%s:%s\\n' "$1" "$2" >> "$TASK_TMP/events"; }}
+
+ACTION=ifdown run_hotplug
+grep -qx 'sleep:2' "$TASK_TMP/events" || exit 90
+grep -qx 'sleep:6' "$TASK_TMP/events" || exit 91
+[ "$(grep -c '^apply:apply:eth2$' "$TASK_TMP/events")" -eq 2 ] || exit 92
+
+rm -f "$TASK_TMP/events"
+sleep() {{
+  printf 'sleep:%s\\n' "$1" >> "$TASK_TMP/events"
+  printf 'superseded\\n' > "$TASK_TMP/run/ap3000m-iface-tune.seq"
+}}
+ACTION=ifup run_hotplug
+[ ! -f "$TASK_TMP/events" ] || ! grep -q '^apply:' "$TASK_TMP/events" || exit 93
+"""
+        result = self.run_sh(harness)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+
+    def test_first_boot_fm350_sets_legacy_unbound_policy_for_stock_17_firmware(self):
+        source = (REPO / "Scripts/AP3000M/fm350-ap3000m").read_text(encoding="utf-8")
+        adapted = (
+            source.replace("$(find_at_port)", "$(mock_find_at_port)")
+            .replace("/etc/init.d/fm350d", "mock_init")
+            .replace("exit 0", "return 0")
+            .replace("exit 1", "return 1")
+        )
+        harness = f"""
+run_first_boot() {{
+{adapted}
+}}
+mock_find_at_port() {{ printf '/dev/ttyUSB3'; }}
+mock_init() {{ return 1; }}
+logger() {{ :; }}
+
+fm350d() {{
+  case "$1" in
+    info) printf '{{"info":{{"imsi":"460022891828267","firmware":"81600.0000.00.29.23.17"}},"ok":true}}\\n' ;;
+    at) printf '{{"result":"+CGDCONT: 1,\\"IPV4V6\\",\\"ims\\"\\\\n+CGDCONT: 2,\\"IPV4V6\\",\\"CMNET\\"\\\\nOK"}}\\n' ;;
+  esac
+}}
+uci() {{
+  case "$*" in
+    "-q get fm350.main.at_port") printf '/dev/ttyUSB1' ;;
+    "-q get fm350.main.unbound_policy") printf 'auto' ;;
+    "-q get fm350.main.apn") printf 'ctnet' ;;
+    "-q get fm350.main.cid") printf '1' ;;
+    set*) printf '%s\\n' "$*" >> "$TASK_TMP/uci_sets" ;;
+  esac
+}}
+run_first_boot || exit 90
+grep -qx 'set fm350.main.at_port=/dev/ttyUSB3' "$TASK_TMP/uci_sets" || exit 91
+grep -qx 'set fm350.main.unbound_policy=legacy' "$TASK_TMP/uci_sets" || exit 92
+grep -qx 'set fm350.main.apn=CMNET' "$TASK_TMP/uci_sets" || exit 93
+grep -qx 'set fm350.main.cid=2' "$TASK_TMP/uci_sets" || exit 94
 """
         result = self.run_sh(harness)
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)

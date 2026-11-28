@@ -131,7 +131,7 @@ Release tag 包含机型、源码、分支、时间、run ID 和 attempt；非 `
 - FM350 的 PDP / DNS 与打包适配、风扇页面确认和返回状态修正；locked / latest 分别使用对应的已审查 FM350 适配。关键文件在实际镜像中逐字节核对，Rust 后端检查目标架构。
 - 拨号启动前按已保存的 CID / APN 和模组状态准备非 IMS 数据 PDP。AT 口定位会解析 USB 接口符号链接，再匹配当前模组的串口。
 - 提供用户主动开启的 FM350 USB 2.0 兼容选项，默认保留 USB 3.0；具体排障步骤和限制见机型文档。
-- RNDIS 在开机及每 5 分钟巡检，绑定 FM350 接口发起限时探测，连续两轮无收包后记录异常。默认由 fm350d 负责自动恢复。只有 `data_guard` 和 `net_guard` 均显式关闭且连续两轮出现符合条件的发送错误时，巡检脚本才尝试自动复位。恢复以该接口收到新的公网探测应答为准。
+- FM350 运行期与开机自愈统一由 `fm350d` 内置守卫（`data_guard` / `net_guard` / `route_guard` / `unbound_policy`）接管，升级时自动清理旧版每 5 分钟 RNDIS 定时巡检；保留 `ap3000m-rdnis-guard` 供 `--check` / `--force` 手工诊断，且仅在 `data_guard` 和 `net_guard` 均显式关闭并主动调用时才执行脚本侧复位。
 - [Arthur TurboACC](https://github.com/Arthur97172/luci-app-turboacc) 管理软件 / 硬件分载、WED、FullCone 和 TCP 拥塞算法，实际可用项取决于驱动与后端能力；首次导入现有设置，保留明确关闭和已选择的算法。RPS/XPS 与 MTU 探测继续由设备调优脚本负责。
 - LuCI「系统 → 固件升级」和 `ap3000m-ota`，支持下载校验、保留 / 不保留配置升级，以及指定版本回退。
 - OTA 元数据从 GitHub API 获取，镜像站只用于下载文件；下载后核对大小和 SHA-256，刷写前执行 `sysupgrade -T`。

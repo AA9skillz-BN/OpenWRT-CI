@@ -11,6 +11,8 @@ mkdir -p /etc/crontabs
 
 touch "$CRON"
 sed -i '\|/usr/sbin/ap3000m-ota check --cache|d' "$CRON"
+# 清理旧版固件跨 sysupgrade 残留的每 5 分钟 RNDIS 巡检（现统一由 fm350d 自愈负责）
+sed -i '\|/usr/sbin/ap3000m-rdnis-guard --watch|d' "$CRON"
 # Keep one lightweight scheduler entry so re-enabling UCI also takes effect.
 # The command checks its UCI switch on every invocation; no boot/reinstall needed.
 printf '15 4 * * * /usr/sbin/ap3000m-ota check --cache >/dev/null 2>&1\n' >>"$CRON"

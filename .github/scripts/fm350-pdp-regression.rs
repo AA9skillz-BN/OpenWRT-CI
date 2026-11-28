@@ -1,5 +1,6 @@
 //! Run the real locked plugin's PDP/dial code through a Linux pseudo terminal.
 use fm350d::at::AtHandle;
+use fm350d::at::queue::AtPriority;
 use fm350d::config::Config;
 use fm350d::modem::pdp::{dial, pdp};
 use std::ffi::CStr;
@@ -38,7 +39,7 @@ impl Modem {
         cfg.at_timeout = 2;
         cfg.at_port = unsafe { CStr::from_ptr(name.as_ptr()) }.to_str().unwrap().to_owned();
         let stop = Arc::new(AtomicBool::new(false));
-        let commands = Arc::new(Mutex::new(Vec::new()));
+        let commands = Arc<Mutex<Vec<String>>>::default();
         let done = stop.clone();
         let log = commands.clone();
         let initial_act = cgact.to_owned();
@@ -98,7 +99,7 @@ fn dns_only() -> String {
 #[test]
 fn dns_only_with_stale_cgpaddr_is_inactive() {
     let modem = Modem::new("OK", &dns_only(), "+CGPADDR: 2,\"10.0.0.99\"\r\nOK");
-    let state = pdp(&AtHandle::new(), &modem.cfg);
+    let state = pdp(&AtHandle::new(), AtPriority::High, &modem.cfg);
     assert!(!state.active, "DNS must not make an empty session active: {:?}", state);
     assert!(!state.has_address());
     assert!(state.dns.is_empty());
@@ -118,7 +119,7 @@ fn dial_activates_dns_only_session_instead_of_reusing_stale_address() {
 fn ipv6_dns_is_preserved_without_becoming_an_ipv6_local_address() {
     let contrdp = format!("+CGCONTRDP: 2,5,\"CMNET\",\"10.0.0.2.255.255.255.0\",\"10.0.0.1\",\"{}\",\"223.5.5.5\"\r\nOK", DNS6);
     let modem = Modem::new("OK", &contrdp, "+CGPADDR: 2,\"10.0.0.2\"\r\nOK");
-    let state = pdp(&AtHandle::new(), &modem.cfg);
+    let state = pdp(&AtHandle::new(), AtPriority::High, &modem.cfg);
     assert!(state.active);
     assert_eq!(state.ipv4, "10.0.0.2");
     assert_eq!(state.netmask4, "255.255.255.0");
@@ -130,7 +131,7 @@ fn ipv6_dns_is_preserved_without_becoming_an_ipv6_local_address() {
 fn ipv6_only_local_address_and_dns_remain_valid() {
     let contrdp = format!("+CGCONTRDP: 2,5,\"CMNET\",\"{}\",\"\",\"{}\"\r\nOK", LOCAL6, DNS6);
     let modem = Modem::new("OK", &contrdp, "+CGPADDR: 2\r\nOK");
-    let state = pdp(&AtHandle::new(), &modem.cfg);
+    let state = pdp(&AtHandle::new(), AtPriority::High, &modem.cfg);
     assert!(state.active);
     assert!(state.ipv4.is_empty());
     assert_eq!(state.ipv6, "2001:db8::2");
@@ -141,7 +142,7 @@ fn ipv6_only_local_address_and_dns_remain_valid() {
 fn other_cid_cannot_supply_address_gateway_or_dns() {
     let contrdp = "+CGCONTRDP: 1,5,\"ims\",\"192.0.2.9\",\"192.0.2.1\",\"192.0.2.53\"\r\n+CGCONTRDP: 2,5,\"CMNET\",\"10.0.0.2\",\"10.0.0.1\",\"223.5.5.5\"\r\nOK";
     let modem = Modem::new("OK", contrdp, "+CGPADDR: 2\r\nOK");
-    let state = pdp(&AtHandle::new(), &modem.cfg);
+    let state = pdp(&AtHandle::new(), AtPriority::High, &modem.cfg);
     assert!(state.active);
     assert_eq!(state.ipv4, "10.0.0.2");
     assert_eq!(state.gw4, "10.0.0.1");
@@ -153,7 +154,7 @@ fn explicit_inactive_state_overrides_residual_local_address() {
     let contrdp = "+CGCONTRDP: 2,5,\"CMNET\",\"10.0.0.2\",\"10.0.0.1\",\"223.5.5.5\"\r\nOK";
     let modem = Modem::new("+CGACT: 2,0\r\nOK", contrdp,
                            "+CGPADDR: 2,\"10.0.0.2\"\r\nOK");
-    let state = pdp(&AtHandle::new(), &modem.cfg);
+    let state = pdp(&AtHandle::new(), AtPriority::High, &modem.cfg);
     assert!(!state.active);
     assert!(!state.has_address());
     assert!(state.dns.is_empty());
@@ -163,7 +164,7 @@ fn explicit_inactive_state_overrides_residual_local_address() {
 fn explicit_active_state_uses_cgpaddr_and_filters_ipv6_placeholder() {
     let modem = Modem::new("+CGACT: 2,1\r\nOK", &dns_only(),
         "+CGPADDR: 2,\"10.0.0.2\",\"0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.1\"\r\nOK");
-    let state = pdp(&AtHandle::new(), &modem.cfg);
+    let state = pdp(&AtHandle::new(), AtPriority::High, &modem.cfg);
     assert!(state.active);
     assert_eq!(state.ipv4, "10.0.0.2");
     assert!(state.ipv6.is_empty());

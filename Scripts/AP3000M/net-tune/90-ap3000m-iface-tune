@@ -1,13 +1,14 @@
 #!/bin/sh
 # SPDX-License-Identifier: MIT
-# 90-ap3000m-iface-tune —— 防止 S25packet_steering 在接口事件后重置 eth2 的 RPS/XPS
+# 90-ap3000m-iface-tune —— 防止 S25packet_steering 在接口/防火墙事件后重置 eth2 的 RPS/XPS
 #
-# 真机根因：/etc/init.d/packet_steering 注册了 `procd_add_raw_trigger "interface.*" 1000`，
-# 每当 fm350 / fm350v6 拨号或每 30 分钟刷新 IPv6 时，procd 会在 1 秒后重跑 packet-steering.uc，
-# 把 eth2 的 rps_cpus 从双核 3 改回单核 2、xps_cpus 归零。这里延迟 2 秒重新锁定调优参数。
+# 真机根因：/etc/init.d/packet_steering 同时监听了 `interface.*`（1000ms 防抖，含 ifdown）、
+# `network` 与 `firewall` 重载触发器。当 fm350 / fm350v6 双栈连续翻动并触发 20-firewall 重载时，
+# packet-steering.uc 可能晚于 2s 执行并将 eth2 的 rps_cpus/xps_cpus 刷回 0 或单核。
+# 这里使用序列号合并密集事件，在末次事件 +2s 与 +8s 两阶段复写，避免进程堆积与重复刷屏。
 
 case "${ACTION:-}" in
-	ifup|ifupdate) ;;
+	ifup|ifupdate|ifdown|reload) ;;
 	*) exit 0 ;;
 esac
 
@@ -17,9 +18,18 @@ dev=$(uci -q get network.fm350.device 2>/dev/null)
 [ -n "$dev" ] || dev="eth2"
 [ -d "/sys/class/net/$dev" ] || exit 0
 
+SEQ_FILE="/var/run/ap3000m-iface-tune.seq"
+mkdir -p /var/run
+seq="$$.$(cut -d' ' -f1 /proc/uptime 2>/dev/null || date +%s)"
+printf '%s\n' "$seq" >"$SEQ_FILE"
+
 (
-	sleep 2
-	/usr/sbin/ap3000m-net-tune apply "$dev"
+	for delay in 2 6; do
+		sleep "$delay"
+		[ "$(cat "$SEQ_FILE" 2>/dev/null)" = "$seq" ] || exit 0
+		[ -d "/sys/class/net/$dev" ] || exit 0
+		/usr/sbin/ap3000m-net-tune apply "$dev"
+	done
 ) </dev/null >/dev/null 2>&1 &
 
 exit 0
